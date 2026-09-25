@@ -1,5 +1,5 @@
 from enum import StrEnum
-from typing import Literal
+from typing import ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -12,6 +12,15 @@ class CapabilityInput(Contract):
     raw_text: str = Field(min_length=1, max_length=500)
     entity_id: str | None = None
     experience_codes: list[str] = Field(default_factory=list)
+
+
+class RoadmapOutcome(Contract):
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
+
+    requirement_key: str = Field(min_length=1)
+    entity_id: str = Field(min_length=1)
+    raw_text: str = Field(min_length=1, max_length=500)
+    experience_codes: tuple[str, ...] = ()
 
 
 class NormalizedCapability(Contract):
