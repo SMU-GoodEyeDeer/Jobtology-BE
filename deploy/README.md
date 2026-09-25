@@ -1,42 +1,118 @@
-# Railpack deployment
+# Railpack deployment (manual operator runbook)
 
-Build from the repository root using Railpack. Configuration lives in
-[`railpack.json`](../railpack.json). The Python provider reads `.python-version`
-and detects uv from `pyproject.toml` and `uv.lock`.
+## Status and responsibility
 
-## Platform configuration
+This is an operational guide for the repository owner. It does not perform a deployment, expose
+secrets, or certify that an environment is live. Deployment remains `USER_ACTION_PENDING` until
+the owner completes the chosen platform's steps. The worktree already implements the local-JSON
+M1–M5 product flow and additive native v2 catalog; promote only a commit whose intended scope has
+passed its own current release gates. Remote deployment, Google sign-in, and native source
+editorial analysis/route planning are not implied by this runbook.
 
-1. Select Railpack as the builder and the repository root as the build directory.
-2. Deploy a commit whose CI checks have passed. Configure the platform's deployment
-   trigger to wait for those checks; a push-triggered build alone does not enforce this.
-3. Use the start command from `railpack.json`; remove any stale Dockerfile or start-command
-   overrides in the platform settings.
-4. Set runtime variables:
-   - `JOBTOLOGY_ENVIRONMENT=production`
-   - `JOBTOLOGY_ENABLE_FIXTURES=false`
-   - `JOBTOLOGY_CORS_ORIGINS=[]` for same-origin-only browser access, or an explicit JSON
-     list of allowed frontend origins when cross-origin access is intentional.
-   - `PORT` to the platform's internal service port (defaults to 8000).
-5. Configure HTTP health checks at `/api/v1/health/live` on the same port.
-6. Route the frontend gateway's `/api/*` requests to this service over the private network.
+Railpack builds the image from the repository root using
+[`railpack.json`](../railpack.json), `.python-version`, `pyproject.toml`, and the committed
+`uv.lock`. The hosting platform owns routing, runtime secrets, resource limits, deployment
+triggers, and rollback.
 
-Railpack builds the image; networking, deployment triggers, runtime secrets, resource
-limits, and rollbacks are configured in the hosting platform. This configuration does
-not assume Railway hosting or provision platform resources.
+## Pre-deploy gate
 
-## Release flow
+Run against the exact commit to promote:
 
-```text
-PR → lint/tests → merge → Railpack image build for the tested commit
-   → staging health/smoke checks → promote image → retain previous image
+```sh
+uv sync --locked --dev
+uv run ruff check .
+uv run pytest
+uv lock --check
+uv build
 ```
 
-Pin the platform's Railpack version when selecting its supported builder release.
-Keep `uv.lock` committed and verify it with `uv sync --locked --dev` in CI.
-The current scaffold only exposes process liveness. Add readiness checks when database
-adapters are implemented. Add a one-off migration task and a separate worker service
-when their entrypoints exist; they are not part of the current startup command.
+Use a fresh disposable PostgreSQL environment only when the intended gate includes opt-in
+acceptance tests. The historical disposable database has been removed, so a normal documentation
+or unit-test pass is not PostgreSQL acceptance evidence.
 
-References:
-- https://railpack.com/config/file/
-- https://railpack.com/languages/python/
+Configure the platform to wait for the tested commit's CI checks; a push-triggered build alone
+does not prove that those checks passed.
+
+## Build and start
+
+1. Select Railpack and the repository root as the build directory.
+2. Pin a supported Railpack builder version in the platform.
+3. Use the start command in `railpack.json`; remove stale Dockerfile or start-command overrides.
+4. Bind the assigned internal `PORT` (default `8000`) and configure the HTTP health check at
+   `/api/v1/health/live`.
+
+The liveness endpoint proves that the process is running, not that the database, corpus source,
+or worker is ready for product traffic.
+
+## Runtime configuration
+
+Set real values only in the hosting platform's secret/configuration store. Never place them in the
+repository, build context, logs, or this document.
+
+| Variable | Production expectation | Notes |
+| --- | --- | --- |
+| `JOBTOLOGY_ENVIRONMENT` | `production` | Production rejects fixtures and mock samples. |
+| `JOBTOLOGY_ENABLE_FIXTURES` | `false` | Legacy preview routes are development-only. |
+| `JOBTOLOGY_ENABLE_FE_MOCK_SAMPLES` | `false` | FE mock samples are development-only. |
+| `JOBTOLOGY_CORS_ORIGINS` | Explicit JSON origin list | Use `[]` for same-origin-only access; credentialed CORS never accepts `*`. |
+| `PORT` | Platform internal port | Defaults to `8000` if the platform does not set it. |
+| `JOBTOLOGY_DATABASE_URL` | Required | Application-owned PostgreSQL only; do not point migrations at an ingestion or corpus database. |
+| `JOBTOLOGY_CORPUS_SNAPSHOT_PATH` | Required for local-JSON analysis/worker operation | Mount or otherwise provide the snapshot outside the image and keep API and worker on the same version. |
+| `JOBTOLOGY_CORPUS_SOURCE` | `local_json` unless a bounded native catalog is intentionally configured | `neo4j_query_api` supports only the documented v2 catalog reads, not native planning. |
+| `JOBTOLOGY_DB_LINK`, `JOBTOLOGY_DB_PASSWORD`, `JOBTOLOGY_DB_PROTOCOL` | Only for an explicitly configured native catalog source | Keep credentials in platform secrets; no implicit remote-corpus or planner integration exists. |
+| `JOBTOLOGY_AUTH_ENABLED` | `false` | Google login is disabled; product requests remain fail-closed with `401`. |
+
+Do not enable fixture or mock flags in production to work around authentication. They neither
+create users nor authenticate product routes.
+
+## Database and worker release steps
+
+For a product environment with application persistence:
+
+1. Provision an application-owned PostgreSQL database and set `JOBTOLOGY_DATABASE_URL`.
+2. Run the migration exactly once as a release task before promoting traffic:
+
+   ```sh
+   uv run alembic upgrade head
+   ```
+
+   Do not run it independently in every API replica. Preserve backward compatibility before
+   relying on an image rollback.
+3. Run the worker as a separate service from the same image and settings:
+
+   ```sh
+   uv run python -m jobtology_be.workers.main
+   ```
+
+   The worker is a one-shot batch entrypoint, not a continuously polling daemon. Schedule repeated
+   batches externally and give the worker its own concurrency and restart policy.
+
+## Routing and manual smoke checks
+
+Route frontend `/api/*` traffic to the service over the private network. If documentation is
+served through the same gateway, route `/docs`, `/redoc`, `/openapi.json`, and `/api-guide`
+explicitly as well; they are not all under `/api/*`.
+
+After the owner deploys, check the following at the service origin:
+
+| Request | Expected result |
+| --- | --- |
+| `GET /api/v1/health/live` | `200` process liveness response |
+| `GET /docs`, `GET /redoc`, `GET /openapi.json` | `200` API documentation surfaces |
+| `GET /api-guide` | `200` Korean wheel-backed integration guide |
+| An unauthenticated product request | `401 UNAUTHENTICATED` envelope while authentication remains disabled |
+
+The expected `401` proves the fail-closed boundary only. It does not prove Google login,
+authenticated user behavior, remote corpus publication, native editorial analysis, or route
+planning.
+
+## Rollback and source limits
+
+Retain the previous image before promotion. Roll back only when the deployed schema remains
+backward-compatible; do not blindly run a production `alembic downgrade`. Repeat liveness and
+fail-closed smoke checks after rollback.
+
+The native source is a bounded read-only catalog. `READY` is not editorial `PUBLISHED`, an
+accepted alignment is not a required competency, and native catalog availability does not enable
+native analysis or planning. See [the v2 requirements](../docs/plan.md) and
+[native source contract](../docs/neo4j-source-contract.md) before changing source configuration.
