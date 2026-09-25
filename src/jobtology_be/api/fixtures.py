@@ -12,7 +12,12 @@ from jobtology_be.contracts import (
 router = APIRouter(tags=["development fixtures"])
 
 
-@router.get("/analysis", response_model=AnalysisPreview)
+@router.get(
+    "/analysis",
+    response_model=AnalysisPreview,
+    summary="Get development analysis fixture",
+    description="Returns a read-only illustrative fixture when explicitly enabled; it is not product data.",
+)
 def analysis_fixture() -> AnalysisPreview:
     return AnalysisPreview(
         analysis_id="fixture-analysis",
@@ -35,7 +40,12 @@ def analysis_fixture() -> AnalysisPreview:
     )
 
 
-@router.get("/route-proposal", response_model=RoadmapPreview)
+@router.get(
+    "/route-proposal",
+    response_model=RoadmapPreview,
+    summary="Get development route-proposal fixture",
+    description="Returns a read-only illustrative fixture when explicitly enabled; it is not product data.",
+)
 def proposal_fixture() -> RoadmapPreview:
     return RoadmapPreview(
         route_proposal_id="fixture-proposal",
