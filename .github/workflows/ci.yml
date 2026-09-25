@@ -19,3 +19,47 @@ jobs:
       - run: uv sync --locked --dev
       - run: uv run ruff check .
       - run: uv run pytest
+      - run: uv lock --check
+      - run: uv build
+
+  deploy:
+    needs: checks
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
+    env:
+      COOLIFY_URL: https://coolify.yeongmin.net
+      COOLIFY_APP_UUID: w131qqclc6wyke8347y9puqo
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Skip superseded commits
+        id: head
+        run: |
+          head_sha=$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)
+          if [ "$head_sha" != "$GITHUB_SHA" ]; then
+            echo "main moved to $head_sha; its own run deploys it."
+            echo "current=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Deploy tested commit to Coolify
+        if: steps.head.outputs.current == 'true'
+        env:
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+        run: |
+          auth="Authorization: Bearer ${COOLIFY_TOKEN}"
+          response=$(curl --fail-with-body -sS -H "$auth" "${COOLIFY_URL}/api/v1/deploy?uuid=${COOLIFY_APP_UUID}")
+          deployment=$(jq -r '.deployments[0].deployment_uuid' <<<"$response")
+          echo "Coolify deployment ${deployment}"
+          for _ in $(seq 1 90); do
+            status=$(curl --fail-with-body -sS -H "$auth" "${COOLIFY_URL}/api/v1/deployments/${deployment}" | jq -r .status)
+            case "$status" in
+              finished) echo "Deployment finished"; exit 0 ;;
+              failed|cancelled*) echo "Deployment ${status}"; exit 1 ;;
+            esac
+            sleep 10
+          done
+          echo "Deployment timed out (last status: ${status})"
+          exit 1
