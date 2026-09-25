@@ -14,6 +14,7 @@ unsupported. These documents do not certify a remote deployment or a live authen
   at `/api-guide`
 - [Native Neo4j source contract](docs/neo4j-source-contract.md)
 - [Historical Neo4j/local PostgreSQL verification record](docs/neo4j-verification.md)
+- [Goldship deployment and environment guide (Korean)](docs/goldship-deployment.md)
 
 Google login is currently disabled (`JOBTOLOGY_AUTH_ENABLED=false`). Product routes, including
 the native catalog routes, remain fail-closed and return `401 UNAUTHENTICATED` without an

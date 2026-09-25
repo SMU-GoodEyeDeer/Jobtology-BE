@@ -14,6 +14,9 @@ Railpack builds the image from the repository root using
 `uv.lock`. The hosting platform owns routing, runtime secrets, resource limits, deployment
 triggers, and rollback.
 
+The [Goldship deployment and environment guide](../docs/goldship-deployment.md) records the
+observed host topology and the separate, planned Coolify setup; it does not certify a BE deployment.
+
 ## Pre-deploy gate
 
 Run against the exact commit to promote:
