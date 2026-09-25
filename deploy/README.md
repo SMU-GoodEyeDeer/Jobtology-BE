@@ -92,17 +92,17 @@ For a product environment with application persistence:
 
 ## Routing and manual smoke checks
 
-Route frontend `/api/*` traffic to the service over the private network. If documentation is
-served through the same gateway, route `/docs`, `/redoc`, `/openapi.json`, and `/api-guide`
-explicitly as well; they are not all under `/api/*`.
+Route `/api/*` on the frontend origin to the service. Every API and documentation surface lives
+under `/api` (`/api/docs`, `/api/redoc`, `/api/openapi.json`, `/api/guide`), so a single
+path-prefix rule covers them; do not strip the `/api` prefix at the proxy.
 
 After the owner deploys, check the following at the service origin:
 
 | Request | Expected result |
 | --- | --- |
 | `GET /api/v1/health/live` | `200` process liveness response |
-| `GET /docs`, `GET /redoc`, `GET /openapi.json` | `200` API documentation surfaces |
-| `GET /api-guide` | `200` Korean wheel-backed integration guide |
+| `GET /api/docs`, `GET /api/redoc`, `GET /api/openapi.json` | `200` API documentation surfaces |
+| `GET /api/guide` | `200` Korean wheel-backed integration guide |
 | An unauthenticated product request | `401 UNAUTHENTICATED` envelope while authentication remains disabled |
 
 The expected `401` proves the fail-closed boundary only. It does not prove Google login,

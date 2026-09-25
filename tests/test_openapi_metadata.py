@@ -41,9 +41,9 @@ def test_openapi_documents_the_authenticated_async_roadmap_contract(
     schema = app.openapi()
 
     # Then
-    assert app.docs_url == "/docs"
-    assert app.redoc_url == "/redoc"
-    assert app.openapi_url == "/openapi.json"
+    assert app.docs_url == "/api/docs"
+    assert app.redoc_url == "/api/redoc"
+    assert app.openapi_url == "/api/openapi.json"
     assert schema["info"]["summary"]
     assert "/api/v1" in schema["info"]["description"]
     assert "X-CSRF-Token" in schema["info"]["description"]

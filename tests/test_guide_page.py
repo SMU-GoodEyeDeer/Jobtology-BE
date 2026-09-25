@@ -21,16 +21,16 @@ def test_api_guide_serves_korean_html_with_documentation_links():
     client = _client()
 
     # When
-    response = client.get("/api-guide")
+    response = client.get("/api/guide")
 
     # Then
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
     body = response.text
     assert "프론트엔드 통합 가이드" in body
-    assert 'href="/docs"' in body
-    assert 'href="/redoc"' in body
-    assert 'href="/openapi.json"' in body
+    assert 'href="/api/docs"' in body
+    assert 'href="/api/redoc"' in body
+    assert 'href="/api/openapi.json"' in body
     assert "READY" in body
 
 
@@ -42,7 +42,7 @@ def test_api_guide_route_is_absent_from_the_openapi_document():
     schema = app.openapi()
 
     # Then
-    assert "/api-guide" not in schema["paths"]
+    assert "/api/guide" not in schema["paths"]
 
 
 def test_renderer_escapes_raw_html():

@@ -48,10 +48,14 @@ def test_handoff_serves_local_contract_surfaces_and_preserves_fail_closed_access
 
     # When
     with TestClient(app) as client:
-        docs_response = client.get("/docs")
-        redoc_response = client.get("/redoc")
-        openapi_response = client.get("/openapi.json")
-        guide_response = client.get("/api-guide")
+        docs_response = client.get("/api/docs")
+        redoc_response = client.get("/api/redoc")
+        openapi_response = client.get("/api/openapi.json")
+        guide_response = client.get("/api/guide")
+        legacy_statuses = [
+            client.get(path).status_code
+            for path in ("/docs", "/redoc", "/openapi.json", "/api-guide")
+        ]
         default_mock_response = client.get("/api/v1/dev/mock/samples")
         default_fixture_response = client.get("/api/v1/dev/analysis")
         protected_response = client.get(
@@ -71,9 +75,10 @@ def test_handoff_serves_local_contract_surfaces_and_preserves_fail_closed_access
     assert redoc_response.status_code == 200
     assert openapi_response.status_code == 200
     assert guide_response.status_code == 200
-    assert 'href="/docs"' in guide_response.text
-    assert 'href="/redoc"' in guide_response.text
-    assert 'href="/openapi.json"' in guide_response.text
+    assert legacy_statuses == [404, 404, 404, 404]
+    assert 'href="/api/docs"' in guide_response.text
+    assert 'href="/api/redoc"' in guide_response.text
+    assert 'href="/api/openapi.json"' in guide_response.text
     assert default_mock_response.status_code == 404
     assert default_fixture_response.status_code == 404
     assert protected_response.status_code == 401
@@ -82,7 +87,7 @@ def test_handoff_serves_local_contract_surfaces_and_preserves_fail_closed_access
     assert analysis_response.json()["error"]["code"] == "UNAUTHENTICATED"
 
     schema = openapi_response.json()
-    assert "/api-guide" not in schema["paths"]
+    assert "/api/guide" not in schema["paths"]
     analysis = schema["paths"]["/api/v1/analyses"]["post"]
     _ = AnalysisRequest.model_validate(
         schema["components"]["schemas"]["AnalysisRequest"]["examples"][0]

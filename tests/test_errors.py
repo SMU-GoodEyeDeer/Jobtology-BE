@@ -121,7 +121,7 @@ def test_openapi_declares_standard_validation_response() -> None:
     # Given
     with TestClient(create_app(Settings(enable_fixtures=False))) as client:
         # When
-        response = client.get("/openapi.json")
+        response = client.get("/api/openapi.json")
 
     # Then
     schema = response.json()

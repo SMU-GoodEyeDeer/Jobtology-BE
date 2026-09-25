@@ -11,7 +11,7 @@ unsupported. These documents do not certify a remote deployment or a live authen
 
 - [Current v2 architecture and product requirements](docs/plan.md)
 - [Korean frontend integration guide](docs/fe-integration.md), packaged in the wheel and served
-  at `/api-guide`
+  at `/api/guide`
 - [Native Neo4j source contract](docs/neo4j-source-contract.md)
 - [Historical Neo4j/local PostgreSQL verification record](docs/neo4j-verification.md)
 - [Goldship deployment and environment guide (Korean)](docs/goldship-deployment.md)
@@ -28,9 +28,9 @@ uv sync --dev
 uv run uvicorn jobtology_be.main:app --reload
 ```
 
-- Swagger UI: http://localhost:8000/docs
-- OpenAPI: http://localhost:8000/openapi.json
-- Korean FE integration guide: http://localhost:8000/api-guide (source: [docs/fe-integration.md](docs/fe-integration.md))
+- Swagger UI: http://localhost:8000/api/docs
+- OpenAPI: http://localhost:8000/api/openapi.json
+- Korean FE integration guide: http://localhost:8000/api/guide (source: [docs/fe-integration.md](docs/fe-integration.md))
 - Liveness: `/api/v1/health/live` (not database readiness)
 
 To enable explicitly labeled FE fixtures:

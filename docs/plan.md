@@ -8,9 +8,9 @@ integration, and native editorial analysis or route planning remain pending or i
 unsupported. This document defines the current architecture and product requirements; it is not a
 remote-release certification.
 
-- The served `/openapi.json` is the field-level contract for an implemented deployment.
+- The served `/api/openapi.json` is the field-level contract for an implemented deployment.
 - [The Korean frontend integration guide](fe-integration.md) is the single wheel-backed source for
-  `/api-guide`.
+  `/api/guide`.
 - [The native Neo4j source contract](neo4j-source-contract.md) defines observed source facts and
   privacy boundaries.
 - [The verification record](neo4j-verification.md) preserves dated historical QA evidence; it is

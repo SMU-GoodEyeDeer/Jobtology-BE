@@ -95,7 +95,7 @@ def render_guide_html(markdown: str) -> str:
 router = APIRouter()
 
 
-@router.get("/api-guide", include_in_schema=False, response_class=HTMLResponse)
+@router.get("/api/guide", include_in_schema=False, response_class=HTMLResponse)
 def api_guide() -> HTMLResponse:
     """Public, browser-readable rendering of docs/fe-integration.md."""
     return HTMLResponse(render_guide_html(load_guide_markdown()))

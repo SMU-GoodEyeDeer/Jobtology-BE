@@ -190,9 +190,9 @@ def create_app(
             "변경 요청은 세션 CSRF 보호를 위해 `X-CSRF-Token`도 필요합니다."
         ),
         version="0.1.0",
-        docs_url="/docs",
-        redoc_url="/redoc",
-        openapi_url="/openapi.json",
+        docs_url="/api/docs",
+        redoc_url="/api/redoc",
+        openapi_url="/api/openapi.json",
         openapi_tags=OPENAPI_TAGS,
         responses={
             422: {

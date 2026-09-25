@@ -3,15 +3,15 @@
 이 문서는 프론트엔드 개발자가 Jobtology 백엔드 API를 연동하는 방법을 안내합니다.
 필드 단위 요청/응답 명세는 이 문서에 중복 기재하지 않으며, 아래 원천 문서를 기준으로 합니다.
 
-이 Markdown은 `/api-guide`의 단일 원본이며 wheel에도 포함됩니다. 저장소 checkout과 설치된
+이 Markdown은 `/api/guide`의 단일 원본이며 wheel에도 포함됩니다. 저장소 checkout과 설치된
 패키지 모두 같은 문서를 제공해야 합니다.
 
-- Swagger UI 대화형 문서: `/docs`
-- ReDoc 열람용 문서: `/redoc`
-- OpenAPI 기계 판독 문서: `/openapi.json`
+- Swagger UI 대화형 문서: `/api/docs`
+- ReDoc 열람용 문서: `/api/redoc`
+- OpenAPI 기계 판독 문서: `/api/openapi.json`
 
 세 문서는 동일한 OpenAPI 계약을 다른 형태로 보여줍니다. 구현 중 계약이 애매할 때는
-`/openapi.json` 이 최종 기준입니다.
+`/api/openapi.json` 이 최종 기준입니다.
 
 ## 서비스 개요
 
@@ -22,10 +22,12 @@ Jobtology는 사용자의 프로필·역량·목표 입력을 바탕으로 역�
 현재 worktree에는 local JSON 기반 M1–M5 제품 흐름과 읽기 전용 native `/api/v2` catalog가
 구현되어 있습니다. 원격 배포, Google 로그인, 원격 publication/revocation 연동, native editorial
 analysis와 route planning은 아직 제공되지 않거나 의도적으로 지원하지 않습니다. 아래 흐름의 실제
-필드·상태·응답 형식 최종 기준은 배포된 서버의 `/openapi.json`입니다.
+필드·상태·응답 형식 최종 기준은 배포된 서버의 `/api/openapi.json`입니다.
 
 ## 기본 URL과 버전 정책
 
+- 배포 환경의 기본 URL은 프런트엔드와 같은 origin인 `https://jobtology.yeongmin.net`입니다.
+  API·문서는 모두 `/api` 아래에 있으므로 별도 API 도메인이나 CORS 설정 없이 상대 경로로 호출할 수 있습니다.
 - 사용자 데이터·분석·로드맵 제품 API는 `/api/v1` 경로 아래에 있습니다.
 - 명시적으로 구성한 Neo4j 원본 카탈로그 읽기는 별도 계약인 `/api/v2` 경로 아래에
   있습니다. v2는 v1의 편집 검토 코퍼스나 사용자 데이터 API를 대체하지 않습니다.
@@ -323,7 +325,7 @@ API 또는 저장된 사용자 데이터를 대체하지 않습니다. 두 모�
 
 ## 문서 링크 모음
 
-- 대화형 API 문서(Swagger UI): [\/docs](/docs)
-- 열람용 API 문서(ReDoc): [\/redoc](/redoc)
-- OpenAPI JSON: [\/openapi.json](/openapi.json)
+- 대화형 API 문서(Swagger UI): [\/api\/docs](/api/docs)
+- 열람용 API 문서(ReDoc): [\/api\/redoc](/api/redoc)
+- OpenAPI JSON: [\/api\/openapi.json](/api/openapi.json)
 - 이 문서의 원본 markdown: 저장소 `docs/fe-integration.md`
