@@ -5,9 +5,9 @@ Python/FastAPI backend for personalized capability analysis and roadmaps.
 ## Status and documentation
 
 The current worktree implements the local-JSON M1–M5 product flow and the additive, read-only
-native `/api/v2` catalog. Remote deployment, Google sign-in, remote publication/revocation
-integration, and native editorial analysis or route planning remain pending or intentionally
-unsupported. These documents do not certify a remote deployment or a live authenticated flow.
+native `/api/v2` catalog. It is deployed on Goldship at `https://jobtology.yeongmin.net/api`
+(Swagger UI: `/api/docs`). Google sign-in, remote publication/revocation integration, and native
+editorial analysis or route planning remain pending or intentionally unsupported.
 
 - [Current v2 architecture and product requirements](docs/plan.md)
 - [Korean frontend integration guide](docs/fe-integration.md), packaged in the wheel and served
@@ -60,5 +60,7 @@ not claim to have rerun it. Dated `306`-test evidence and its known limits are r
 ## Deployment
 
 Railpack configuration, runtime variables, migration/worker sequencing, private routing, and
-manual smoke/rollback steps are in [deploy/README.md](deploy/README.md). Deployment remains a
-repository-owner action; no documentation change performs or certifies a remote deployment.
+manual smoke/rollback steps are in [deploy/README.md](deploy/README.md). The live Goldship
+configuration, CI-gated deploys, and rollback procedure are in
+[docs/goldship-deployment.md](docs/goldship-deployment.md). Tested pushes to `main` deploy
+automatically.
