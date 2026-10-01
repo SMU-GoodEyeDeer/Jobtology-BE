@@ -24,7 +24,9 @@ The reader role must have only the five catalog function EXECUTE grants and no
 `ontology` schema access. The API never calls the approval function and cannot
 open the analytics gate. Its dedicated pool is limited to four connections,
 five-second acquisition/connect/command timeouts, and one read-only,
-repeatable-read transaction per HTTP read. No caller-supplied SQL is accepted.
+READ COMMITTED transaction per HTTP read, as required by the sealed-catalog gate.
+Each call remains read-only and pins the approved release; sealed data cannot be
+edited through normal database writes. No caller-supplied SQL is accepted.
 App lifespan disposes the pool. A `PREPARING` release can be read only after
 separate operator approval; a new/unverified/failed load closes the gate.
 
