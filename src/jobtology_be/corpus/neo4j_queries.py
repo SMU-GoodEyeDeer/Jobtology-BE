@@ -52,7 +52,7 @@ ENRICHMENT_FIELDS: Final = (
 )
 
 _OCCUPATIONS_STATEMENT: Final = (
-    "MATCH (occupation:occupation) "
+    "MATCH (occupation:entity:occupation) WHERE NOT occupation:ontologyObject "
     "RETURN occupation.id AS id, occupation.code AS code, occupation.kind AS kind, "
     "occupation.name AS name, occupation.name_source_record_id AS name_source_record_id, "
     "occupation.name_source_run_id AS name_source_run_id "
@@ -73,7 +73,7 @@ _PUBLICATION_BY_ID_STATEMENT: Final = (
 _ALIGNMENTS_STATEMENT: Final = (
     "MATCH (enrichment:reviewedNcsEnrichment {publication_id: $publication_id})"
     "-[alignment:ALIGNS_WITH_NCS {publication_id: $publication_id}]"
-    "->(competency:ncsCompetency) "
+    "->(competency:entity:ncsCompetency) WHERE NOT competency:ontologyObject "
     "RETURN enrichment.id AS source_enrichment_id, "
     "enrichment.posting_id AS source_posting_id, enrichment.current AS source_current, "
     "alignment.accepted AS accepted, "

@@ -48,3 +48,29 @@ def test_alignment_definition_projects_safe_source_context_in_full_identity_orde
     # When / Then
     assert source_context in statement
     assert full_identity_order in statement
+
+
+def test_occupations_query_requires_source_entity_and_excludes_ontology_object() -> None:
+    # Given: ontology occupations share :occupation but source occupations also have :entity.
+    statement = NEO4J_CORPUS_READ_QUERY_CATALOG.resolve(LIST_OCCUPATIONS_QUERY_ID).statement
+
+    # When: the registered match and predicate are inspected.
+    source_match = statement.split(" RETURN ", maxsplit=1)[0]
+
+    # Then: a mixed-label ontology node cannot enter the source catalog.
+    assert source_match == (
+        "MATCH (occupation:entity:occupation) WHERE NOT occupation:ontologyObject"
+    )
+
+
+def test_alignments_query_requires_source_competency_and_excludes_ontology_object() -> None:
+    # Given: ontology competencies share :ncsCompetency but lack source :entity.
+    statement = NEO4J_CORPUS_READ_QUERY_CATALOG.resolve(LIST_ALIGNMENTS_QUERY_ID).statement
+
+    # When: the registered traversal and predicate are inspected.
+    source_match = statement.split(" RETURN ", maxsplit=1)[0]
+
+    # Then: ontology competencies cannot be returned through source alignments.
+    assert source_match.endswith(
+        "->(competency:entity:ncsCompetency) WHERE NOT competency:ontologyObject"
+    )
