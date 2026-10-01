@@ -1,0 +1,124 @@
+# Approved source-only catalog HTTP API
+
+The PostgreSQL source catalog is independent of the existing Neo4j `/api/v2/*` and
+product `/api/v1/*` routes. All routes below require the real authenticated session
+principal; absent authentication returns the standard `401 UNAUTHENTICATED` envelope.
+No source ID is a product canonical occupation ID. Source records do not authorize
+analysis, recommendations, or publication.
+
+## Configuration and lifecycle
+
+By default no catalog connection exists and authenticated requests return 503.
+`JOBTOLOGY_CATALOG_DATABASE_URL` is a separate secret, never inferred from
+`JOBTOLOGY_DATABASE_URL`. Configure an asyncpg URL with the *restricted*
+`jobtology_catalog_reader` login after applying DB `019_catalog_approval.sql` and
+`catalog_reader_grants.psql`, provisioning reader authentication, and independently
+approving a verified graph load according to the [DB runbook](../../Jobtology-DB/hop/ontology/catalog.md).
+Example shape (not a credential):
+
+```text
+JOBTOLOGY_CATALOG_DATABASE_URL=postgresql+asyncpg://jobtology_catalog_reader:<secret>@<host>/<database>
+```
+
+The reader role must have only the five catalog function EXECUTE grants and no
+`ontology` schema access. The API never calls the approval function and cannot
+open the analytics gate. Its dedicated pool is limited to four connections,
+five-second acquisition/connect/command timeouts, and one read-only,
+repeatable-read transaction per HTTP read. No caller-supplied SQL is accepted.
+App lifespan disposes the pool. A `PREPARING` release can be read only after
+separate operator approval; a new/unverified/failed load closes the gate.
+
+## Routes
+
+All query strings are closed: unknown keys (including `preview=true`), repeated keys,
+and a present but empty/whitespace-only `release_id` return 422.
+`release_id` is optional; if present it must equal the currently approved pointer.
+There is no preview fallback. Lists use `limit=100` (1–100) and `offset=0` (nonnegative).
+Every paginated request must pin the same release ID; the DB gate is checked again
+on each page and may close between requests.
+
+| GET path | Shape |
+|---|---|
+| `/api/v2/catalog/summary?release_id=...` | context, `entity_counts`, `posting_selection_outcomes` |
+| `/api/v2/catalog/entities?kind=occupation&limit=20&offset=0&release_id=...` | context, `entity_kind`, `limit`, `offset`, `items` |
+| `/api/v2/catalog/entities/{entity_id:path}?release_id=...` | context, `entity` with allowlisted `source_facts` |
+| `/api/v2/catalog/relations?entity_id=...&limit=20&offset=0&release_id=...` | context, `entity_id`, `limit`, `offset`, `items` |
+
+For URN-like IDs with colons and slashes, URL-encode the path segment when possible
+(clients/proxies may normalize encoded slashes); the `relations` route uses a query
+parameter rather than an ambiguous path suffix. Named list aliases are
+`occupations`, `competencies`, `organizations`, `postings`, `qualifications`,
+`exam-sessions`, and `career-ranks` under `/api/v2/catalog/`. Each returns the
+same paginated shape as `entities` with a fixed kind. `kind` additionally accepts
+`ncsUnitFamily`, `ncsClass`, and `conceptScheme`.
+
+Example summary (illustrative counts, not deployment evidence):
+
+```json
+{
+  "contract_version": "hop-catalog-source-v1", "release_id": "release-verified-1",
+  "data_as_of": "2026-09-30T00:00:00+00:00", "manifest_hash": "<manifest-hash>",
+  "source_profile": {"kind": "SOURCE_ONLY", "analysis_available": false,
+    "capabilities": ["entities", "source_relations"]},
+  "entity_counts": {"occupation": 1},
+  "posting_selection_outcomes": {"SELECTION_PENDING": 2}
+}
+```
+
+Entity items contain only `entity_id`, `kind`, `code`, `scheme_id`, `revision_id`,
+`name`, `payload_hash`. Detail adds `schema_version` and allowlisted `source_facts`
+(e.g. `aliases`, source status/dates/IDs and version/rank identifiers). Relation
+items contain only `relation_id`, `subject_id`, `predicate`, `object_id`,
+`assertion_kind`, `acceptance_policy`. Unknown DB fields are dropped, not passed
+through. No descriptions, eligibility text, evidence, reviewer data, raw
+responses, private profile, or product analysis fields are returned.
+
+Errors use the existing `{ "error": {"code", "message", "details", "request_id"} }`
+envelope: unapproved/stale/unreachable 503; revoked/failed release 410;
+entity absent from the approved release 404; invalid filters/pages 422.
+DB exception text, SQL and credentials are not returned. Counts and posting
+outcomes are inventory status, not semantic review or employment metrics.
+
+## Verification limits
+
+Run the BE checks from this repository root:
+
+```sh
+uv sync --dev
+uv run pytest -q tests/test_source_catalog_api.py
+uv run pytest -q -rs tests/test_source_catalog_integration.py
+uv run pytest -q
+uv run ruff check .
+uv build
+```
+
+The API unit test command tests real FastAPI routes with a **test-injected
+principal and reader**, not a login bypass. It covers `401`, allowlisted projection, strict
+query keys and pagination, SQL error mapping, and read-only bound SQL calls.
+The integration test requires a running Docker daemon and sibling
+`Jobtology-DB/hop/ontology/tests/run.py`. It creates a disposable PostgreSQL
+container with an ephemeral loopback port (and a temporary Colima host tunnel
+where necessary), loads synthetic sources, and tests the
+restricted reader's privileges and HTTP `503` before approval, `200` for an
+approved source-only release, `503` after a stale load, and `410` after
+revocation. A Docker-less run skips that integration test; a daemon whose
+published loopback port is unreachable fails it. Treat a skip as
+**not verified**, not a pass of PostgreSQL behavior. The synthetic graph-load
+record is not evidence of a native Neo4j load.
+
+For a local API smoke check without an authenticated session:
+
+```sh
+uv run uvicorn jobtology_be.main:app --reload
+curl -i http://localhost:8000/api/v2/catalog/summary
+curl -i http://localhost:8000/api/openapi.json
+```
+
+With authentication disabled (the current default), the catalog request
+returns `401 UNAUTHENTICATED` even if a catalog DSN is configured. OpenAPI
+lists the route contract but does not imply an approved catalog or a working
+user session. Do not invent a development login or assume a `200` can be
+smoke-tested over HTTP in that configuration. Before any operational reader
+is enabled, the DB runbook's source-only approval and deployment-specific
+native graph verification must pass separately; the BE tests cannot prove
+either a production approval or an open analytics gate.
