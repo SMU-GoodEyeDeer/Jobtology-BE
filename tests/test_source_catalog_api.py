@@ -280,7 +280,7 @@ def test_repository_uses_only_bound_function_calls_in_one_readonly_transaction(
     anyio.run(read)
     # Then a readonly transaction precedes one bound catalog function invocation
     assert calls == [
-        ("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY", None),
+        ("SET TRANSACTION ISOLATION LEVEL READ COMMITTED, READ ONLY", None),
         ("SELECT CAST(catalog.catalog_summary_v1(:release_id) AS text)",
          {"release_id": "release/with:colon"}),
     ]

@@ -78,7 +78,7 @@ class PostgresSourceCatalog:
     ](self, operation: CatalogOperation, params: dict[str, str | int | None], model: type[T]) -> T:
         try:
             async with self.engine.connect() as connection, connection.begin():
-                _ = await connection.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
+                _ = await connection.execute(text("SET TRANSACTION ISOLATION LEVEL READ COMMITTED, READ ONLY"))
                 result = await connection.execute(text(_FUNCTIONS[operation]), params)
                 payload = result.scalar_one()
             if not isinstance(payload, str):
