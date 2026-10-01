@@ -13,6 +13,10 @@ editorial analysis or route planning remain pending or intentionally unsupported
 - [Korean frontend integration guide](docs/fe-integration.md), packaged in the wheel and served
   at `/api/guide`
 - [Native Neo4j source contract](docs/neo4j-source-contract.md)
+- [Approved PostgreSQL source-only catalog API](docs/source-catalog-api.md)
+- [Local `/api/v2/catalog` testing guide](docs/api-v2-testing.md)
+- [API changelog](docs/api-changelog.md)
+- [Optional editorial drafts](docs/editorial-data.md)
 - [Historical Neo4j/local PostgreSQL verification record](docs/neo4j-verification.md)
 - [Goldship deployment and environment guide (Korean)](docs/goldship-deployment.md)
 
@@ -52,9 +56,10 @@ uv lock --check
 uv build
 ```
 
-PostgreSQL acceptance checks are opt-in and require a freshly provisioned disposable database.
-The former disposable PostgreSQL environment has been removed; this documentation update does
-not claim to have rerun it. Dated `306`-test evidence and its known limits are retained in
+The source-only catalog integration test provisions its own disposable PostgreSQL container
+when Docker is available; see the [v2 testing guide](docs/api-v2-testing.md). Other PostgreSQL
+acceptance checks remain opt-in and require a separately provisioned disposable database.
+Historical verification and its limits are retained in
 [docs/neo4j-verification.md](docs/neo4j-verification.md).
 
 ## Deployment
