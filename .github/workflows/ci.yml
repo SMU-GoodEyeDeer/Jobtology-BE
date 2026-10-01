@@ -10,12 +10,23 @@ permissions:
 jobs:
   checks:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Jobtology-BE
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: Jobtology-BE
+      - uses: actions/checkout@v4
+        with:
+          repository: SMU-GoodEyeDeer/Jobtology-DB
+          ref: 67d78f85cc21c6e75dec07060c102ebfe73f5738
+          path: Jobtology-DB
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
           python-version: "3.12"
+          cache-dependency-glob: Jobtology-BE/uv.lock
       - run: uv sync --locked --dev
       - run: uv run ruff check .
       - run: uv run pytest
