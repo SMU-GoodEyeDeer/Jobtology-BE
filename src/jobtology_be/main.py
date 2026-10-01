@@ -7,6 +7,14 @@ from jobtology_be.api.composition import OPENAPI_TAGS, database_lifespan, regist
 from jobtology_be.api.dependencies import ApiDependencies
 from jobtology_be.api.editorial_drafts import router as editorial_drafts_router
 from jobtology_be.api.errors import ErrorResponse, register_error_handlers
+from jobtology_be.api.google_auth import (
+    require_google_login_store,
+    require_google_provider,
+    require_google_settings,
+)
+from jobtology_be.api.google_auth import (
+    router as google_auth_router,
+)
 from jobtology_be.api.guide import router as guide_router
 from jobtology_be.api.neo4j_catalog import router as neo4j_catalog_router
 from jobtology_be.api.router import router
@@ -33,7 +41,9 @@ from jobtology_be.infrastructure.persistence.queries import PostgresProductQueri
 from jobtology_be.infrastructure.persistence.source_catalog import PostgresSourceCatalog
 from jobtology_be.infrastructure.persistence.store import PostgresApplicationStore
 from jobtology_be.modules.analyses.editorial_models import ReleaseState
+from jobtology_be.modules.auth.google_oidc import GoogleOidcProvider
 from jobtology_be.modules.auth.session_cookies import (
+    OAuthCallbackQueryMiddleware,
     SessionCookiePolicy,
     SessionCookiePolicyMiddleware,
 )
@@ -98,6 +108,12 @@ def create_app(
         if database is None:
             raise ValueError("Enabled authentication requires a database URL or injected session store")
         session_store = PostgresAuthStore(database)
+    google_login_store = dependencies.google_login_store
+    if settings.auth_enabled and google_login_store is None and isinstance(session_store, PostgresAuthStore):
+        google_login_store = session_store
+    google_provider = dependencies.google_identity_provider
+    if settings.auth_enabled and google_provider is None:
+        google_provider = GoogleOidcProvider(settings.google_oidc_settings)
     if profile_service is None and store is not None:
         profile_service = PersistentProfileService(store)
     if goal_service is None and store is not None:
@@ -154,6 +170,10 @@ def create_app(
         lifespan=database_lifespan(database, corpus_source, source_catalog_resource),
     )
     register_error_handlers(app)
+    app.add_middleware(OAuthCallbackQueryMiddleware)
+    app.dependency_overrides[require_google_settings] = lambda: settings
+    app.dependency_overrides[require_google_login_store] = lambda: google_login_store
+    app.dependency_overrides[require_google_provider] = lambda: google_provider
     app.add_middleware(
         SessionCookiePolicyMiddleware,
         policy=SessionCookiePolicy(
@@ -190,6 +210,7 @@ def create_app(
         expose_headers=["X-Request-ID"],
     )
     app.include_router(router, prefix="/api/v1")
+    app.include_router(google_auth_router, prefix="/api/v1")
     app.include_router(editorial_drafts_router, prefix="/api/v1")
     app.include_router(neo4j_catalog_router, prefix="/api/v2")
     app.include_router(source_catalog_router, prefix="/api/v2")
