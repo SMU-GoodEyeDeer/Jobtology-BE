@@ -3,6 +3,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Final
+from urllib.parse import parse_qs
 
 from starlette.responses import Response
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -10,6 +11,25 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 SESSION_COOKIE_NAME: Final = "jobtology_session"
 OAUTH_ATTEMPT_COOKIE_NAME: Final = "jobtology_oauth_attempt"
 OAUTH_ATTEMPT_TTL_SECONDS: Final = 600
+
+
+class OAuthCallbackQueryMiddleware:
+    def __init__(self, app: ASGIApp) -> None:
+        self._app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http" and scope["path"] == "/api/v1/auth/google/callback":
+            raw_query = scope.get("query_string", b"")
+            try:
+                parameters = (
+                    parse_qs(raw_query.decode("utf-8"), keep_blank_values=True, max_num_fields=10)
+                    if len(raw_query) <= 8192 else {}
+                )
+            except (UnicodeDecodeError, ValueError):
+                parameters = {}
+            scope.setdefault("state", {})["oauth_callback_query"] = parameters
+            scope["query_string"] = b""
+        await self._app(scope, receive, send)
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,7 +103,7 @@ def set_oauth_attempt_cookie(response: Response, browser_binding: str) -> None:
         httponly=True,
         secure=policy.secure,
         samesite="lax",
-        path="/",
+        path="/api/v1/auth/google",
     )
 
 
@@ -94,5 +114,5 @@ def clear_oauth_attempt_cookie(response: Response) -> None:
         httponly=True,
         secure=policy.secure,
         samesite="lax",
-        path="/",
+        path="/api/v1/auth/google",
     )
