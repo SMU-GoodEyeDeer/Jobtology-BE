@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "occupations": [
+    {
+      "occupation_id": "AI_ENGINEER", "title": "AI Engineer", "status": "DRAFT", "authored_by": "ASSISTANT", "reviewed_at": null,
+      "requirements": [
+        {"requirement_key": "ai_data", "label": "Prepare and inspect model-ready datasets", "necessity": "REQUIRED", "suggested_learning_outcome": "Document data splits, quality checks and leakage risks", "source_refs": []},
+        {"requirement_key": "ai_eval", "label": "Evaluate model behavior against a baseline", "necessity": "REQUIRED", "suggested_learning_outcome": "Compare reproducible metrics and error slices", "source_refs": []},
+        {"requirement_key": "ai_delivery", "label": "Serve and monitor a model prototype", "necessity": "RECOMMENDED", "suggested_learning_outcome": "Explain inference constraints and monitoring signals", "source_refs": []}
+      ],
+      "activities": [
+        {"action_id": "ai_dataset_audit", "revision": 1, "title": "Dataset audit notebook", "activity_type": "STUDY", "estimated_hours": 12, "outcome_requirement_keys": ["ai_data"], "prerequisite_action_ids": [], "completion_criteria": ["Save a reproducible split and a written leakage checklist"], "source_refs": [], "cost": {"kind": "UNKNOWN"}, "is_foundational": true},
+        {"action_id": "ai_baseline_eval", "revision": 1, "title": "Baseline comparison project", "activity_type": "PROJECT", "estimated_hours": 24, "outcome_requirement_keys": ["ai_eval"], "prerequisite_action_ids": ["ai_dataset_audit"], "completion_criteria": ["Commit evaluation code and a metric comparison with failure examples"], "source_refs": [], "cost": {"kind": "UNKNOWN"}, "is_foundational": false},
+        {"action_id": "ai_inference_demo", "revision": 1, "title": "Inference service prototype", "activity_type": "PROJECT", "estimated_hours": 20, "outcome_requirement_keys": ["ai_delivery"], "prerequisite_action_ids": ["ai_baseline_eval"], "completion_criteria": ["Demonstrate a request, response and monitoring plan"], "source_refs": [], "cost": {"kind": "UNKNOWN"}, "is_foundational": false}
+      ]
+    },
+    {
+      "occupation_id": "BACKEND_DEVELOPER", "title": "Backend Developer", "status": "DRAFT", "authored_by": "ASSISTANT", "reviewed_at": null,
+      "requirements": [
+        {"requirement_key": "be_api", "label": "Design a documented API contract", "necessity": "REQUIRED", "suggested_learning_outcome": "Describe inputs, outputs and error behavior", "source_refs": []},
+        {"requirement_key": "be_storage", "label": "Implement reliable persistence", "necessity": "REQUIRED", "suggested_learning_outcome": "Explain transactions and migration safety", "source_refs": []},
+        {"requirement_key": "be_ops", "label": "Observe and diagnose service failures", "necessity": "RECOMMENDED", "suggested_learning_outcome": "Trace a failing request using logs and tests", "source_refs": []}
+      ],
+      "activities": [
+        {"action_id": "be_contract_study", "revision": 1, "title": "API contract exercise", "activity_type": "STUDY", "estimated_hours": 10, "outcome_requirement_keys": ["be_api"], "prerequisite_action_ids": [], "completion_criteria": ["Write an endpoint contract including invalid-input responses"], "source_refs": [], "cost": {"kind": "UNKNOWN"}, "is_foundational": true},
+        {"action_id": "be_transaction_project", "revision": 1, "title": "Transactional persistence project", "activity_type": "PROJECT", "estimated_hours": 22, "outcome_requirement_keys": ["be_storage"], "prerequisite_action_ids": ["be_contract_study"], "completion_criteria": ["Run a migration and tests for rollback and conflicting writes"], "source_refs": [], "cost": {"kind": "UNKNOWN"}, "is_foundational": false},
+        {"action_id": "be_observability_lab", "revision": 1, "title": "Failure diagnosis lab", "activity_type": "PROJECT", "estimated_hours": 14, "outcome_requirement_keys": ["be_ops"], "prerequisite_action_ids": ["be_transaction_project"], "completion_criteria": ["Reproduce one failure and document its trace and fix"], "source_refs": [], "cost": {"kind": "UNKNOWN"}, "is_foundational": false}
+      ]
+    },
+    {
+      "occupation_id": "FRONTEND_DEVELOPER", "title": "Frontend Developer", "status": "DRAFT", "authored_by": "ASSISTANT", "reviewed_at": null,
+      "requirements": [
+        {"requirement_key": "fe_ui", "label": "Build accessible responsive interfaces", "necessity": "REQUIRED", "suggested_learning_outcome": "Implement keyboard access and responsive states", "source_refs": []},
+        {"requirement_key": "fe_state", "label": "Manage client data and error states", "necessity": "REQUIRED", "suggested_learning_outcome": "Handle loading, failure and retry states", "source_refs": []},
+        {"requirement_key": "fe_quality", "label": "Test user-visible interactions", "necessity": "RECOMMENDED", "suggested_learning_outcome": "Verify an interaction at different viewport sizes", "source_refs": []}
+      ],
+      "activities": [
+        {"action_id": "fe_accessibility_study", "revision": 1, "title": "Accessible component study", "activity_type": "STUDY", "estimated_hours": 12, "outcome_requirement_keys": ["fe_ui"], "prerequisite_action_ids": [], "completion_criteria": ["Build a keyboard-operable component at two viewport sizes"], "source_refs": [], "cost": {"kind": "UNKNOWN"}, "is_foundational": true},
+        {"action_id": "fe_data_flow_project", "revision": 1, "title": "Data-driven interface project", "activity_type": "PROJECT", "estimated_hours": 20, "outcome_requirement_keys": ["fe_state"], "prerequisite_action_ids": ["fe_accessibility_study"], "completion_criteria": ["Show loading, empty, error and retry interactions"], "source_refs": [], "cost": {"kind": "UNKNOWN"}, "is_foundational": false},
+        {"action_id": "fe_interaction_tests", "revision": 1, "title": "Browser interaction test project", "activity_type": "PROJECT", "estimated_hours": 14, "outcome_requirement_keys": ["fe_quality"], "prerequisite_action_ids": ["fe_data_flow_project"], "completion_criteria": ["Run automated keyboard and responsive interaction checks"], "source_refs": [], "cost": {"kind": "UNKNOWN"}, "is_foundational": false}
+      ]
+    },
+    {
+      "occupation_id": "DATA_ANALYST", "title": "Data Analyst", "status": "DRAFT", "authored_by": "ASSISTANT", "reviewed_at": null,
+      "requirements": [
+        {"requirement_key": "da_query", "label": "Query and clean tabular data", "necessity": "REQUIRED", "suggested_learning_outcome": "Reproduce a quality-checked dataset", "source_refs": []},
+        {"requirement_key": "da_analysis", "label": "Choose and interpret analysis methods", "necessity": "REQUIRED", "suggested_learning_outcome": "Separate observation from causal claims", "source_refs": []},
+        {"requirement_key": "da_communication", "label": "Communicate findings and limitations", "necessity": "RECOMMENDED", "suggested_learning_outcome": "Present a chart with assumptions and caveats", "source_refs": []}
+      ],
+      "activities": [
+        {"action_id": "da_sql_study", "revision": 1, "title": "SQL quality checks", "activity_type": "STUDY", "estimated_hours": 12, "outcome_requirement_keys": ["da_query"], "prerequisite_action_ids": [], "completion_criteria": ["Save reproducible queries and missing-value checks"], "source_refs": [], "cost": {"kind": "UNKNOWN"}, "is_foundational": true},
+        {"action_id": "da_exploration_project", "revision": 1, "title": "Exploratory analysis project", "activity_type": "PROJECT", "estimated_hours": 18, "outcome_requirement_keys": ["da_analysis"], "prerequisite_action_ids": ["da_sql_study"], "completion_criteria": ["Document an analysis question, method and limitations"], "source_refs": [], "cost": {"kind": "UNKNOWN"}, "is_foundational": false},
+        {"action_id": "da_brief_project", "revision": 1, "title": "Stakeholder findings brief", "activity_type": "PROJECT", "estimated_hours": 10, "outcome_requirement_keys": ["da_communication"], "prerequisite_action_ids": ["da_exploration_project"], "completion_criteria": ["Deliver a chart and a brief distinguishing findings from assumptions"], "source_refs": [], "cost": {"kind": "UNKNOWN"}, "is_foundational": false}
+      ]
+    }
+  ]
+}
