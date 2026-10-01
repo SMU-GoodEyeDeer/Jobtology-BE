@@ -31,9 +31,13 @@ class GoogleOidcSettings:
     def is_configured(self) -> bool:
         return (
             self.client_id is not None
+            and bool(self.client_id.strip())
             and self.client_secret is not None
+            and bool(self.client_secret.get_secret_value().strip())
             and self.redirect_uri is not None
+            and bool(self.redirect_uri.strip())
             and self.frontend_url is not None
+            and bool(self.frontend_url.strip())
         )
 
 
@@ -145,6 +149,8 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "Authentication requires Google client ID, client secret, redirect URI, and frontend URL"
                 )
+            if not self.google_oidc_settings.is_configured:
+                raise ValueError("Authentication requires nonblank Google OIDC configuration")
             _validate_redirect_uri(self.google_redirect_uri)
             if self.frontend_url not in self.cors_origins:
                 raise ValueError("The frontend URL must be an explicit CORS origin")
@@ -194,10 +200,11 @@ def _validate_redirect_uri(value: str) -> None:
         or parsed.hostname is None
         or parsed.username is not None
         or parsed.password is not None
+        or parsed.path != "/api/v1/auth/google/callback"
         or parsed.query != ""
         or parsed.fragment != ""
     ):
-        raise ValueError("Google redirect URI must be an absolute HTTP(S) URL")
+        raise ValueError("Google redirect URI must target the exact backend callback URL")
 
 
 def _is_https_url(value: str) -> bool:
