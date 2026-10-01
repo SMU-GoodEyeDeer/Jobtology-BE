@@ -6,6 +6,8 @@ from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 
 type ExternalDatabaseProtocol = Literal[
     "bolt://",
@@ -42,6 +44,8 @@ class Settings(BaseSettings):
 
     environment: Literal["development", "test", "production"] = "development"
     database_url: str | None = None
+    catalog_database_url: SecretStr | None = None
+    editorial_draft_path: Path | None = None
     corpus_snapshot_path: Path | None = None
     corpus_source: CorpusSource = "local_json"
     db_link: SecretStr | None = None
@@ -87,6 +91,17 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_production_settings(self) -> "Settings":
+        if self.catalog_database_url is not None:
+            try:
+                catalog_url = make_url(self.catalog_database_url.get_secret_value())
+            except ArgumentError:
+                raise ValueError("Catalog connection must use the dedicated async reader") from None
+            if (
+                catalog_url.drivername != "postgresql+asyncpg"
+                or catalog_url.username != "jobtology_catalog_reader"
+                or not catalog_url.database
+            ):
+                raise ValueError("Catalog connection must use the dedicated async reader")
         match self.environment:
             case "production":
                 if self.enable_fixtures or self.enable_fe_mock_samples:
