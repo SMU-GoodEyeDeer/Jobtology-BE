@@ -2,6 +2,10 @@
   "$schema": "https://schema.railpack.com",
   "provider": "python",
   "deploy": {
+    "variables": {
+      "JOBTOLOGY_AUTH_ENABLED": "false",
+      "JOBTOLOGY_GUEST_SESSIONS_ENABLED": "true"
+    },
     "startCommand": "uvicorn jobtology_be.main:app --host 0.0.0.0 --port ${PORT:-8000}"
   }
 }
