@@ -104,7 +104,7 @@ def create_app(
         )
     if corpus_source is not None and neo4j_catalog is None:
         neo4j_catalog = corpus_source.native_catalog
-    if settings.auth_enabled and session_store is None:
+    if (settings.auth_enabled or settings.guest_sessions_enabled) and session_store is None:
         if database is None:
             raise ValueError("Enabled authentication requires a database URL or injected session store")
         session_store = PostgresAuthStore(database)

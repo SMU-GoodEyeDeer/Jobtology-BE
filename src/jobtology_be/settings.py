@@ -59,6 +59,8 @@ class Settings(BaseSettings):
     enable_fe_mock_samples: bool = False
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
     auth_enabled: bool = False
+    guest_sessions_enabled: bool = False
+    guest_session_max_new_per_minute: int = Field(default=30, ge=1, le=1000)
     google_client_id: str | None = Field(default=None, min_length=1)
     google_client_secret: SecretStr | None = Field(default=None, min_length=1)
     google_redirect_uri: str | None = Field(default=None, min_length=1)
@@ -87,7 +89,8 @@ class Settings(BaseSettings):
                 return False
             case "development":
                 return (
-                    self.google_redirect_uri is not None
+                    not self.guest_sessions_enabled
+                    and self.google_redirect_uri is not None
                     and not _is_insecure_localhost_url(self.google_redirect_uri)
                 )
             case unreachable:
@@ -133,11 +136,13 @@ class Settings(BaseSettings):
             self.google_redirect_uri,
         )
         provided_google_values = sum(value is not None for value in google_values)
-        if 0 < provided_google_values < len(google_values):
+        if self.auth_enabled and self.guest_sessions_enabled:
+            raise ValueError("Google authentication and guest sessions cannot both be enabled")
+        if not self.guest_sessions_enabled and 0 < provided_google_values < len(google_values):
             raise ValueError(
                 "Google OIDC configuration must provide client ID, client secret, and redirect URI together"
             )
-        if self.frontend_url is not None:
+        if self.frontend_url is not None and not self.guest_sessions_enabled:
             _validate_origin(self.frontend_url, "Frontend URL")
         if self.auth_enabled:
             if (
