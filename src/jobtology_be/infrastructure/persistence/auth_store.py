@@ -1,4 +1,5 @@
 from datetime import timedelta
+from typing import Final
 from uuid import UUID, uuid4
 
 from pydantic import SecretStr
@@ -10,8 +11,11 @@ from jobtology_be.infrastructure.persistence.auth_contracts import (
     GOOGLE_ISSUER,
     ConsumedOAuthLoginAttempt,
     GoogleLogin,
+    GuestSessionUnavailableError,
+    IssuedGuestSession,
     IssuedSession,
     OAuthLoginAttempt,
+    SessionIssue,
     SessionPrincipal,
 )
 from jobtology_be.infrastructure.persistence.database import Database
@@ -24,11 +28,50 @@ from jobtology_be.infrastructure.persistence.schema import (
 )
 
 OAUTH_LOGIN_ATTEMPT_LIFETIME = timedelta(minutes=10)
+_GUEST_ISSUANCE_LOCK_KEY: Final = 503277504689521813
 
 
 class PostgresAuthStore:
     def __init__(self, database: Database) -> None:
         self._database = database
+
+    async def create_guest_session(
+        self, issue: SessionIssue, issuance_limit: int
+    ) -> IssuedGuestSession | None:
+        async with self._database.sessions.begin() as session:
+            await session.execute(
+                select(func.pg_advisory_xact_lock(_GUEST_ISSUANCE_LOCK_KEY))
+            )
+            issued_at = (await session.execute(select(func.clock_timestamp()))).scalar_one()
+            count = (await session.execute(
+                select(func.count()).select_from(auth_sessions).where(
+                    auth_sessions.c.created_at >= issued_at - timedelta(minutes=1)
+                )
+            )).scalar_one()
+            if count >= issuance_limit:
+                return None
+            user_id = uuid4()
+            await session.execute(insert(users).values(id=user_id))
+            version = await session.scalar(
+                insert(profiles).values(user_id=user_id).returning(profiles.c.version)
+            )
+            if version is None:
+                raise GuestSessionUnavailableError
+            await session.execute(
+                insert(auth_sessions).values(
+                    id=uuid4(), user_id=user_id,
+                    token_hash=issue.token_hash, csrf_hash=issue.csrf_hash,
+                    created_at=issued_at,
+                    expires_at=issued_at + issue.lifetime,
+                )
+            )
+        return IssuedGuestSession(user_id=user_id, profile_version=version)
+
+    async def read_profile_version(self, user_id: UUID) -> int | None:
+        async with self._database.sessions() as session:
+            return await session.scalar(
+                select(profiles.c.version).where(profiles.c.user_id == user_id)
+            )
 
     async def create_oauth_login_attempt(self, attempt: OAuthLoginAttempt) -> None:
         async with self._database.sessions.begin() as session:

@@ -3,8 +3,13 @@ from datetime import timedelta
 from hashlib import sha256
 from secrets import token_urlsafe
 from typing import Final, Protocol
+from uuid import UUID
 
-from jobtology_be.infrastructure.persistence.auth_contracts import SessionIssue, SessionPrincipal
+from jobtology_be.infrastructure.persistence.auth_contracts import (
+    IssuedGuestSession,
+    SessionIssue,
+    SessionPrincipal,
+)
 
 _SESSION_SECRET_BYTES: Final = 32
 _COOKIE_SECRET_SEPARATOR: Final = "."
@@ -59,6 +64,14 @@ class SessionStore(Protocol):
     async def matches_session_csrf(self, session_token_hash: bytes, csrf_hash: bytes) -> bool: ...
 
     async def revoke_session(self, session_token_hash: bytes) -> None: ...
+
+
+class GuestSessionStore(SessionStore, Protocol):
+    async def create_guest_session(
+        self, issue: SessionIssue, issuance_limit: int
+    ) -> IssuedGuestSession | None: ...
+
+    async def read_profile_version(self, user_id: UUID) -> int | None: ...
 
 
 def issue_session_credentials() -> SessionCredentials:

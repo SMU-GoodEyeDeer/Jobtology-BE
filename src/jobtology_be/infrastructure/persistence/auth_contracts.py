@@ -8,6 +8,10 @@ from pydantic import SecretStr
 GOOGLE_ISSUER: Final = "https://accounts.google.com"
 
 
+class GuestSessionUnavailableError(Exception):
+    """Guest creation cannot produce a complete persisted identity."""
+
+
 @dataclass(frozen=True, slots=True)
 class OAuthLoginAttempt:
     state_hash: bytes
@@ -39,6 +43,12 @@ class GoogleLogin:
 class IssuedSession:
     user_id: UUID
     expires_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class IssuedGuestSession:
+    user_id: UUID
+    profile_version: int
 
 
 @dataclass(frozen=True, slots=True)
