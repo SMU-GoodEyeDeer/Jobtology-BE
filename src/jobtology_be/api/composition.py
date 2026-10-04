@@ -4,11 +4,16 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from fastapi import FastAPI
 
 from jobtology_be.api.analyses import require_analysis_service
-from jobtology_be.api.auth_session import require_authenticated_session, require_session_store
+from jobtology_be.api.auth_session import (
+    require_authenticated_session,
+    require_session_response,
+    require_session_store,
+)
 from jobtology_be.api.capabilities import require_capability_service
 from jobtology_be.api.dependencies import ApiDependencies
 from jobtology_be.api.editorial_drafts import require_editorial_drafts
 from jobtology_be.api.goals import require_goal_service
+from jobtology_be.api.guest_session import GuestSessionBootstrap
 from jobtology_be.api.idempotency import IdempotencyStore, require_idempotency_store
 from jobtology_be.api.identity import SessionIdentityProvider, require_authenticated_principal
 from jobtology_be.api.m5_queries import require_m5_queries
@@ -28,6 +33,7 @@ from jobtology_be.application.services.profiles import ProfileService
 from jobtology_be.application.services.roadmaps import RoadmapService
 from jobtology_be.corpus.source_factory import ConfiguredCorpusSource
 from jobtology_be.editorial.reader import DraftReadService
+from jobtology_be.infrastructure.persistence.auth_store import PostgresAuthStore
 from jobtology_be.infrastructure.persistence.database import Database
 from jobtology_be.infrastructure.persistence.source_catalog import (
     CatalogQueries,
@@ -87,6 +93,12 @@ def database_lifespan(
 
 def register_api_dependencies(app: FastAPI, dependencies: ApiDependencies, settings: Settings) -> None:
     session_store = dependencies.session_store
+    if settings.guest_sessions_enabled:
+        if not isinstance(session_store, PostgresAuthStore):
+            raise ValueError("Guest sessions require a PostgreSQL authentication store")
+        app.dependency_overrides[require_session_response] = GuestSessionBootstrap(
+            session_store, settings
+        ).current_session
     if session_store is not None:
         session_identity_provider = SessionIdentityProvider(
             session_store=session_store,

@@ -16,6 +16,7 @@ class SessionResponse(BaseModel):
 
     user_id: UUID
     csrf_token: str
+    profile_version: int | None = None
 
 
 async def require_authenticated_session() -> AuthenticatedSession:
@@ -26,19 +27,25 @@ async def require_session_store() -> SessionStore:
     raise HTTPException(status_code=503)
 
 
+async def require_session_response(
+    session: Annotated[AuthenticatedSession, Depends(require_authenticated_session)],
+) -> SessionResponse:
+    return SessionResponse(user_id=session.principal.user_id, csrf_token=session.csrf_token)
+
+
 @router.get(
     "/auth/session",
     response_model=SessionResponse,
+    response_model_exclude_none=True,
     summary="Get authenticated session",
     description="Returns the current session principal and CSRF token for authenticated browser requests.",
 )
 async def get_session(
-    session: Annotated[AuthenticatedSession, Depends(require_authenticated_session)],
+    response: Response,
+    session: Annotated[SessionResponse, Depends(require_session_response)],
 ) -> SessionResponse:
-    return SessionResponse(
-        user_id=session.principal.user_id,
-        csrf_token=session.csrf_token,
-    )
+    response.headers["Cache-Control"] = "no-store"
+    return session
 
 
 @router.post(
