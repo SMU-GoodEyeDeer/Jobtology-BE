@@ -97,6 +97,7 @@ run, requests fail closed with 503; unauthenticated requests return 401.
 | `/api/v2/live/postings` | `q`, `ncs_category`, `region`, `open_on=YYYY-MM-DD`, `limit=20` (1–100), `offset=0` (nonnegative) | `contract_version`, `sources`, `filters`, `limit`, `offset`, `total`, `items` |
 | `/api/v2/live/postings/{posting_id}` | source posting ID (URL-encode slashes where possible) | `contract_version`, `sources`, `item` |
 | `/api/v2/live/exam-sessions` | `qualification`, `from=YYYY-MM-DD`, `to=YYYY-MM-DD`, `limit=20` (1–100), `offset=0` (nonnegative) | `contract_version`, `sources`, `filters`, `limit`, `offset`, `total`, `items` |
+| `/api/v2/live/ncs-demand` | `ncs_prefix` (2–8 digits), `limit=20` (1–100), `offset=0` (nonnegative) | reviewed NCS linkage inventory (`contract_version`, `sources`, `review`, `filters`, `limit`, `offset`, `total`, `items`) |
 
 `contract_version` is `hop-live-source-v1`. Posting items expose `posting_id`,
 `title`, `organization_code`, `organization_name`, `date_posted`, `closing_date`,
@@ -110,6 +111,22 @@ Unknown or repeated query keys, invalid filters or pages return 422; missing
 posting returns 404; source/driver/validation failures return 503. Errors use
 the standard envelope without private database messages. There is no
 eligibility, preference, selection, or disqualification text in these responses.
+
+NCS demand items provide `competency_code`, `competency_name`,
+`ncs_occupation_code`, `ncs_occupation_name`, distinct posting count `postings`,
+`links`, up to three ordered evidence summaries (`source_id`,
+`publication_id`, `created_at`, `source_posting_id`, `title`, `position`, `duty`), and
+`related_qualifications` (`qualification_code`, `qualification_name`).
+The response contract version is `hop-live-ncs-demand-v1`; `sources` identifies
+the newest READY publication with attributable items per posting source, with
+`posting_source`, `publication_id`, `created_at`, the contributing source `run_id`,
+and `is_latest_publication` (whether it is the newest READY publication pinning
+or having that source). A newer publication with zero attributable items does
+not hide older evidence. Such evidence is **historical, not today's demand**;
+show its publication date rather than labeling it current. `sources` and
+`review.link_reviewer_kinds` reports counts by reviewer kind, never identities,
+decision IDs, notes, or reasons. Invalid prefixes return 422. Evidence is a
+source linkage, not a job requirement or user eligibility assessment.
 
 ## Verification limits
 

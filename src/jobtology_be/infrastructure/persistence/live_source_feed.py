@@ -9,15 +9,17 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from jobtology_be.api.live_source_models import (
     ExamSessionsResponse,
+    NcsDemandResponse,
     PostingResponse,
     PostingsResponse,
 )
 
-type LiveOperation = Literal["postings", "posting", "exam_sessions"]
+type LiveOperation = Literal["postings", "posting", "exam_sessions", "ncs_demand"]
 _FUNCTIONS: Final = {
     "postings": "SELECT CAST(catalog.live_postings_v1(:q, :ncs_category, :region, CAST(:open_on AS date), :limit, :offset) AS text)",
     "posting": "SELECT CAST(catalog.live_posting_v1(:posting_id) AS text)",
     "exam_sessions": "SELECT CAST(catalog.live_exam_sessions_v1(:qualification, CAST(:from_date AS date), CAST(:to_date AS date), :limit, :offset) AS text)",
+    "ncs_demand": "SELECT CAST(catalog.live_ncs_demand_v1(:ncs_prefix, :limit, :offset) AS text)",
 }
 _ERROR_STATUS: Final = {
     "LIVE_SOURCE_UNAVAILABLE": 503,
@@ -55,6 +57,10 @@ class LiveSourceFeed(Protocol):
         self, qualification: str | None, from_date: date | None,
         to_date: date | None, limit: int, offset: int,
     ) -> ExamSessionsResponse: ...
+
+    async def ncs_demand(
+        self, ncs_prefix: str | None, limit: int, offset: int,
+    ) -> NcsDemandResponse: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,3 +106,10 @@ class PostgresLiveSourceFeed:
             "to_date": to_date,
             "limit": limit, "offset": offset,
         }, ExamSessionsResponse)
+
+    async def ncs_demand(
+        self, ncs_prefix: str | None, limit: int, offset: int,
+    ) -> NcsDemandResponse:
+        return await self._read("ncs_demand", {
+            "ncs_prefix": ncs_prefix, "limit": limit, "offset": offset,
+        }, NcsDemandResponse)

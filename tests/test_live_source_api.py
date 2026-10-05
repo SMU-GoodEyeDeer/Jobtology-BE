@@ -18,6 +18,7 @@ from jobtology_be.api.identity import AuthenticatedPrincipal
 from jobtology_be.api.live_source import require_live_source_feed
 from jobtology_be.api.live_source_models import (
     ExamSessionsResponse,
+    NcsDemandResponse,
     PostingResponse,
     PostingsResponse,
 )
@@ -59,7 +60,7 @@ EXAM = {
 
 @dataclass(frozen=True, slots=True)
 class Feed:
-    calls: list[tuple] = field(default_factory=list)
+    calls: list[tuple[str | date | int | None, ...]] = field(default_factory=list)
     failure: int | None = None
 
     async def postings(
@@ -99,6 +100,31 @@ class Feed:
             "limit": limit, "offset": offset, "total": 1, "items": [EXAM],
         })
 
+    async def ncs_demand(
+        self, ncs_prefix: str | None, limit: int, offset: int,
+    ) -> NcsDemandResponse:
+        self.calls.append(("ncs_demand", ncs_prefix, limit, offset))
+        if self.failure is not None:
+            raise LiveSourceReadError(self.failure)
+        return NcsDemandResponse.model_validate({
+            "contract_version": "hop-live-ncs-demand-v1",
+             "sources": [{"source_id": "link_publication", "publication_id": "pub-1",
+                          "created_at": "2026-10-05T00:00:00Z", "posting_source": "job_alio",
+                          "run_id": "job-run", "is_latest_publication": False}],
+            "review": {"link_reviewer_kinds": {"human": 2}},
+            "filters": {"ncs_prefix": ncs_prefix}, "limit": limit, "offset": offset,
+            "total": 1, "items": [{
+                "competency_code": "2001020101_24v2", "competency_name": "Unit",
+                "ncs_occupation_code": "20010201", "ncs_occupation_name": "Occupation",
+                "postings": 2, "links": 3,
+                 "evidence": [{"source_id": "job_alio", "source_posting_id": "001",
+                               "publication_id": "pub-1", "created_at": "2026-10-05T00:00:00Z",
+                              "title": "Engineer", "position": None, "duty": None}],
+                "related_qualifications": [{"qualification_code": "Q1",
+                                             "qualification_name": "Qualification"}],
+            }],
+        })
+
 
 def test_live_routes_forward_filters_and_return_typed_payloads() -> None:
     # Given an authenticated principal and an in-memory feed
@@ -127,7 +153,25 @@ def test_live_routes_forward_filters_and_return_typed_payloads() -> None:
     assert exams.json()["items"][0]["qualification_code"] == "Q1"
 
 
-@pytest.mark.parametrize("path", ["postings", "postings/one", "exam-sessions"])
+def test_ncs_demand_forwards_query_and_returns_safe_evidence() -> None:
+    # Given a fake source with a reviewed competency link
+    feed = Feed()
+    app = create_app(Settings(), dependencies=ApiDependencies(identity_provider=Identity(), live_source_feed=feed))
+    # When the evidence route is queried
+    with TestClient(app) as client:
+        response = client.get("/api/v2/live/ncs-demand", params={
+            "ncs_prefix": "200102", "limit": 1, "offset": 2,
+        })
+    # Then it forwards inputs and exposes only the typed projection
+    assert response.status_code == 200
+    assert feed.calls == [("ncs_demand", "200102", 1, 2)]
+    assert response.json()["items"][0]["competency_code"] == "2001020101_24v2"
+    assert response.json()["sources"][0]["is_latest_publication"] is False
+    assert response.json()["items"][0]["evidence"][0]["publication_id"] == "pub-1"
+    assert "reviewer" not in response.text.lower().replace("link_reviewer_kinds", "")
+
+
+@pytest.mark.parametrize("path", ["postings", "postings/one", "exam-sessions", "ncs-demand"])
 def test_live_requires_authentication(path: str) -> None:
     # Given a configured feed without identity
     app = create_app(Settings(), dependencies=ApiDependencies(live_source_feed=Feed()))
@@ -145,6 +189,8 @@ def test_live_requires_authentication(path: str) -> None:
     ("exam-sessions", "from=invalid"), ("exam-sessions", "to=invalid"),
     ("exam-sessions", "from=2026-01-01&from=2026-02-01"),
     ("exam-sessions", "limit=101"), ("exam-sessions", "unknown=1"),
+    ("ncs-demand", "preview=true"), ("ncs-demand", "ncs_prefix=20&ncs_prefix=21"),
+    ("ncs-demand", "limit=0"), ("ncs-demand", "offset=-1"),
 ])
 def test_live_rejects_invalid_query_without_reading(path: str, query: str) -> None:
     # Given a feed that records reads
@@ -168,6 +214,18 @@ def test_live_classified_errors_use_public_envelope(status: int, code: str) -> N
         response = client.get("/api/v2/live/postings/one")
     assert response.status_code == status
     assert response.json()["error"]["code"] == code
+
+
+def test_ncs_demand_maps_reader_failure() -> None:
+    # Given a source unavailable failure
+    app = create_app(Settings(), dependencies=ApiDependencies(
+        identity_provider=Identity(), live_source_feed=Feed(failure=503),
+    ))
+    # When reading evidence, then the public error envelope is used
+    with TestClient(app) as client:
+        response = client.get("/api/v2/live/ncs-demand")
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "DATA_UNAVAILABLE"
 
 
 def test_live_unconfigured_returns_503() -> None:

@@ -1,6 +1,7 @@
 """Disposable restricted-reader live source feed through HTTP."""
 
 import importlib
+import json
 import secrets
 import socket
 import subprocess
@@ -15,12 +16,16 @@ import anyio
 import asyncpg
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 
+from jobtology_be.api.analyses import require_analysis_service, require_requirement_metadata
 from jobtology_be.api.dependencies import ApiDependencies
 from jobtology_be.api.identity import AuthenticatedPrincipal
 from jobtology_be.infrastructure.persistence.live_source_feed import PostgresLiveSourceFeed
 from jobtology_be.infrastructure.persistence.source_catalog import PostgresSourceCatalog
 from jobtology_be.main import create_app
+from jobtology_be.product_roles.builder import build_product_roles
+from jobtology_be.product_roles.models import ProductRoleInputs, ProductRolePolicy
 from jobtology_be.settings import Settings
 
 DB_TESTS = Path(__file__).resolve().parents[2] / "Jobtology-DB/hop/ontology/tests"
@@ -32,7 +37,7 @@ class Identity:
         return AuthenticatedPrincipal(user_id=uuid4())
 
 
-def test_live_feed_from_disposable_postgres_through_http() -> None:
+def test_live_feed_from_disposable_postgres_through_http(tmp_path: Path) -> None:
     # Given an isolated DB test harness and Docker daemon
     if not (DB_TESTS / "run.py").is_file():
         pytest.fail("Sibling Jobtology-DB fixture is required")
@@ -114,7 +119,33 @@ def test_live_feed_from_disposable_postgres_through_http() -> None:
                  "minimum_training_hours": 40, "total_training_hours": 410,
                  "examining_organization": "Agency"},
             ],
+            "ncs_competency": [
+                {"kind": "Competency", "code": "2001020101_24v1", "name": "데이터베이스 설계",
+                 "level": 4, "occupation_code": "20010201",
+                 "occupation_name": "정보기술개발"},
+                {"kind": "Competency", "code": "2001020211_24v1", "name": "서버프로그램 구현",
+                 "level": 4, "occupation_code": "20010202",
+                 "occupation_name": "응용SW엔지니어링"},
+            ],
         })
+        link_payload = db.js({
+            "source_id": "job_alio", "source_posting_id": "001", "name": "Engineer detail",
+            "extraction_reviewer": "PRIVATE_REVIEWER",
+            "links": [{"competency_code": "2001020101_24v1", "reviewer_kind": "human",
+                       "review_notes": "PRIVATE_NOTES", "reason": "PRIVATE_REASON",
+                       "decision_id": "PRIVATE_DECISION", "duty": {"text": "설계", "position": "개발자"}}],
+        })
+        db.sql("INSERT INTO enrichment.link_publication"
+               "(publication_id,source_hash,job_run_id,ncs_run_id,state,created_at) "
+               "VALUES('be-link',repeat('a',64),'fixture-job_alio',"
+               "'fixture-ncs_competency','READY','2026-10-05'); "
+               "INSERT INTO enrichment.link_publication_source_run"
+               "(publication_id,source_id,run_id) "
+               "VALUES('be-link','job_alio','fixture-job_alio'); "
+               "INSERT INTO enrichment.link_publication_item"
+               "(publication_id,posting_id,enrichment_id,posting_identity,name,payload,payload_hash) "
+               f"VALUES('be-link','001','reviewed:fixture','job_alio:001','Engineer detail',"
+               f"{link_payload},enrichment.hash(({link_payload})::text))")
         db.sql((db.ROOT / "hop/ontology/sql/catalog_reader_grants.psql").read_text())
         db.sql(f"ALTER ROLE jobtology_catalog_reader PASSWORD {db.q(reader_password)}")
 
@@ -127,6 +158,7 @@ def test_live_feed_from_disposable_postgres_through_http() -> None:
                 host_port = reserved.getsockname()[1]
             tunnel = subprocess.Popen(
                 ["ssh", "-F", str(Path.home() / ".colima/ssh_config"),
+                 "-o", "ControlMaster=no", "-o", "ControlPath=none",
                  "-o", "ExitOnForwardFailure=yes", "-N", "-L",
                  f"127.0.0.1:{host_port}:127.0.0.1:{port}", "colima"],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -152,6 +184,7 @@ def test_live_feed_from_disposable_postgres_through_http() -> None:
             try:
                 assert await connection.fetchval("SELECT current_user") == "jobtology_catalog_reader"
                 assert await connection.fetchval("SELECT has_function_privilege(current_user, 'catalog.live_postings_v1(text,text,text,date,integer,integer)', 'EXECUTE')") is True
+                assert await connection.fetchval("SELECT has_function_privilege(current_user, 'catalog.live_ncs_demand_v1(text,integer,integer)', 'EXECUTE')") is True
                 assert await connection.fetchval("SELECT has_schema_privilege(current_user, 'ingestion', 'USAGE')") is False
                 with pytest.raises(asyncpg.InsufficientPrivilegeError):
                     await connection.fetchval("SELECT count(*) FROM ingestion.record")
@@ -178,8 +211,11 @@ def test_live_feed_from_disposable_postgres_through_http() -> None:
                 exams = client.get("/api/v2/live/exam-sessions", params={
                     "qualification": "T5H0", "from": "2026-10-01", "to": "2026-10-31",
                 })
+                demand = client.get("/api/v2/live/ncs-demand", params={"ncs_prefix": "20010201"})
+                invalid_demand = client.get("/api/v2/live/ncs-demand", params={"ncs_prefix": "20%"})
                 # Then only the latest READY feed and safe declared fields are returned
-                assert [r.status_code for r in (listing, filtered, page, detail, exams)] == [200] * 5
+                assert [r.status_code for r in (listing, filtered, page, detail, exams, demand)] == [200] * 6
+                assert invalid_demand.status_code == 422
                 assert absent.status_code == 404
                 assert listing.json()["contract_version"] == "hop-live-source-v1"
                 assert listing.json()["total"] == 2
@@ -190,6 +226,15 @@ def test_live_feed_from_disposable_postgres_through_http() -> None:
                 assert detail.json()["item"]["posting_id"] == "001"
                 assert exams.json()["total"] == 1
                 assert exams.json()["items"][0]["qualification_code"] == "T5H0"
+                assert demand.json()["contract_version"] == "hop-live-ncs-demand-v1"
+                assert [(source["publication_id"], source["posting_source"])
+                        for source in demand.json()["sources"]] == [("be-link", "job_alio")]
+                assert demand.json()["total"] == 1
+                assert demand.json()["items"][0]["evidence"][0]["source_posting_id"] == "001"
+                assert demand.json()["review"]["link_reviewer_kinds"] == {"human": 1}
+                assert all(secret not in demand.text for secret in (
+                    "PRIVATE_REVIEWER", "PRIVATE_NOTES", "PRIVATE_REASON", "PRIVATE_DECISION",
+                ))
                 for response in (listing, filtered, page, detail, exams):
                     assert all(term not in response.text.lower() for term in (
                         "eligibility", "preference", "selection", "disqualification",
@@ -198,6 +243,68 @@ def test_live_feed_from_disposable_postgres_through_http() -> None:
                 if client.portal is not None:
                     client.portal.call(catalog.dispose)
                     catalog = None
+
+        catalog = PostgresSourceCatalog.create(url)
+        role_settings = Settings(
+            database_url=url, catalog_database_url=SecretStr(url),
+            product_roles_enabled=True, corpus_source="neo4j_query_api",
+            db_link=SecretStr("bolt://neo4j@localhost:7687"),
+            db_password=SecretStr("not-used"),
+        )
+        unapproved_app = create_app(
+            role_settings,
+            dependencies=ApiDependencies(identity_provider=Identity(), source_catalog=catalog),
+        )
+        with TestClient(unapproved_app) as client:
+            assert client.get("/api/v1/occupations").status_code == 503
+            if client.portal is not None:
+                client.portal.call(catalog.dispose)
+                catalog = None
+
+        policy = ProductRolePolicy.model_validate_json(
+            (Path(__file__).resolve().parents[1] / "config/product_roles/policy.v1.json").read_text()
+        )
+        codes = ",".join(db.q(code) for code in policy.requested_occupation_codes)
+        inputs = ProductRoleInputs.model_validate_json(db.sql(
+            f"SELECT CAST(catalog.product_role_inputs_v1(ARRAY[{codes}]::text[]) AS text)"
+        ))
+        draft = build_product_roles(inputs, policy)
+        approval_path = tmp_path / "synthetic-artifact-approval.json"
+        approval_path.write_text(json.dumps({
+            "sha256": draft.digest, "approved_by": "synthetic test owner",
+            "reviewed_at": "2026-10-05T09:00:00+00:00",
+        }))
+        catalog = PostgresSourceCatalog.create(url)
+        role_app = create_app(
+            Settings(database_url=url, catalog_database_url=SecretStr(url),
+                     product_roles_enabled=True, corpus_source="neo4j_query_api",
+                     db_link=SecretStr("bolt://neo4j@localhost:7687"),
+                     db_password=SecretStr("not-used"),
+                     product_role_artifact_approval_path=approval_path),
+            dependencies=ApiDependencies(identity_provider=Identity(), source_catalog=catalog),
+        )
+        with TestClient(role_app) as client:
+            assert require_analysis_service in role_app.dependency_overrides
+            metadata = role_app.dependency_overrides[require_requirement_metadata]().lookup(
+                "BACKEND_DEVELOPER:2001020211"
+            )
+            assert metadata.ncs_level == 4
+            assert metadata.estimated_hours == 20
+            assert metadata.hours_basis == "ESTIMATED"
+            occupations = client.get("/api/v1/occupations")
+            assert occupations.status_code == 200
+            assert "BACKEND_DEVELOPER" in {
+                item["occupation_id"] for item in occupations.json()
+            }
+            assert next(item["name"] for item in occupations.json()
+                        if item["occupation_id"] == "BACKEND_DEVELOPER") == "백엔드 개발자"
+            assert next(item["release_id"] for item in occupations.json()
+                        if item["occupation_id"] == "BACKEND_DEVELOPER") == (
+                            f"product-roles-v1-{draft.digest}"
+                        )
+            if client.portal is not None:
+                client.portal.call(catalog.dispose)
+                catalog = None
     finally:
         if catalog is not None:
             anyio.run(catalog.dispose)

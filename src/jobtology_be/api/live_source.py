@@ -7,6 +7,7 @@ from jobtology_be.api.errors import ErrorResponse
 from jobtology_be.api.identity import AuthenticatedPrincipal, require_authenticated_principal
 from jobtology_be.api.live_source_models import (
     ExamSessionsResponse,
+    NcsDemandResponse,
     PostingResponse,
     PostingsResponse,
 )
@@ -81,5 +82,21 @@ async def exam_sessions(
     _allowed_query(request, frozenset({"qualification", "from", "to", "limit", "offset"}))
     try:
         return await feed.exam_sessions(qualification, from_date, to_date, limit, offset)
+    except LiveSourceReadError as error:
+        raise HTTPException(status_code=error.status_code) from None
+
+
+@router.get("/ncs-demand", response_model=NcsDemandResponse, responses=_RESPONSES)
+async def ncs_demand(
+    request: Request,
+    _: Annotated[AuthenticatedPrincipal, Depends(require_authenticated_principal)],
+    feed: Annotated[LiveSourceFeed, Depends(require_live_source_feed)],
+    ncs_prefix: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> NcsDemandResponse:
+    _allowed_query(request, frozenset({"ncs_prefix", "limit", "offset"}))
+    try:
+        return await feed.ncs_demand(ncs_prefix, limit, offset)
     except LiveSourceReadError as error:
         raise HTTPException(status_code=error.status_code) from None

@@ -92,3 +92,57 @@ class ExamSessionsResponse(LiveResponse):
     offset: int = Field(ge=0)
     total: int = Field(ge=0)
     items: list[ExamSession]
+
+
+class NcsDemandSource(LiveRead):
+    source_id: Literal["link_publication"]
+    publication_id: str
+    created_at: str
+    posting_source: str
+    run_id: str
+    is_latest_publication: bool
+
+
+class NcsDemandReview(LiveRead):
+    link_reviewer_kinds: dict[str, int]
+
+
+class NcsDemandFilters(LiveRead):
+    ncs_prefix: str | None
+
+
+class NcsDemandEvidence(LiveRead):
+    source_id: str
+    publication_id: str
+    created_at: str
+    source_posting_id: str
+    title: str | None
+    position: str | None
+    duty: str | None
+
+
+class RelatedQualification(LiveRead):
+    qualification_code: str
+    qualification_name: str | None
+
+
+class NcsDemandItem(LiveRead):
+    competency_code: str
+    competency_name: str | None
+    ncs_occupation_code: str
+    ncs_occupation_name: str | None
+    postings: int = Field(ge=0)
+    links: int = Field(ge=0)
+    evidence: list[NcsDemandEvidence]
+    related_qualifications: list[RelatedQualification]
+
+
+class NcsDemandResponse(LiveRead):
+    contract_version: Literal["hop-live-ncs-demand-v1"]
+    sources: list[NcsDemandSource]
+    review: NcsDemandReview
+    filters: NcsDemandFilters
+    limit: int = Field(ge=1, le=100)
+    offset: int = Field(ge=0)
+    total: int = Field(ge=0)
+    items: list[NcsDemandItem]
