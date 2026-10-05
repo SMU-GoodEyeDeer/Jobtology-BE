@@ -115,7 +115,7 @@ class NcsDemandEvidence(LiveRead):
     source_id: str
     publication_id: str
     created_at: str
-    source_posting_id: str
+    source_posting_id: str | None
     title: str | None
     position: str | None
     duty: str | None
