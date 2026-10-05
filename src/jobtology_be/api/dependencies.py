@@ -6,6 +6,10 @@ from jobtology_be.api.identity import IdentityProvider
 from jobtology_be.api.neo4j_catalog import Neo4jCatalogQueries
 from jobtology_be.application.m5_queries import M5Queries
 from jobtology_be.application.queries import ProductQueries
+from jobtology_be.application.requirement_metadata import (
+    OccupationDisplayNames,
+    RequirementMetadataLookup,
+)
 from jobtology_be.application.services.analyses import (
     AnalysisContextFactory,
     AnalysisRecomputeSubmitter,
@@ -37,6 +41,8 @@ class ApiDependencies:
     product_queries: ProductQueries | None = None
     source_catalog: CatalogQueries | None = None
     live_source_feed: LiveSourceFeed | None = None
+    requirement_metadata: RequirementMetadataLookup | None = None
+    occupation_display_names: OccupationDisplayNames | None = None
     editorial_drafts: DraftReadService | None = None
     roadmap_service: RoadmapService | None = None
     analysis_service: AnalysisService | None = None

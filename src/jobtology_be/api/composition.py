@@ -1,9 +1,10 @@
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 
+import anyio
 from fastapi import FastAPI
 
-from jobtology_be.api.analyses import require_analysis_service
+from jobtology_be.api.analyses import require_analysis_service, require_requirement_metadata
 from jobtology_be.api.auth_session import (
     require_authenticated_session,
     require_session_response,
@@ -17,7 +18,7 @@ from jobtology_be.api.guest_session import GuestSessionBootstrap
 from jobtology_be.api.idempotency import IdempotencyStore, require_idempotency_store
 from jobtology_be.api.identity import SessionIdentityProvider, require_authenticated_principal
 from jobtology_be.api.live_source import require_live_source_feed
-from jobtology_be.api.m5_queries import require_m5_queries
+from jobtology_be.api.m5_queries import require_m5_queries, require_occupation_display_names
 from jobtology_be.api.neo4j_catalog import Neo4jCatalogQueries, require_neo4j_catalog_queries
 from jobtology_be.api.preferences import require_preferences_service
 from jobtology_be.api.product_queries import require_product_queries
@@ -26,12 +27,22 @@ from jobtology_be.api.roadmaps import require_roadmap_service
 from jobtology_be.api.source_catalog import require_source_catalog
 from jobtology_be.application.m5_queries import M5Queries
 from jobtology_be.application.queries import ProductQueries
+from jobtology_be.application.requirement_metadata import (
+    OccupationDisplayNames,
+    RequirementMetadataLookup,
+)
 from jobtology_be.application.services.analyses import AnalysisService
+from jobtology_be.application.services.analysis_context import (
+    ContextSnapshotConfiguration,
+    SnapshotBackedAnalysisContextFactory,
+)
+from jobtology_be.application.services.analysis_inputs import PostgresAnalysisContextInputSource
 from jobtology_be.application.services.capabilities import CapabilityService
 from jobtology_be.application.services.goals import GoalService
 from jobtology_be.application.services.preferences import PreferencesService
 from jobtology_be.application.services.profiles import ProfileService
 from jobtology_be.application.services.roadmaps import RoadmapService
+from jobtology_be.corpus.local_snapshot import LocalJsonPublishedCorpusSnapshotReader
 from jobtology_be.corpus.source_factory import ConfiguredCorpusSource
 from jobtology_be.editorial.reader import DraftReadService
 from jobtology_be.infrastructure.persistence.auth_store import PostgresAuthStore
@@ -41,7 +52,10 @@ from jobtology_be.infrastructure.persistence.source_catalog import (
     CatalogQueries,
     PostgresSourceCatalog,
 )
+from jobtology_be.modules.analyses.editorial_models import ReleaseState
 from jobtology_be.modules.auth.session import SessionStore
+from jobtology_be.product_roles.holder import ProductRoleHolder
+from jobtology_be.product_roles.worker import InProcessRecomputeLoop
 from jobtology_be.settings import Settings
 
 OPENAPI_TAGS = [
@@ -66,13 +80,23 @@ OPENAPI_TAGS = [
 
 @asynccontextmanager
 async def lifespan(
-    _: FastAPI,
+    _app: FastAPI,
     database: Database | None,
     corpus_source: ConfiguredCorpusSource | None,
     source_catalog: PostgresSourceCatalog | None = None,
+    role_holder: ProductRoleHolder | None = None,
+    inprocess_worker: InProcessRecomputeLoop | None = None,
 ) -> AsyncIterator[None]:
     try:
-        yield
+        if role_holder is not None:
+            _ = await role_holder.load()
+        async with anyio.create_task_group() as tasks:
+            if role_holder is not None and role_holder.available and inprocess_worker is not None:
+                _ = tasks.start_soon(inprocess_worker.run)
+            try:
+                yield
+            finally:
+                tasks.cancel_scope.cancel()
     finally:
         try:
             if corpus_source is not None:
@@ -90,8 +114,39 @@ def database_lifespan(
     database: Database | None,
     corpus_source: ConfiguredCorpusSource | None = None,
     source_catalog: PostgresSourceCatalog | None = None,
+    role_holder: ProductRoleHolder | None = None,
+    inprocess_worker: InProcessRecomputeLoop | None = None,
 ) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
-    return lambda app: lifespan(app, database, corpus_source, source_catalog)
+    return lambda app: lifespan(app, database, corpus_source, source_catalog, role_holder, inprocess_worker)
+
+
+def configured_analysis_context_factory(
+    database: Database,
+    snapshot_reader: LocalJsonPublishedCorpusSnapshotReader | None,
+    capability_list_authoritative: bool = False,
+) -> SnapshotBackedAnalysisContextFactory | None:
+    if snapshot_reader is None:
+        return None
+    selections = frozenset(
+        (snapshot.basis_version, snapshot.release.release_id)
+        for snapshot in snapshot_reader.snapshots
+        if snapshot.release.state is ReleaseState.PUBLISHED
+        and not snapshot.is_fixture
+        and snapshot.release.release_id is not None
+    )
+    if len(selections) != 1:
+        return None
+    basis_version, release_id = next(iter(selections))
+    return SnapshotBackedAnalysisContextFactory(
+        source=PostgresAnalysisContextInputSource(
+            database, capability_list_authoritative=capability_list_authoritative,
+        ),
+        snapshot_reader=snapshot_reader,
+        configuration=ContextSnapshotConfiguration(
+            basis_version=basis_version,
+            release_id=release_id,
+        ),
+    )
 
 
 def register_api_dependencies(app: FastAPI, dependencies: ApiDependencies, settings: Settings) -> None:
@@ -163,6 +218,16 @@ def register_api_dependencies(app: FastAPI, dependencies: ApiDependencies, setti
             return m5_queries
 
         app.dependency_overrides[require_m5_queries] = get_injected_m5_queries
+    if (metadata := dependencies.requirement_metadata) is not None:
+        def get_injected_requirement_metadata() -> RequirementMetadataLookup:
+            return metadata
+
+        app.dependency_overrides[require_requirement_metadata] = get_injected_requirement_metadata
+    if (names := dependencies.occupation_display_names) is not None:
+        def get_injected_occupation_display_names() -> OccupationDisplayNames:
+            return names
+
+        app.dependency_overrides[require_occupation_display_names] = get_injected_occupation_display_names
     if (neo4j_catalog := dependencies.neo4j_catalog) is not None:
         def get_injected_neo4j_catalog() -> Neo4jCatalogQueries:
             return neo4j_catalog

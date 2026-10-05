@@ -1,12 +1,17 @@
 from dataclasses import replace
+from importlib.resources import files
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from jobtology_be.api.composition import OPENAPI_TAGS, database_lifespan, register_api_dependencies
+from jobtology_be.api.composition import (
+    configured_analysis_context_factory as _configured_analysis_context_factory,
+)
+from jobtology_be.api.composition import database_lifespan, register_api_dependencies
 from jobtology_be.api.dependencies import ApiDependencies
 from jobtology_be.api.editorial_drafts import router as editorial_drafts_router
-from jobtology_be.api.errors import ErrorResponse, register_error_handlers
+from jobtology_be.api.errors import register_error_handlers
 from jobtology_be.api.google_auth import (
     require_google_login_store,
     require_google_provider,
@@ -18,20 +23,14 @@ from jobtology_be.api.google_auth import (
 from jobtology_be.api.guide import router as guide_router
 from jobtology_be.api.live_source import router as live_source_router
 from jobtology_be.api.neo4j_catalog import router as neo4j_catalog_router
-from jobtology_be.api.router import router
+from jobtology_be.api.router import create_api_shell, router
 from jobtology_be.api.source_catalog import router as source_catalog_router
 from jobtology_be.application.services.analyses import PersistentAnalysisService
-from jobtology_be.application.services.analysis_context import (
-    ContextSnapshotConfiguration,
-    SnapshotBackedAnalysisContextFactory,
-)
-from jobtology_be.application.services.analysis_inputs import PostgresAnalysisContextInputSource
 from jobtology_be.application.services.capabilities import PersistentCapabilityService
 from jobtology_be.application.services.goals import PersistentGoalService
 from jobtology_be.application.services.preferences import PersistentPreferencesService
 from jobtology_be.application.services.profiles import PersistentProfileService
 from jobtology_be.application.services.roadmaps import PersistentRoadmapService
-from jobtology_be.corpus.local_snapshot import LocalJsonPublishedCorpusSnapshotReader
 from jobtology_be.corpus.source_factory import build_configured_corpus_source
 from jobtology_be.editorial.reader import DraftReadService, load_drafts
 from jobtology_be.infrastructure.persistence.auth_store import PostgresAuthStore
@@ -42,14 +41,17 @@ from jobtology_be.infrastructure.persistence.preference_queries import PostgresR
 from jobtology_be.infrastructure.persistence.queries import PostgresProductQueries
 from jobtology_be.infrastructure.persistence.source_catalog import PostgresSourceCatalog
 from jobtology_be.infrastructure.persistence.store import PostgresApplicationStore
-from jobtology_be.modules.analyses.editorial_models import ReleaseState
 from jobtology_be.modules.auth.google_oidc import GoogleOidcProvider
 from jobtology_be.modules.auth.session_cookies import (
     OAuthCallbackQueryMiddleware,
     SessionCookiePolicy,
     SessionCookiePolicyMiddleware,
 )
+from jobtology_be.product_roles.context import ProductRoleAnalysisContextFactory
+from jobtology_be.product_roles.holder import ProductRoleHolder
+from jobtology_be.product_roles.worker import InProcessRecomputeLoop
 from jobtology_be.settings import Settings
+from jobtology_be.workers.recompute import build_leased_recompute_worker
 
 
 def create_app(
@@ -87,6 +89,22 @@ def create_app(
         source_catalog = source_catalog_resource
     if live_source_feed is None and isinstance(source_catalog, PostgresSourceCatalog):
         live_source_feed = PostgresLiveSourceFeed(engine=source_catalog.engine)
+    policy_resource = files("jobtology_be.product_roles").joinpath("policy.v1.json")
+    policy_path = (policy_resource if policy_resource.is_file() else
+                   Path(__file__).resolve().parents[2] / "config/product_roles/policy.v1.json")
+    role_holder = (
+        ProductRoleHolder(
+            source_catalog.engine,
+            policy_path,
+            settings.product_role_artifact_approval_path,
+        )
+        if settings.product_roles_enabled and settings.catalog_database_url is not None
+        and isinstance(source_catalog, PostgresSourceCatalog)
+        else None
+    )
+    if settings.product_roles_enabled and role_holder is None:
+        analysis_service = None
+        analysis_context_factory = None
     editorial_drafts = dependencies.editorial_drafts
     if settings.editorial_draft_path is not None and editorial_drafts is None:
         editorial_drafts = DraftReadService(load_drafts(settings.editorial_draft_path))
@@ -97,16 +115,25 @@ def create_app(
         store = PostgresApplicationStore(database)
         idempotency_store = idempotency_store or store
         corpus_source = corpus_source or build_configured_corpus_source(settings)
-        snapshot_reader = corpus_source.local_snapshot_reader
-        m5_queries = m5_queries or PostgresM5Queries(database, snapshot_reader)
+        snapshot_reader = (role_holder if role_holder is not None else
+                           None if settings.product_roles_enabled else corpus_source.local_snapshot_reader)
+        m5_queries = m5_queries or PostgresM5Queries(
+            database, snapshot_reader=snapshot_reader,
+        )
         product_queries = product_queries or PostgresProductQueries(database)
         preferences_service = preferences_service or PersistentPreferencesService(
             store, PostgresRoutePreferencesQuery(database)
         )
         analysis_recompute_submitter = analysis_recompute_submitter or store
-        analysis_context_factory = analysis_context_factory or _configured_analysis_context_factory(
-            database, snapshot_reader
-        )
+        if not settings.product_roles_enabled:
+            analysis_context_factory = analysis_context_factory or _configured_analysis_context_factory(
+                database, corpus_source.local_snapshot_reader, settings.capability_list_authoritative,
+            )
+        if role_holder is not None:
+            analysis_context_factory = ProductRoleAnalysisContextFactory(
+                database, role_holder,
+                capability_list_authoritative=settings.capability_list_authoritative,
+            )
     if corpus_source is not None and neo4j_catalog is None:
         neo4j_catalog = corpus_source.native_catalog
     if (settings.auth_enabled or settings.guest_sessions_enabled) and session_store is None:
@@ -128,7 +155,7 @@ def create_app(
     if capability_service is None and store is not None:
         capability_service = PersistentCapabilityService(store)
     if (
-        settings.corpus_source == "local_json"
+        (settings.corpus_source == "local_json" or role_holder is not None)
         and analysis_service is None
         and analysis_context_factory is not None
         and analysis_recompute_submitter is not None
@@ -137,42 +164,23 @@ def create_app(
             analysis_context_factory,
             analysis_recompute_submitter,
         )
-    app = FastAPI(
-        title="Jobtology API",
-        summary="개인화 역량 분석과 로드맵을 위한 Jobtology API",
-        description=(
-            "제품 API는 `/api/v1` 경로군에 적용됩니다. `/api/v2`는 명시적으로 구성된 "
-            "Neo4j 원본 및 별도 승인된 PostgreSQL 소스 카탈로그의 읽기 전용 계약입니다. "
-            "모든 제품 API는 인증된 세션을 요구하며, "
-            "Google 로그인은 기본적으로 비활성화되어 있어 인증되지 않은 요청은 표준 `401` 오류 "
-            "envelope을 반환합니다. 변경 요청에는 현재 버전을 제출하고, `Idempotency-Key`가 "
-            "표시된 POST 요청은 같은 키와 payload에 대해 24시간 동안 최초 응답을 재생합니다. "
-            "변경 요청은 세션 CSRF 보호를 위해 `X-CSRF-Token`도 필요합니다."
+    inprocess_worker = None
+    if (settings.inprocess_worker_enabled and store is not None
+            and database is not None and role_holder is not None):
+        inprocess_worker = InProcessRecomputeLoop(
+            worker=build_leased_recompute_worker(
+                store=store,
+                snapshot_reader=role_holder,
+                eligible_corpus_sources=frozenset({"local_json"}),
+            ),
+            database=database,
+            roadmap_service=roadmap_service or PersistentRoadmapService(store),
+            holder=role_holder,
+        )
+    app = create_api_shell(
+        database_lifespan(
+            database, corpus_source, source_catalog_resource, role_holder, inprocess_worker,
         ),
-        version="0.1.0",
-        docs_url="/api/docs",
-        redoc_url="/api/redoc",
-        openapi_url="/api/openapi.json",
-        openapi_tags=OPENAPI_TAGS,
-        responses={
-            422: {
-                "model": ErrorResponse,
-                "description": "Request validation failed",
-                "content": {
-                    "application/json": {
-                        "example": {
-                            "error": {
-                                "code": "VALIDATION_ERROR",
-                                "message": "Request validation failed",
-                                "details": [{"location": ["body", "field"], "code": "missing"}],
-                                "request_id": "00000000-0000-0000-0000-000000000001",
-                            }
-                        }
-                    }
-                },
-            }
-        },
-        lifespan=database_lifespan(database, corpus_source, source_catalog_resource),
     )
     register_error_handlers(app)
     app.add_middleware(OAuthCallbackQueryMiddleware)
@@ -196,6 +204,8 @@ def create_app(
             product_queries=product_queries,
             source_catalog=source_catalog,
             live_source_feed=live_source_feed,
+            requirement_metadata=role_holder or dependencies.requirement_metadata,
+            occupation_display_names=role_holder or dependencies.occupation_display_names,
             editorial_drafts=editorial_drafts,
             m5_queries=m5_queries,
             neo4j_catalog=neo4j_catalog,
@@ -231,32 +241,6 @@ def create_app(
 
         app.include_router(fe_mock_samples_router, prefix="/api/v1/dev/mock")
     return app
-
-
-def _configured_analysis_context_factory(
-    database: Database,
-    snapshot_reader: LocalJsonPublishedCorpusSnapshotReader | None,
-) -> SnapshotBackedAnalysisContextFactory | None:
-    if snapshot_reader is None:
-        return None
-    selections = frozenset(
-        (snapshot.basis_version, snapshot.release.release_id)
-        for snapshot in snapshot_reader.snapshots
-        if snapshot.release.state is ReleaseState.PUBLISHED
-        and not snapshot.is_fixture
-        and snapshot.release.release_id is not None
-    )
-    if len(selections) != 1:
-        return None
-    basis_version, release_id = next(iter(selections))
-    return SnapshotBackedAnalysisContextFactory(
-        source=PostgresAnalysisContextInputSource(database),
-        snapshot_reader=snapshot_reader,
-        configuration=ContextSnapshotConfiguration(
-            basis_version=basis_version,
-            release_id=release_id,
-        ),
-    )
 
 
 app = create_app()
