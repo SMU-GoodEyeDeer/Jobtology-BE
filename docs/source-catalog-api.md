@@ -81,6 +81,36 @@ entity absent from the approved release 404; invalid filters/pages 422.
 DB exception text, SQL and credentials are not returned. Counts and posting
 outcomes are inventory status, not semantic review or employment metrics.
 
+## Live source feed (separate from the sealed release)
+
+Authenticated `/api/v2/live/*` reads the **newest READY ingestion run per source**,
+not the approved, sealed catalog release. Data can change between requests and
+pages; `sources` identifies each contributing `source_id`, `run_id`, and
+`data_as_of`. A live source record is not an editorial decision, eligibility
+assessment, recommendation, or product occupation. It uses the same restricted
+`JOBTOLOGY_CATALOG_DATABASE_URL` and engine as the catalog, with a read-only
+READ COMMITTED transaction per read. Without configuration or a usable READY
+run, requests fail closed with 503; unauthenticated requests return 401.
+
+| GET path | Parameters | Response |
+|---|---|---|
+| `/api/v2/live/postings` | `q`, `ncs_category`, `region`, `open_on=YYYY-MM-DD`, `limit=20` (1–100), `offset=0` (nonnegative) | `contract_version`, `sources`, `filters`, `limit`, `offset`, `total`, `items` |
+| `/api/v2/live/postings/{posting_id}` | source posting ID (URL-encode slashes where possible) | `contract_version`, `sources`, `item` |
+| `/api/v2/live/exam-sessions` | `qualification`, `from=YYYY-MM-DD`, `to=YYYY-MM-DD`, `limit=20` (1–100), `offset=0` (nonnegative) | `contract_version`, `sources`, `filters`, `limit`, `offset`, `total`, `items` |
+
+`contract_version` is `hop-live-source-v1`. Posting items expose `posting_id`,
+`title`, `organization_code`, `organization_name`, `date_posted`, `closing_date`,
+`ongoing`, `regions`, `employment_types`, `recruitment_type`, `education`,
+`ncs_categories` (`code`, `name`), `headcount`, and `source_url`. Exam items expose
+`qualification_code`, `qualification_name`, `year`, `round`, `category_code`,
+`name`, and `written`/`practical` date groups; each group has
+`registration_start`, `registration_end`, `exam_start`, `exam_end`, `result_date`.
+Dates are `YYYY-MM-DD` or null. Unknown DB response fields are omitted.
+Unknown or repeated query keys, invalid filters or pages return 422; missing
+posting returns 404; source/driver/validation failures return 503. Errors use
+the standard envelope without private database messages. There is no
+eligibility, preference, selection, or disqualification text in these responses.
+
 ## Verification limits
 
 Run the BE checks from this repository root:

@@ -1,5 +1,15 @@
 # API changelog
 
+## 2026-10-05 — authenticated live source feed
+
+- Added `/api/v2/live/postings`, `/api/v2/live/postings/{posting_id}`, and
+  `/api/v2/live/exam-sessions` as read-only, authenticated source views. They
+  use the newest READY ingestion runs rather than the sealed catalog release;
+  no editorial or eligibility fields are exposed.
+- Reuses the restricted catalog reader connection and pool. Missing source or
+  configuration returns 503; invalid/repeated filters return 422 and missing
+  posting detail returns 404. See [live feed contract](source-catalog-api.md#live-source-feed-separate-from-the-sealed-release).
+
 ## 2026-10-01 — opt-in source reads
 
 - Added authenticated `GET /api/v2/catalog/summary`, `/entities`,

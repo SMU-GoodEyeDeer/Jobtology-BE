@@ -77,6 +77,20 @@ analysis와 route planning은 아직 제공되지 않거나 의도적으로 지�
   reviewer/candidate/duty/evidence, 정렬 `decision_id`는 응답에 포함되지 않습니다. 클라이언트도
   이 데이터가 있다고 가정하지 마세요.
 
+## 최신 원천 피드 (v2)
+
+인증된 세션에서 `GET /api/v2/live/postings`, `/api/v2/live/postings/{posting_id}`,
+`/api/v2/live/exam-sessions`를 사용할 수 있습니다. 별도 카탈로그 reader DB 연결이
+설정되어야 하며, 없으면 `503 DATA_UNAVAILABLE`, 인증이 없으면 `401 UNAUTHENTICATED`입니다.
+공고 목록에는 `q`, `ncs_category`, `region`, `open_on`(YYYY-MM-DD), 시험 일정에는
+`qualification`, `from`, `to`(YYYY-MM-DD)를 전달합니다. 목록은 `limit=20`(1–100),
+`offset=0`(0 이상)이며 `total`과 `items`, 적용된 `filters`, `sources`를 반환합니다.
+알 수 없거나 중복된 쿼리 키는 422, 없는 공고는 404입니다. `sources`의 `run_id`와
+`data_as_of`는 최신 READY 수집 실행의 출처를 표시합니다. 이 피드는 승인·봉인된
+`/api/v2/catalog` 릴리스와 별개로 갱신되므로 페이지 사이 내용이 바뀔 수 있고,
+원천 공고/시험 정보를 사용자 적격성·선호·선발 결과나 분석 근거로 해석하면 안 됩니다.
+정확한 응답 필드는 [소스 카탈로그 API 계약](source-catalog-api.md)을 참고하세요.
+
 ## 현재 인증 상태 (fail-closed)
 
 **Google 로그인은 현재 비활성화되어 있으며 `JOBTOLOGY_AUTH_ENABLED=false`로 유지합니다.**
