@@ -102,9 +102,8 @@ class InProcessRecomputeLoop:
                 select(roadmaps.c.id).where(
                     roadmaps.c.user_id == row.user_id,
                     roadmaps.c.goal_id == row.goal_id,
-                    roadmaps.c.profile_version == row.profile_version,
                     roadmaps.c.state == "ACTIVE",
-                )
+                ).limit(1)
             )
             if active is not None:
                 return

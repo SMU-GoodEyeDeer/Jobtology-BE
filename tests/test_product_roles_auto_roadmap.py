@@ -23,7 +23,7 @@ from jobtology_be.application.services.analyses import AnalysisRequestCommand
 from jobtology_be.application.services.analysis_inputs import PostgresAnalysisContextInputSource
 from jobtology_be.application.services.roadmaps import PersistentRoadmapService
 from jobtology_be.infrastructure.persistence.database import Database
-from jobtology_be.infrastructure.persistence.schema import recompute_contexts, roadmaps
+from jobtology_be.infrastructure.persistence.schema import profiles, recompute_contexts, roadmaps
 from jobtology_be.infrastructure.persistence.store import PostgresApplicationStore
 from jobtology_be.main import create_app
 from jobtology_be.product_roles.builder import build_product_roles
@@ -226,6 +226,82 @@ def test_authoritative_empty_capabilities_are_complete(acceptance_database_url: 
             assert default.completeness.entities_complete is False
             assert authoritative.completeness.entities_complete is True
             assert authoritative.capabilities == ()
+        finally:
+            await database.dispose()
+
+    anyio.run(exercise)
+
+
+def test_later_profile_recompute_keeps_the_existing_active_roadmap(
+    acceptance_database_url: str,
+) -> None:
+    # Given an ACTIVE auto roadmap created at profile version 2
+    user_id = uuid4()
+    app = create_app(
+        Settings(_env_file=None, database_url=acceptance_database_url),
+        dependencies=ApiDependencies(identity_provider=Identity(user_id)),
+    )
+    with TestClient(app) as client:
+        goal_response = client.post("/api/v1/me/goals", json={
+            "expected_profile_version": 1, "goal_mode": "TARGETED",
+            "occupation_id": "BACKEND_DEVELOPER", "target_by": "2026-12-31T00:00:00+00:00",
+            "timezone": "UTC", "original_time_phrase": "by year end",
+        })
+    goal_id = UUID(goal_response.json()["goal_id"])
+    policy = ProductRolePolicy.model_validate_json(
+        (Path(__file__).resolve().parents[1] / "config/product_roles/policy.v1.json").read_text()
+    )
+    draft = build_product_roles(ProductRoleInputs.model_validate_json(json.dumps({
+        "contract_version": "jobtology-product-role-inputs-v1",
+        "sources": [{"source_id": "ncs_competency", "run_id": "ncs-ready"}],
+        "units": [{"code": "2001020211_24v1", "base_code": "2001020211",
+                   "name": "서버프로그램 구현", "level": 4,
+                   "occupation_code": "20010202", "occupation_name": "Backend"}],
+        "qualifications": [{"competency_code": "2001020211_24v1",
+                            "qualification_code": "Q1", "qualification_name": "Q",
+                            "minimum_training_hours": 1, "total_training_hours": 1}],
+        "evidence": [],
+    })), policy)
+    built = draft.publish(ArtifactApproval(
+        sha256=draft.digest, approved_by="synthetic test owner",
+        reviewed_at=datetime(2026, 10, 5, 9, tzinfo=UTC),
+    ))
+    selection = {
+        "occupation_id": "BACKEND_DEVELOPER", "basis_version": "product-roles-v1",
+        "release_id": built.reader.snapshots[0].release.release_id, "source": "local_json",
+    }
+
+    async def exercise() -> None:
+        database = Database.create(acceptance_database_url)
+        store = PostgresApplicationStore(database)
+        loop = InProcessRecomputeLoop(
+            worker=build_leased_recompute_worker(store=store, snapshot_reader=built.reader),
+            database=database, roadmap_service=PersistentRoadmapService(store), holder=Names(),
+        )
+
+        async def recompute_at(version: int) -> None:
+            request_id = await enqueue_recompute(acceptance_database_url, user_id, version, goal_id)
+            async with database.sessions.begin() as session:
+                await session.execute(update(profiles).where(profiles.c.user_id == user_id)
+                                      .values(version=version))
+                payload = await session.scalar(select(recompute_contexts.c.payload).where(
+                    recompute_contexts.c.request_id == request_id))
+                assert payload is not None
+                payload["snapshot_selection"] = selection
+                await session.execute(update(recompute_contexts).where(
+                    recompute_contexts.c.request_id == request_id).values(payload=payload))
+            await loop.process_once()
+
+        try:
+            await recompute_at(2)
+            # When a later profile version (e.g. after a step completion) is recomputed
+            await recompute_at(3)
+            # Then the original ACTIVE roadmap is kept and no replacement is created
+            async with database.sessions() as session:
+                rows = (await session.execute(select(
+                    roadmaps.c.state, roadmaps.c.profile_version,
+                ).where(roadmaps.c.goal_id == goal_id))).all()
+            assert rows == [("ACTIVE", 2)]
         finally:
             await database.dispose()
 

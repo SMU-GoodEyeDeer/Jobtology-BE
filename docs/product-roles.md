@@ -27,7 +27,7 @@ All runtime flags default to **off**:
 |---|---|
 | `JOBTOLOGY_PRODUCT_ROLES_ENABLED` | Load role inputs at startup and enable occupations/analysis from the generated release. Requires `JOBTOLOGY_CATALOG_DATABASE_URL` and the product database. A failed load keeps occupations and analysis at 503 without preventing process startup. |
 | `JOBTOLOGY_PRODUCT_ROLE_ARTIFACT_APPROVAL_PATH` | Path to a separate owner-reviewed JSON record `{ "sha256": "<full draft digest>", "approved_by": "<reviewer>", "reviewed_at": "<timezone-aware ISO instant>" }`. Owner-approved records live in `config/product_roles/approvals/<digest>.json`; the deployed record is `ae6fec57…83fc6.json` (approved 2026-10-05). Missing/invalid/mismatched approval leaves the generated draft unpublished and the runtime at 503. |
-| `JOBTOLOGY_INPROCESS_WORKER_ENABLED` | While a role release is loaded, process at most one queued local-json-labeled recompute every three seconds. A READY feasible targeted analysis with no ACTIVE roadmap for the goal/profile version creates and activates a titled roadmap. |
+| `JOBTOLOGY_INPROCESS_WORKER_ENABLED` | While a role release is loaded, process at most one queued local-json-labeled recompute every three seconds. A READY feasible targeted analysis creates and activates a titled roadmap only when the goal has no ACTIVE roadmap; later recomputes (e.g. after step completion) keep the existing roadmap. |
 | `JOBTOLOGY_CAPABILITY_LIST_AUTHORITATIVE` | Treat the stored capability list as complete; unmatched requirements are UNMET, including an empty capability list. |
 
 Only after an exact full-digest match is the already-reviewed draft converted
