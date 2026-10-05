@@ -1,0 +1,55 @@
+{
+  "version": "product-roles-v1",
+  "rule_approval": {
+    "approved_by": "owner (Jobtology product owner)",
+    "decisions": {
+      "C1": "Four role-to-NCS occupation mappings",
+      "C2": "NCS level at most 5 is required; posting evidence also makes a unit required",
+      "C3": "Fallback estimated learning duration is 20 hours",
+      "C4": "Role-local skill alias dictionary draft",
+      "C5": "Create and activate a roadmap after feasible analysis",
+      "C6": "Public occupation names and FE-compatible result fields",
+      "C7": "Review the generated draft before enabling publication"
+    }
+  },
+  "roles": [
+    {
+      "occupation_id": "AI_ENGINEER", "name": "AI 엔지니어",
+      "occupation_codes": ["20010703", "20010705"], "additional_base_codes": [],
+      "aliases": {
+        "2001070306": ["딥러닝", "PyTorch", "TensorFlow"],
+        "2001070304": ["데이터 전처리"]
+      }
+    },
+    {
+      "occupation_id": "BACKEND_DEVELOPER", "name": "백엔드 개발자",
+      "occupation_codes": ["20010202", "20010204"], "additional_base_codes": [],
+      "aliases": {
+        "2001020231": ["Python", "파이썬", "Java", "자바", "JavaScript", "자바스크립트", "TypeScript", "C", "C++", "Kotlin"],
+        "2001020413": ["SQL", "MySQL", "PostgreSQL", "Oracle"],
+        "2001020233": ["Git", "GitHub", "Docker", "Linux"],
+        "2001020211": ["Spring", "Django", "FastAPI", "Node.js", "Express", "서버"],
+        "2001020212": ["REST", "API"]
+      }
+    },
+    {
+      "occupation_id": "FRONTEND_DEVELOPER", "name": "프론트엔드 개발자",
+      "occupation_codes": ["20010207"],
+      "additional_base_codes": ["2001020225", "2001020224"],
+      "aliases": {
+        "2001020225": ["React", "Vue", "HTML", "CSS"],
+        "2001020224": ["Figma", "UI", "UX", "화면 설계"]
+      }
+    },
+    {
+      "occupation_id": "DATA_ANALYST", "name": "데이터 분석",
+      "occupation_codes": ["20010105"], "additional_base_codes": [],
+      "aliases": {
+        "2001010506": ["통계", "R", "SPSS"],
+        "2001010507": ["머신러닝", "scikit-learn"],
+        "2001010509": ["시각화", "Tableau", "matplotlib"],
+        "2001010510": ["전처리", "pandas"]
+      }
+    }
+  ]
+}

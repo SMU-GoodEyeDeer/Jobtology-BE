@@ -43,6 +43,7 @@ class AnalysisContextInputsUnavailableError(Exception):
 @dataclass(frozen=True, slots=True)
 class PostgresAnalysisContextInputSource:
     database: Database
+    capability_list_authoritative: bool = False
 
     async def load_context_inputs(
         self,
@@ -149,8 +150,10 @@ class PostgresAnalysisContextInputSource:
             occupation_id=goal_row.occupation_id,
             capabilities=capabilities,
             completeness=InputCompleteness(
-                entities_complete=bool(capabilities)
-                and all(capability.entity_id is not None for capability in capabilities),
+                entities_complete=self.capability_list_authoritative or (
+                    bool(capabilities)
+                    and all(capability.entity_id is not None for capability in capabilities)
+                ),
                 experience_complete_entity_ids=experience_complete_entity_ids,
             ),
             constraints=constraints,

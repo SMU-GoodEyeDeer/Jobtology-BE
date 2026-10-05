@@ -60,6 +60,10 @@ class Settings(BaseSettings):
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
     auth_enabled: bool = False
     guest_sessions_enabled: bool = False
+    product_roles_enabled: bool = False
+    product_role_artifact_approval_path: Path | None = None
+    inprocess_worker_enabled: bool = False
+    capability_list_authoritative: bool = False
     guest_session_max_new_per_minute: int = Field(default=30, ge=1, le=1000)
     google_client_id: str | None = Field(default=None, min_length=1)
     google_client_secret: SecretStr | None = Field(default=None, min_length=1)

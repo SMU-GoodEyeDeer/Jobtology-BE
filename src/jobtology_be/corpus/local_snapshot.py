@@ -132,7 +132,11 @@ class LocalJsonPublishedCorpusSnapshotReader:
 
     @classmethod
     def from_path(cls, path: Path) -> "LocalJsonPublishedCorpusSnapshotReader":
-        document = _SnapshotDocument.model_validate_json(path.read_text())
+        return cls.from_json(path.read_text())
+
+    @classmethod
+    def from_json(cls, content: str) -> "LocalJsonPublishedCorpusSnapshotReader":
+        document = _SnapshotDocument.model_validate_json(content)
         return cls(snapshots=tuple(item.to_snapshot() for item in document.snapshots))
 
     async def get_snapshot(self, selection: PublishedSnapshotSelection) -> PublishedCorpusSnapshot:
