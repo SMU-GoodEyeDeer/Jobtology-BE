@@ -24,6 +24,7 @@ from jobtology_be.planning.contracts import PlanningConstraints
 from jobtology_be.planning.solver_models import (
     PlanningConstraintSnapshot,
     PlanningResult,
+    RouteFeasibility,
     ScheduledRouteStep,
 )
 from jobtology_be.workers.outcomes import PinnedOutcomeResolver
@@ -208,6 +209,14 @@ def _proposal(
         ),
         "optimization_status": planning_result.optimization_status,
     }
+    if planning_result.feasibility is RouteFeasibility.PARTIAL:
+        diagnostic = planning_result.trace.partial_route_diagnostic
+        trace_outputs = {
+            **trace_outputs,
+            "unmet_required_requirement_keys": (
+                diagnostic.unmet_required_requirement_keys if diagnostic is not None else ()
+            ),
+        }
     constraints_snapshot = _constraints_snapshot(planning_result.trace.constraints)
     proposal_hash = _hash({"steps": steps, "trace": trace_outputs})
     return RouteProposalPersist(

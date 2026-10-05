@@ -30,6 +30,7 @@ class InvalidPlanningProblemError(Exception):
 class RouteFeasibility(StrEnum):
     FEASIBLE = "FEASIBLE"
     RISKY = "RISKY"
+    PARTIAL = "PARTIAL"
     INFEASIBLE = "INFEASIBLE"
 
 

@@ -178,6 +178,33 @@ def test_plan_returns_infeasible_with_partial_diagnostic_after_proof() -> None:
     assert result.trace.partial_route_diagnostic.unmet_required_requirement_keys == ("api",)
 
 
+def test_plan_returns_partial_route_covering_most_required_when_time_is_short() -> None:
+    # Given: three required requirements, but only 3 hours of capacity.
+    request = problem(
+        (
+            candidate("big", frozenset({"big"}), estimated_hours=3),
+            candidate("small-a", frozenset({"small-a"}), estimated_hours=1),
+            candidate("small-b", frozenset({"small-b"}), estimated_hours=1),
+            candidate("extra", frozenset({"extra"}), estimated_hours=1),
+        ),
+        required=frozenset({"big", "small-a", "small-b"}),
+        preferred=frozenset({"extra"}),
+        slots=calendar(3),
+    )
+
+    # When
+    result = CpSatRoutePlanner().plan(request)
+
+    # Then: the partial route prefers covering two required requirements over one.
+    assert result.feasibility is RouteFeasibility.PARTIAL
+    assert result.optimization_status is OptimizationStatus.INFEASIBLE
+    assert {step.action_id for step in result.scheduled_steps} >= {"small-a", "small-b"}
+    assert "big" not in {step.action_id for step in result.scheduled_steps}
+    assert result.trace.partial_route_diagnostic is not None
+    assert result.trace.partial_route_diagnostic.unmet_required_requirement_keys == ("big",)
+    assert result.trace.partial_route_diagnostic.scheduled_steps == result.scheduled_steps
+
+
 def test_plan_distinguishes_solver_timeout_from_infeasibility() -> None:
     # Given
     request = problem((candidate("api", frozenset({"api"}),),), settings=SolverSettings(0))

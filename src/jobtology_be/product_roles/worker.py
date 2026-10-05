@@ -42,7 +42,7 @@ class _RoadmapCandidate(BaseModel):
     user_id: UUID
     profile_version: int
     goal_id: UUID
-    feasibility: Literal["FEASIBLE", "RISKY", "INFEASIBLE"]
+    feasibility: Literal["FEASIBLE", "RISKY", "PARTIAL", "INFEASIBLE"]
     occupation_id: str | None
 
 
@@ -96,7 +96,7 @@ class InProcessRecomputeLoop:
             if raw_row is None:
                 return
             row = _RoadmapCandidate.model_validate(dict(raw_row))
-            if row.feasibility not in {"FEASIBLE", "RISKY"} or row.occupation_id is None:
+            if row.feasibility not in {"FEASIBLE", "RISKY", "PARTIAL"} or row.occupation_id is None:
                 return
             active = await session.scalar(
                 select(roadmaps.c.id).where(

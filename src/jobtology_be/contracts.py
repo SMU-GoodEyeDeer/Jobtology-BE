@@ -80,6 +80,6 @@ class RoadmapPreview(Contract):
     analysis_id: str
     profile_version: int
     basis_version: str
-    feasibility: Literal["FEASIBLE", "RISKY", "INFEASIBLE"]
+    feasibility: Literal["FEASIBLE", "RISKY", "PARTIAL", "INFEASIBLE"]
     proposed_steps: list[ProposedStep]
     is_fixture: bool = False

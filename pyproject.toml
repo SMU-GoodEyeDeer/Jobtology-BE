@@ -29,6 +29,7 @@ packages = ["src/jobtology_be"]
 [tool.hatch.build.targets.wheel.force-include]
 "docs/fe-integration.md" = "jobtology_be/api/guide/fe-integration.md"
 "config/product_roles/policy.v1.json" = "jobtology_be/product_roles/policy.v1.json"
+"config/product_roles/onboarding_checklist.v1.json" = "jobtology_be/product_roles/onboarding_checklist.v1.json"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

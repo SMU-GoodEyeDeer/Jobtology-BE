@@ -60,6 +60,21 @@ class CapabilityMutation:
 
 
 @dataclass(frozen=True, slots=True)
+class OnboardingCapabilityUnit:
+    item_id: str
+    raw_text: str
+
+
+@dataclass(frozen=True, slots=True)
+class OnboardingCapabilityReplace:
+    user_id: UUID
+    expected_profile_version: int
+    occupation_id: str
+    checklist_version: int
+    units: tuple[OnboardingCapabilityUnit, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class CapabilityDelete:
     user_id: UUID
     capability_id: UUID

@@ -25,6 +25,7 @@ from jobtology_be.infrastructure.persistence.live_source_feed import LiveSourceF
 from jobtology_be.infrastructure.persistence.source_catalog import CatalogQueries
 from jobtology_be.modules.auth.google_oidc import GoogleIdentityProvider
 from jobtology_be.modules.auth.session import SessionStore
+from jobtology_be.product_roles.checklist import OnboardingChecklistCatalog
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,4 +50,5 @@ class ApiDependencies:
     analysis_context_factory: AnalysisContextFactory | None = None
     analysis_recompute_submitter: AnalysisRecomputeSubmitter | None = None
     capability_service: CapabilityService | None = None
+    onboarding_checklist: OnboardingChecklistCatalog | None = None
     idempotency_store: IdempotencyStore | None = None

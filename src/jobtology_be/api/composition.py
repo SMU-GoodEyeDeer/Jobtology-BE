@@ -11,6 +11,7 @@ from jobtology_be.api.auth_session import (
     require_session_store,
 )
 from jobtology_be.api.capabilities import require_capability_service
+from jobtology_be.api.capability_checklist import require_onboarding_checklist
 from jobtology_be.api.dependencies import ApiDependencies
 from jobtology_be.api.editorial_drafts import require_editorial_drafts
 from jobtology_be.api.goals import require_goal_service
@@ -54,6 +55,7 @@ from jobtology_be.infrastructure.persistence.source_catalog import (
 )
 from jobtology_be.modules.analyses.editorial_models import ReleaseState
 from jobtology_be.modules.auth.session import SessionStore
+from jobtology_be.product_roles.checklist import OnboardingChecklistCatalog
 from jobtology_be.product_roles.holder import ProductRoleHolder
 from jobtology_be.product_roles.worker import InProcessRecomputeLoop
 from jobtology_be.settings import Settings
@@ -248,6 +250,11 @@ def register_api_dependencies(app: FastAPI, dependencies: ApiDependencies, setti
             return capability_service
 
         app.dependency_overrides[require_capability_service] = get_injected_capability_service
+    if (onboarding_checklist := dependencies.onboarding_checklist) is not None:
+        def get_injected_onboarding_checklist() -> OnboardingChecklistCatalog:
+            return onboarding_checklist
+
+        app.dependency_overrides[require_onboarding_checklist] = get_injected_onboarding_checklist
     if (idempotency_store := dependencies.idempotency_store) is not None:
         def get_injected_idempotency_store() -> IdempotencyStore:
             return idempotency_store

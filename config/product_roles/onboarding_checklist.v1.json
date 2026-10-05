@@ -1,0 +1,425 @@
+{
+  "version": 1,
+  "occupations": {
+    "BACKEND_DEVELOPER": {
+      "groups": [
+        {
+          "label": "프로그래밍",
+          "items": [
+            {
+              "item_id": "B1",
+              "label": "Python·Java·JavaScript 등으로 간단한 프로그램을 작성해 봤어요",
+              "entity_ids": [
+                "ncs:unit:2001020231"
+              ]
+            },
+            {
+              "item_id": "B2",
+              "label": "Java·Python 등에서 클래스·예외처리·라이브러리를 써서 중간 규모 프로그램을 만들어 봤어요",
+              "entity_ids": [
+                "ncs:unit:2001020230"
+              ]
+            }
+          ]
+        },
+        {
+          "label": "CS 기초",
+          "items": [
+            {
+              "item_id": "B3",
+              "label": "운영체제·네트워크·데이터베이스 기초 과목을 들었어요",
+              "entity_ids": [
+                "ncs:unit:2001020232"
+              ]
+            },
+            {
+              "item_id": "B4",
+              "label": "자료구조·알고리즘 수업을 듣거나 백준·프로그래머스 등에서 코딩테스트를 풀어 봤어요",
+              "entity_ids": [
+                "ncs:unit:2001020235"
+              ]
+            }
+          ]
+        },
+        {
+          "label": "개발 환경",
+          "items": [
+            {
+              "item_id": "B5",
+              "label": "Git·Docker·Linux 등으로 개발 환경을 직접 구성해 봤어요",
+              "entity_ids": [
+                "ncs:unit:2001020233",
+                "ncs:unit:2001020234"
+              ]
+            }
+          ]
+        },
+        {
+          "label": "데이터베이스",
+          "items": [
+            {
+              "item_id": "B6",
+              "label": "MySQL·PostgreSQL 등에서 SELECT·JOIN 같은 SQL 쿼리를 작성해 봤어요",
+              "entity_ids": [
+                "ncs:unit:2001020415",
+                "ncs:unit:2001020413"
+              ]
+            },
+            {
+              "item_id": "B7",
+              "label": "MySQL·PostgreSQL 등에서 테이블을 직접 만들고 인덱스·트랜잭션을 다뤄 봤어요",
+              "entity_ids": [
+                "ncs:unit:2001020405",
+                "ncs:unit:2001020414"
+              ]
+            }
+          ]
+        },
+        {
+          "label": "서버",
+          "items": [
+            {
+              "item_id": "B8",
+              "label": "Spring·Django·FastAPI·Node.js 등으로 DB와 연결된 서버를 만들어 봤어요",
+              "entity_ids": [
+                "ncs:unit:2001020211",
+                "ncs:unit:2001020205"
+              ]
+            },
+            {
+              "item_id": "B9",
+              "label": "Spring·FastAPI 등으로 REST API를 만들거나 외부 API를 연동해 봤어요",
+              "entity_ids": [
+                "ncs:unit:2001020212"
+              ]
+            }
+          ]
+        },
+        {
+          "label": "품질·배포",
+          "items": [
+            {
+              "item_id": "B10",
+              "label": "JUnit·pytest 등으로 테스트 코드를 작성하고 실행해 봤어요",
+              "entity_ids": [
+                "ncs:unit:2001020227"
+              ]
+            },
+            {
+              "item_id": "B11",
+              "label": "AWS·Vercel 등 서버나 클라우드에 서비스를 배포해 봤어요",
+              "entity_ids": [
+                "ncs:unit:2001020214"
+              ]
+            }
+          ]
+        },
+        {
+          "label": "프로젝트",
+          "items": [
+            {
+              "item_id": "B12",
+              "label": "팀 프로젝트에서 요구사항 정리부터 기능 통합까지 참여해 봤어요",
+              "entity_ids": [
+                "ncs:unit:2001020201",
+                "ncs:unit:2001020206"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "FRONTEND_DEVELOPER": {
+      "groups": [
+        {
+          "label": "화면 개발",
+          "items": [
+            {
+              "item_id": "F1",
+              "label": "HTML·CSS로 웹 페이지를 만들어 봤어요",
+              "entity_ids": [
+                "ncs:unit:2001020712"
+              ]
+            },
+            {
+              "item_id": "F2",
+              "label": "React·Vue 등으로 여러 화면이 있는 웹을 만들어 봤어요",
+              "entity_ids": [
+                "ncs:unit:2001020225"
+              ]
+            },
+            {
+              "item_id": "F3",
+              "label": "Redux·Zustand 등으로 컴포넌트 구조와 상태 관리를 직접 설계해 봤어요",
+              "entity_ids": [
+                "ncs:unit:2001020706"
+              ]
+            }
+          ]
+        },
+        {
+          "label": "디자인",
+          "items": [
+            {
+              "item_id": "F4",
+              "label": "Figma 등으로 와이어프레임이나 화면 흐름도를 그려 봤어요",
+              "entity_ids": [
+                "ncs:unit:2001020224"
+              ]
+            },
+            {
+              "item_id": "F5",
+              "label": "Figma 등으로 색·글꼴·컴포넌트를 정해 화면 시안을 디자인해 봤어요",
+              "entity_ids": [
+                "ncs:unit:2001020707",
+                "ncs:unit:2001020711"
+              ]
+            },
+            {
+              "item_id": "F6",
+              "label": "Figma·Storybook 등으로 디자인 시스템이나 스타일 가이드를 정리해 봤어요",
+              "entity_ids": [
+                "ncs:unit:2001020710"
+              ]
+            }
+          ]
+        },
+        {
+          "label": "기획",
+          "items": [
+            {
+              "item_id": "F7",
+              "label": "사용자 요구를 정리해 화면 요구사항으로 만들어 봤어요",
+              "entity_ids": [
+                "ncs:unit:2001020704"
+              ]
+            },
+            {
+              "item_id": "F8",
+              "label": "사용자 인터뷰·설문을 진행해 봤어요",
+              "entity_ids": [
+                "ncs:unit:2001020703"
+              ]
+            }
+          ]
+        },
+        {
+          "label": "품질",
+          "items": [
+            {
+              "item_id": "F9",
+              "label": "반응형·접근성 기준으로 브라우저·기기별 화면을 점검해 봤어요",
+              "entity_ids": [
+                "ncs:unit:2001020708"
+              ]
+            },
+            {
+              "item_id": "F10",
+              "label": "Jest·Playwright 등으로 화면 테스트를 해 봤어요",
+              "entity_ids": [
+                "ncs:unit:2001020709"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "DATA_ANALYST": {
+      "groups": [
+        {
+          "label": "기초",
+          "items": [
+            {
+              "item_id": "D1",
+              "label": "엑셀·Python 등으로 데이터를 정리·집계해 봤어요",
+              "entity_ids": [
+                "ncs:unit:2001010516"
+              ]
+            }
+          ]
+        },
+        {
+          "label": "데이터 준비",
+          "items": [
+            {
+              "item_id": "D2",
+              "label": "pandas 등으로 결측치·이상치를 처리하고 데이터를 가공해 봤어요",
+              "entity_ids": [
+                "ncs:unit:2001010510"
+              ]
+            },
+            {
+              "item_id": "D3",
+              "label": "pandas·scikit-learn 등으로 분석에 쓸 변수를 새로 만들거나 골라 봤어요",
+              "entity_ids": [
+                "ncs:unit:2001010512"
+              ]
+            }
+          ]
+        },
+        {
+          "label": "분석",
+          "items": [
+            {
+              "item_id": "D4",
+              "label": "pandas·seaborn 등으로 데이터 분포·상관관계를 살펴보는 탐색적 분석을 해 봤어요",
+              "entity_ids": [
+                "ncs:unit:2001010511"
+              ]
+            },
+            {
+              "item_id": "D5",
+              "label": "R·SPSS·Python 등으로 가설검정·회귀분석 같은 통계 분석을 해 봤어요",
+              "entity_ids": [
+                "ncs:unit:2001010506"
+              ]
+            },
+            {
+              "item_id": "D6",
+              "label": "KoNLPy 등으로 텍스트 데이터를 분석해 봤어요",
+              "entity_ids": [
+                "ncs:unit:2001010508"
+              ]
+            }
+          ]
+        },
+        {
+          "label": "모델",
+          "items": [
+            {
+              "item_id": "D7",
+              "label": "scikit-learn 등으로 머신러닝 모델을 학습하고 평가해 봤어요",
+              "entity_ids": [
+                "ncs:unit:2001010507"
+              ]
+            },
+            {
+              "item_id": "D8",
+              "label": "Kaggle·데이콘 공모전이나 캡스톤에서 문제 정의부터 모델링까지 수행해 봤어요",
+              "entity_ids": [
+                "ncs:unit:2001010513"
+              ]
+            }
+          ]
+        },
+        {
+          "label": "결과",
+          "items": [
+            {
+              "item_id": "D9",
+              "label": "matplotlib·Tableau 등으로 분석 결과를 차트·대시보드로 시각화해 봤어요",
+              "entity_ids": [
+                "ncs:unit:2001010509"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "AI_ENGINEER": {
+      "groups": [
+        {
+          "label": "데이터",
+          "items": [
+            {
+              "item_id": "A1",
+              "label": "크롤링이나 AI Hub·Kaggle 등 공개 데이터셋으로 학습 데이터를 모아 봤어요",
+              "entity_ids": [
+                "ncs:unit:2001070303"
+              ]
+            },
+            {
+              "item_id": "A2",
+              "label": "pandas·NumPy 등으로 학습용 데이터를 정제·변환해 봤어요",
+              "entity_ids": [
+                "ncs:unit:2001070304"
+              ]
+            },
+            {
+              "item_id": "A3",
+              "label": "모델 입력용 특징(feature)이나 임베딩을 뽑아 봤어요",
+              "entity_ids": [
+                "ncs:unit:2001070305"
+              ]
+            },
+            {
+              "item_id": "A4",
+              "label": "라벨 검수나 데이터 분포 확인으로 데이터 품질을 점검해 봤어요",
+              "entity_ids": [
+                "ncs:unit:2001070309"
+              ]
+            }
+          ]
+        },
+        {
+          "label": "모델",
+          "items": [
+            {
+              "item_id": "A5",
+              "label": "Colab·Hugging Face 등으로 GPU 환경이나 사전학습 모델을 준비해 써 봤어요",
+              "entity_ids": [
+                "ncs:unit:2001070302"
+              ]
+            },
+            {
+              "item_id": "A6",
+              "label": "PyTorch·TensorFlow 등으로 딥러닝 모델을 직접 학습시켜 봤어요",
+              "entity_ids": [
+                "ncs:unit:2001070306"
+              ]
+            },
+            {
+              "item_id": "A7",
+              "label": "여러 모델을 평가 지표로 비교해 하나를 골라 봤어요",
+              "entity_ids": [
+                "ncs:unit:2001070307"
+              ]
+            }
+          ]
+        },
+        {
+          "label": "서비스",
+          "items": [
+            {
+              "item_id": "A8",
+              "label": "AI 기능의 요구사항과 설계 문서를 작성해 봤어요",
+              "entity_ids": [
+                "ncs:unit:2001070501",
+                "ncs:unit:2001070503"
+              ]
+            },
+            {
+              "item_id": "A9",
+              "label": "FastAPI·Streamlit 등으로 학습한 모델을 API나 앱에 붙여 봤어요",
+              "entity_ids": [
+                "ncs:unit:2001070504",
+                "ncs:unit:2001070505",
+                "ncs:unit:2001070506"
+              ]
+            },
+            {
+              "item_id": "A10",
+              "label": "Docker·클라우드 등으로 AI 서비스를 테스트하고 배포해 봤어요",
+              "entity_ids": [
+                "ncs:unit:2001070507",
+                "ncs:unit:2001070508"
+              ]
+            }
+          ]
+        },
+        {
+          "label": "운영",
+          "items": [
+            {
+              "item_id": "A11",
+              "label": "MLflow·W&B 등으로 배포한 모델의 성능을 지켜보고 다시 학습시켜 봤어요",
+              "entity_ids": [
+                "ncs:unit:2001070308"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

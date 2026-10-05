@@ -14,6 +14,7 @@ from jobtology_be.planning.solver_models import (
 )
 
 NORMALIZED_SCORE_MAXIMUM = 10_000
+PARTIAL_REQUIRED_COVERAGE_WEIGHT = 100 * NORMALIZED_SCORE_MAXIMUM + 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,6 +117,7 @@ def build_route_model(
         selected_by_action,
         covered_by_requirement,
         completion_by_action,
+        reward_required_coverage=not require_required_coverage,
     )
     return RouteModelArtifacts(
         model=model,
@@ -189,6 +191,8 @@ def _add_objective(
     selected_by_action: dict[str, cp_model.IntVar],
     covered_by_requirement: dict[str, cp_model.IntVar],
     completion_by_action: dict[str, cp_model.IntVar],
+    *,
+    reward_required_coverage: bool,
 ) -> None:
     objective = objective_snapshot(problem)
     completion = model.new_int_var(0, objective.horizon_microseconds, "route_completion")
@@ -206,11 +210,20 @@ def _add_objective(
         objective.horizon_microseconds,
     )
     cost_points = _cost_points(model, candidates, selected_by_action, objective)
-    model.maximize(
+    weighted_points = (
         objective.coverage_weight * coverage_points
         + objective.time_weight * time_points
         + objective.cost_weight * cost_points
     )
+    if not reward_required_coverage:
+        model.maximize(weighted_points)
+        return
+    # Partial routes cover as many unmet required requirements as possible first; one more
+    # required requirement always outweighs the whole normalized weighted score.
+    required_covered = sum(
+        covered_by_requirement[key] for key in sorted(problem.required_requirement_keys)
+    )
+    model.maximize(PARTIAL_REQUIRED_COVERAGE_WEIGHT * required_covered + weighted_points)
 
 
 def _coverage_points(

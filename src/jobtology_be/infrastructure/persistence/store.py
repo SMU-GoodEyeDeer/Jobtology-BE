@@ -26,6 +26,7 @@ from jobtology_be.infrastructure.persistence.contracts import (
     IdempotencySnapshot,
     JsonValue,
     MissingRecordError,
+    OnboardingCapabilityReplace,
     PersistenceConflictError,
     ProfileMutation,
     ProfileSnapshot,
@@ -71,14 +72,18 @@ from jobtology_be.infrastructure.persistence.schema import (
 )
 from jobtology_be.infrastructure.persistence.worker import WorkerRepository
 
+ONBOARDING_CAPABILITY_CATEGORY = "onboarding"
+
 
 class PostgresApplicationStore(OutboxRepository, WorkerRepository):
-    def __init__(self, database: Database) -> None:
+    def __init__(self, database: Database, *, capability_list_authoritative: bool = False) -> None:
         super().__init__(database)
         self._active_session: ContextVar[AsyncSession | None] = ContextVar(
             "postgres_application_store_active_session", default=None
         )
-        self._configured_recomputes = ConfiguredRecomputeRepository(database)
+        self._configured_recomputes = ConfiguredRecomputeRepository(
+            database, capability_list_authoritative=capability_list_authoritative
+        )
         self._roadmap_steps = RoadmapStepRepository(database)
         self._recompute_requests = RecomputeRequestRepository(database)
 
@@ -238,6 +243,60 @@ class PostgresApplicationStore(OutboxRepository, WorkerRepository):
             capability_id=capability_id,
             profile_version=request.expected_profile_version + 1,
         )
+
+    async def replace_onboarding_capabilities(
+        self, request: OnboardingCapabilityReplace
+    ) -> ProfileSnapshot:
+        next_version = request.expected_profile_version + 1
+        async with self._transaction() as session:
+            await self._bump_profile(session, request.user_id, request.expected_profile_version)
+            now = datetime.now(UTC)
+            await session.execute(
+                update(user_capabilities)
+                .where(
+                    user_capabilities.c.user_id == request.user_id,
+                    user_capabilities.c.lifecycle == "ACTIVE",
+                    user_capabilities.c.category == ONBOARDING_CAPABILITY_CATEGORY,
+                )
+                .values(lifecycle="REVOKED", updated_at=now)
+            )
+            if request.units:
+                await session.execute(
+                    insert(user_capabilities),
+                    [
+                        {
+                            "id": uuid4(),
+                            "user_id": request.user_id,
+                            "category": ONBOARDING_CAPABILITY_CATEGORY,
+                            "raw_text": unit.raw_text,
+                            "entity_id": None,
+                            "proficiency": None,
+                            "details": {
+                                "source": ONBOARDING_CAPABILITY_CATEGORY,
+                                "item_id": unit.item_id,
+                                "occupation_id": request.occupation_id,
+                                "checklist_version": request.checklist_version,
+                            },
+                            "updated_at": now,
+                        }
+                        for unit in request.units
+                    ],
+                )
+            event_id = await self._append_event(
+                session,
+                request.user_id,
+                request.user_id,
+                next_version,
+                "ONBOARDING_CAPABILITIES_REPLACED",
+                {
+                    "occupation_id": request.occupation_id,
+                    "item_ids": sorted({unit.item_id for unit in request.units}),
+                },
+            )
+            await self._configured_recomputes.enqueue_for_active_user(
+                session, request.user_id, next_version, event_id
+            )
+        return ProfileSnapshot(user_id=request.user_id, version=next_version)
 
     async def delete_capability(self, request: CapabilityDelete) -> ProfileSnapshot:
         async with self._database.sessions.begin() as session:
@@ -575,7 +634,7 @@ class PostgresApplicationStore(OutboxRepository, WorkerRepository):
                         route_proposals.c.user_id == request.user_id,
                     )
                 )
-                if feasibility not in {"FEASIBLE", "RISKY"}:
+                if feasibility not in {"FEASIBLE", "RISKY", "PARTIAL"}:
                     raise PersistenceConflictError(resource="route proposal")
                 await session.execute(
                     update(roadmaps)

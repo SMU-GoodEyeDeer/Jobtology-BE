@@ -2,6 +2,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import anyio
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from test_acceptance_m5_lifecycle import _application
@@ -18,6 +19,9 @@ from jobtology_be.infrastructure.persistence.contracts import (
     CapabilityDelete,
     CapabilityMutation,
     GoalMutation,
+    OnboardingCapabilityReplace,
+    OnboardingCapabilityUnit,
+    PersistenceConflictError,
     ProfileMutation,
     RoutePreferenceMutation,
 )
@@ -25,6 +29,7 @@ from jobtology_be.infrastructure.persistence.database import Database
 from jobtology_be.infrastructure.persistence.schema import (
     recompute_contexts,
     recompute_requests,
+    user_capabilities,
 )
 from jobtology_be.infrastructure.persistence.store import PostgresApplicationStore
 from jobtology_be.workers.context import JsonRecomputeContextReader, RecomputeContextDocument
@@ -226,3 +231,157 @@ def test_configured_mutations_refresh_recompute_context_without_stale_snapshot_r
     )
 
     anyio.run(_exercise_configured_mutations, acceptance_database_url, user_id, goal_id, target_by)
+
+
+async def _exercise_authoritative_free_text_capability(
+    database_url: str, user_id: UUID
+) -> None:
+    database = Database.create(database_url)
+    store = PostgresApplicationStore(database, capability_list_authoritative=True)
+    try:
+        capability = await store.mutate_capability(
+            CapabilityMutation(
+                user_id=user_id,
+                expected_profile_version=2,
+                capability_id=None,
+                category="language",
+                raw_text="unrecognized free text",
+                entity_id=None,
+                proficiency=None,
+                details={},
+            )
+        )
+        context = await _pending_context(database, user_id, capability.profile_version)
+        assert context.capabilities[0].entity_id is None
+        assert context.completeness.entities_complete
+    finally:
+        await database.dispose()
+
+
+def test_authoritative_capability_lists_stay_complete_when_capability_edits_carry_context(
+    acceptance_database_url: str,
+) -> None:
+    user_id = uuid4()
+    target_by = datetime.now(UTC) + timedelta(days=30)
+    with TestClient(_application(acceptance_database_url, user_id)) as client:
+        goal_response = client.post(
+            "/api/v1/me/goals",
+            json={
+                "expected_profile_version": 1,
+                "goal_mode": "TARGETED",
+                "occupation_id": "BACKEND_DEVELOPER",
+                "target_by": target_by.isoformat(),
+                "timezone": "UTC",
+                "original_time_phrase": "within a month",
+            },
+        )
+    assert goal_response.status_code == 201
+    goal_id = UUID(goal_response.json()["goal_id"])
+    _ = anyio.run(
+        process_recompute, acceptance_database_url, user_id, 2, goal_id, (), target_by,
+    )
+
+    anyio.run(_exercise_authoritative_free_text_capability, acceptance_database_url, user_id)
+
+
+async def _exercise_onboarding_replacement(database_url: str, user_id: UUID) -> None:
+    database = Database.create(database_url)
+    store = PostgresApplicationStore(database, capability_list_authoritative=True)
+    try:
+        manual = await store.mutate_capability(
+            CapabilityMutation(
+                user_id=user_id,
+                expected_profile_version=2,
+                capability_id=None,
+                category="language",
+                raw_text="manual entry",
+                entity_id=None,
+                proficiency=None,
+                details={},
+            )
+        )
+        first = await store.replace_onboarding_capabilities(
+            OnboardingCapabilityReplace(
+                user_id=user_id,
+                expected_profile_version=manual.profile_version,
+                occupation_id="BACKEND_DEVELOPER",
+                checklist_version=1,
+                units=(
+                    OnboardingCapabilityUnit(item_id="B1", raw_text=CAPABILITY_LABEL),
+                    OnboardingCapabilityUnit(item_id="B2", raw_text="Second unit"),
+                ),
+            )
+        )
+        assert first.version == manual.profile_version + 1
+        second = await store.replace_onboarding_capabilities(
+            OnboardingCapabilityReplace(
+                user_id=user_id,
+                expected_profile_version=first.version,
+                occupation_id="BACKEND_DEVELOPER",
+                checklist_version=1,
+                units=(OnboardingCapabilityUnit(item_id="B1", raw_text=CAPABILITY_LABEL),),
+            )
+        )
+        assert second.version == first.version + 1
+        context = await _pending_context(database, user_id, second.version)
+        assert sorted(item.raw_text for item in context.capabilities) == [
+            CAPABILITY_LABEL, "manual entry",
+        ]
+        assert context.completeness.entities_complete
+        async with database.sessions() as session:
+            rows = (
+                await session.execute(
+                    select(
+                        user_capabilities.c.raw_text,
+                        user_capabilities.c.lifecycle,
+                        user_capabilities.c.verification,
+                        user_capabilities.c.details,
+                    ).where(
+                        user_capabilities.c.user_id == user_id,
+                        user_capabilities.c.category == "onboarding",
+                    )
+                )
+            ).all()
+        active = [row for row in rows if row.lifecycle == "ACTIVE"]
+        assert len(rows) == 3
+        assert [row.raw_text for row in active] == [CAPABILITY_LABEL]
+        assert active[0].verification == "SELF_REPORTED"
+        assert active[0].details["item_id"] == "B1"
+        with pytest.raises(PersistenceConflictError):
+            _ = await store.replace_onboarding_capabilities(
+                OnboardingCapabilityReplace(
+                    user_id=user_id,
+                    expected_profile_version=first.version,
+                    occupation_id="BACKEND_DEVELOPER",
+                    checklist_version=1,
+                    units=(),
+                )
+            )
+    finally:
+        await database.dispose()
+
+
+def test_onboarding_answers_replace_previous_answers_and_keep_manual_capabilities(
+    acceptance_database_url: str,
+) -> None:
+    user_id = uuid4()
+    target_by = datetime.now(UTC) + timedelta(days=30)
+    with TestClient(_application(acceptance_database_url, user_id)) as client:
+        goal_response = client.post(
+            "/api/v1/me/goals",
+            json={
+                "expected_profile_version": 1,
+                "goal_mode": "TARGETED",
+                "occupation_id": "BACKEND_DEVELOPER",
+                "target_by": target_by.isoformat(),
+                "timezone": "UTC",
+                "original_time_phrase": "within a month",
+            },
+        )
+    assert goal_response.status_code == 201
+    goal_id = UUID(goal_response.json()["goal_id"])
+    _ = anyio.run(
+        process_recompute, acceptance_database_url, user_id, 2, goal_id, (), target_by,
+    )
+
+    anyio.run(_exercise_onboarding_replacement, acceptance_database_url, user_id)

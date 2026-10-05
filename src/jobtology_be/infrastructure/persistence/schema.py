@@ -240,7 +240,7 @@ route_proposals = Table(
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=UTC_NOW),
     CheckConstraint("profile_version >= 1", name="route_proposals_profile_version_check"),
     CheckConstraint(
-        "feasibility IN ('FEASIBLE', 'RISKY', 'INFEASIBLE')",
+        "feasibility IN ('FEASIBLE', 'RISKY', 'PARTIAL', 'INFEASIBLE')",
         name="route_proposals_feasibility_check",
     ),
 )

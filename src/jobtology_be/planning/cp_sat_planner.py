@@ -70,6 +70,16 @@ class CpSatRoutePlanner:
                 )
             case cp_model.INFEASIBLE:
                 diagnostic = _partial_diagnostic(problem, candidates)
+                if diagnostic.scheduled_steps:
+                    return planning_result(
+                        problem=problem,
+                        candidates=candidates,
+                        feasibility=RouteFeasibility.PARTIAL,
+                        status=OptimizationStatus.INFEASIBLE,
+                        scheduled_steps=diagnostic.scheduled_steps,
+                        rejections=rejections,
+                        diagnostic=diagnostic,
+                    )
                 return planning_result(
                     problem=problem,
                     candidates=candidates,

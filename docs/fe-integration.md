@@ -127,6 +127,29 @@ analysis와 route planning은 아직 제공되지 않거나 의도적으로 지�
 목표(`POST /api/v1/me/goals`)를 입력합니다. 각 자원은 서버가 관리하는 `version`을
 갖고, 이후 분석 요청 시 `expected_profile_version`으로 사용합니다.
 
+#### 온보딩 "이미 해본 것" 체크리스트
+
+직무를 고른 직후 보여줄 체크 항목은 `GET /api/v1/occupations/{occupation_id}/capability-checklist`
+로 조회합니다(세션 불필요). 응답은 `{occupation_id, checklist_version, groups: [{label, items:
+[{item_id, label}]}]}`이며 NCS 단위 ID는 노출하지 않습니다. 현재 승인된 직무 요구에 연결이 없는
+항목은 숨겨지고, 체크리스트가 없는 직무는 `404`입니다. 이때 단계를 건너뛰세요.
+
+체크 결과는 한 번에 저장합니다.
+
+```text
+PUT /api/v1/me/capabilities/onboarding
+{ "expected_profile_version": 3, "occupation_id": "BACKEND_DEVELOPER", "item_ids": ["B1", "B6"] }
+→ 200 { "profile_version": 4, "saved_count": 3 }
+```
+
+- 한 트랜잭션에서 저장하고 프로필 버전은 **한 번만** 올라갑니다. 다음 요청에는 응답의
+  `profile_version`을 쓰세요.
+- 이전 온보딩 응답을 **교체**합니다. 빈 `item_ids`는 이전 응답을 모두 지웁니다. "내 정보"에서
+  직접 입력한 역량은 바뀌지 않습니다.
+- 저장된 역량은 `category: "onboarding"`, `verification: "SELF_REPORTED"`입니다.
+  `saved_count`는 저장된 역량 수로, 항목 하나가 여러 역량에 연결되면 항목 수보다 큽니다.
+- 알 수 없는 `item_id`는 `422`, 버전 불일치는 `409`입니다. `Idempotency-Key`를 지원합니다.
+
 ### 2. 분석 요청 (202 비동기)
 
 ```text
@@ -168,7 +191,11 @@ Idempotency-Key: <클라이언트 생성 UUID>
 ### 4. 로드맵 제안 확인
 
 `GET /api/v1/route-proposals/{proposal_id}` 로 제안된 로드맵(단계, 예상 시간,
-선행 관계)을 확인합니다. 사용자가 이 제안을 검토·수용하는 UI를 이 단계에
+선행 관계)을 확인합니다. `feasibility`는 `FEASIBLE`, `RISKY`, `PARTIAL`, `INFEASIBLE` 중 하나입니다.
+`PARTIAL`은 목표 기간 안에 필수 역량을 모두 배울 수 없어 **필수 역량을 최대한 많이 다루는 일부
+경로**만 만든 경우입니다. 단계는 정상적으로 저장·활성화할 수 있으므로, 화면에 "기간 안에 가능한
+범위의 일부 경로"임을 함께 안내하세요. 다루지 못한 필수 요구는 trace `outputs.unmet_required_requirement_keys`에
+있습니다. 사용자가 이 제안을 검토·수용하는 UI를 이 단계에
 배치하세요. 경로 계산 근거는 `GET /api/v1/traces/{trace_id}` 로 추적할 수
 있습니다.
 

@@ -11,6 +11,7 @@ from jobtology_be.infrastructure.persistence.context_carryforward import (
     carry_forward_recompute_context,
 )
 from jobtology_be.infrastructure.persistence.contracts import RecomputeRequestCreate
+from jobtology_be.infrastructure.persistence.database import Database
 from jobtology_be.infrastructure.persistence.outbox import OutboxRepository
 from jobtology_be.infrastructure.persistence.schema import (
     goals,
@@ -24,6 +25,10 @@ from jobtology_be.planning.contracts import PlanningConstraints
 
 
 class ConfiguredRecomputeRepository(OutboxRepository):
+    def __init__(self, database: Database, *, capability_list_authoritative: bool = False) -> None:
+        super().__init__(database)
+        self._capability_list_authoritative = capability_list_authoritative
+
     async def enqueue_for_active_user(
         self, session, user_id: UUID, profile_version: int, event_id: UUID
     ) -> None:
@@ -136,8 +141,10 @@ class ConfiguredRecomputeRepository(OutboxRepository):
                 for row in rows
             )
             completeness = InputCompleteness(
-                entities_complete=bool(capabilities)
-                and all(capability.entity_id is not None for capability in capabilities),
+                entities_complete=self._capability_list_authoritative or (
+                    bool(capabilities)
+                    and all(capability.entity_id is not None for capability in capabilities)
+                ),
                 experience_complete_entity_ids=frozenset(
                     row.entity_id
                     for row in rows

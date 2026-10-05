@@ -8,6 +8,8 @@ from jobtology_be.infrastructure.persistence.contracts import (
     CapabilityMutation,
     CapabilitySnapshot,
     JsonValue,
+    OnboardingCapabilityReplace,
+    OnboardingCapabilityUnit,
     ProfileSnapshot,
     UserCreate,
 )
@@ -19,6 +21,10 @@ class CapabilityStore(Protocol):
     async def mutate_capability(self, request: CapabilityMutation) -> CapabilitySnapshot: ...
 
     async def delete_capability(self, request: CapabilityDelete) -> ProfileSnapshot: ...
+
+    async def replace_onboarding_capabilities(
+        self, request: OnboardingCapabilityReplace
+    ) -> ProfileSnapshot: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,10 +44,20 @@ class CapabilityResult:
     profile_version: int
 
 
+@dataclass(frozen=True, slots=True)
+class OnboardingCapabilitiesCommand:
+    expected_profile_version: int
+    occupation_id: str
+    checklist_version: int
+    units: tuple[OnboardingCapabilityUnit, ...]
+
+
 class CapabilityService(Protocol):
     async def upsert(self, user_id: UUID, command: CapabilityMutationCommand) -> CapabilityResult: ...
 
     async def delete(self, user_id: UUID, capability_id: UUID, expected_profile_version: int) -> int: ...
+
+    async def replace_onboarding(self, user_id: UUID, command: OnboardingCapabilitiesCommand) -> int: ...
 
 
 class PersistentCapabilityService:
@@ -75,6 +91,19 @@ class PersistentCapabilityService:
                 user_id=user_id,
                 capability_id=capability_id,
                 expected_profile_version=expected_profile_version,
+            )
+        )
+        return snapshot.version
+
+    async def replace_onboarding(self, user_id: UUID, command: OnboardingCapabilitiesCommand) -> int:
+        await self._store.create_user(UserCreate(user_id=user_id))
+        snapshot = await self._store.replace_onboarding_capabilities(
+            OnboardingCapabilityReplace(
+                user_id=user_id,
+                expected_profile_version=command.expected_profile_version,
+                occupation_id=command.occupation_id,
+                checklist_version=command.checklist_version,
+                units=command.units,
             )
         )
         return snapshot.version

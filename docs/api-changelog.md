@@ -1,5 +1,21 @@
 # API changelog
 
+## 2026-10-05 — onboarding checklist and partial routes
+
+- Added public `GET /api/v1/occupations/{occupation_id}/capability-checklist` with the
+  approved onboarding checklist projected onto the current role release (404 when the
+  occupation has no checklist).
+- Added `PUT /api/v1/me/capabilities/onboarding`, replacing the user's previous onboarding
+  answers in one transaction with a single profile-version bump. Answers are stored as
+  `category: "onboarding"` self-reported capabilities; other capabilities are untouched.
+- Route proposals may now report `feasibility: "PARTIAL"`: when no route can cover every
+  required requirement before the target date, the planner returns the route covering the
+  most required requirements. PARTIAL proposals can be saved, activated, and auto-created.
+  Requires migration `20261005_01`.
+- Capability edits that carry the previous recompute context now honor
+  `JOBTOLOGY_CAPABILITY_LIST_AUTHORITATIVE`, so free-text capabilities no longer turn unmet
+  requirements into NEEDS_INPUT after an edit.
+
 ## 2026-10-05 — direct step completion toggle
 
 - `PATCH /api/v1/roadmaps/{id}/steps/{step_id}` also accepts `TODO → COMPLETED`

@@ -47,6 +47,10 @@ from jobtology_be.modules.auth.session_cookies import (
     SessionCookiePolicy,
     SessionCookiePolicyMiddleware,
 )
+from jobtology_be.product_roles.checklist import (
+    OnboardingChecklistCatalog,
+    load_checklist_document,
+)
 from jobtology_be.product_roles.context import ProductRoleAnalysisContextFactory
 from jobtology_be.product_roles.holder import ProductRoleHolder
 from jobtology_be.product_roles.worker import InProcessRecomputeLoop
@@ -102,6 +106,19 @@ def create_app(
         and isinstance(source_catalog, PostgresSourceCatalog)
         else None
     )
+    onboarding_checklist = dependencies.onboarding_checklist
+    if onboarding_checklist is None and role_holder is not None:
+        checklist_resource = files("jobtology_be.product_roles").joinpath(
+            "onboarding_checklist.v1.json"
+        )
+        onboarding_checklist = OnboardingChecklistCatalog(
+            document=load_checklist_document(
+                checklist_resource if checklist_resource.is_file() else
+                Path(__file__).resolve().parents[2]
+                / "config/product_roles/onboarding_checklist.v1.json"
+            ),
+            snapshots=lambda: role_holder.snapshots,
+        )
     if settings.product_roles_enabled and role_holder is None:
         analysis_service = None
         analysis_context_factory = None
@@ -112,7 +129,9 @@ def create_app(
         corpus_source = build_configured_corpus_source(settings)
     if settings.database_url is not None:
         database = Database.create(settings.database_url)
-        store = PostgresApplicationStore(database)
+        store = PostgresApplicationStore(
+            database, capability_list_authoritative=settings.capability_list_authoritative
+        )
         idempotency_store = idempotency_store or store
         corpus_source = corpus_source or build_configured_corpus_source(settings)
         snapshot_reader = (role_holder if role_holder is not None else
@@ -212,6 +231,7 @@ def create_app(
             roadmap_service=roadmap_service,
             analysis_service=analysis_service,
             capability_service=capability_service,
+            onboarding_checklist=onboarding_checklist,
             idempotency_store=idempotency_store,
             session_store=session_store,
         ),
