@@ -120,6 +120,7 @@ def test_profile_update_routes_validated_command_to_injected_service() -> None:
     assert response.json() == {
         "user_id": "d0b3d8d1-7de4-4a62-8c58-e652431377b4",
         "profile_version": 2,
+        "version": 2,
     }
     assert profile_service.user_id == UUID("d0b3d8d1-7de4-4a62-8c58-e652431377b4")
     assert profile_service.command == ProfileUpdateCommand(
@@ -130,6 +131,46 @@ def test_profile_update_routes_validated_command_to_injected_service() -> None:
         enrollment_status="ENROLLED",
         expected_graduation_on=date(2028, 2, 1),
     )
+
+
+def test_profile_update_still_requires_expected_profile_version() -> None:
+    # Given
+    profile_service = RecordingProfileService()
+    app = create_app(
+        Settings(enable_fixtures=False),
+        dependencies=ApiDependencies(
+            identity_provider=StaticIdentityProvider(), profile_service=profile_service
+        ),
+    )
+
+    # When
+    with TestClient(app) as client:
+        response = client.put("/api/v1/me/profile", json={"major_raw": "Computer Science"})
+
+    # Then
+    assert response.status_code == 422
+    assert profile_service.command is None
+
+
+def test_profile_update_rejects_version_as_request_alias() -> None:
+    # Given
+    profile_service = RecordingProfileService()
+    app = create_app(
+        Settings(enable_fixtures=False),
+        dependencies=ApiDependencies(
+            identity_provider=StaticIdentityProvider(), profile_service=profile_service
+        ),
+    )
+
+    # When
+    with TestClient(app) as client:
+        response = client.put(
+            "/api/v1/me/profile", json={"version": 1, "major_raw": "Computer Science"}
+        )
+
+    # Then
+    assert response.status_code == 422
+    assert profile_service.command is None
 
 
 def test_goal_creation_fails_closed_without_an_injected_identity() -> None:

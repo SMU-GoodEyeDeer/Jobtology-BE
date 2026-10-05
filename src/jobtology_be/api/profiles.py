@@ -3,7 +3,7 @@ from typing import Annotated, ClassVar
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, computed_field
 
 from jobtology_be.api.identity import AuthenticatedPrincipal, require_authenticated_principal
 from jobtology_be.api.product_queries import require_product_queries
@@ -32,6 +32,11 @@ class ProfileResponse(BaseModel):
 
     user_id: UUID
     profile_version: int = Field(ge=1)
+
+    @computed_field
+    @property
+    def version(self) -> int:
+        return self.profile_version
 
 
 class ProfileDetailResponse(ProfileResponse):
