@@ -221,15 +221,13 @@ PATCH /api/v1/roadmaps/{roadmap_id}/steps/{step_id}
 
 | 현재 상태 | 다음 상태 |
 |---|---|
-| `TODO` | `IN_PROGRESS` |
+| `TODO` | `IN_PROGRESS`, `COMPLETED` |
 | `IN_PROGRESS` | `TODO`, `COMPLETED` |
-| `COMPLETED` | `IN_PROGRESS` |
+| `COMPLETED` | `IN_PROGRESS`, `TODO` |
 
-- 완료로 가려면 먼저 `IN_PROGRESS`(시작)를 거쳐야 합니다. `TODO`에서 곧바로
-  `COMPLETED`로는 갈 수 없습니다.
-- 완료를 되돌리는 전이는 `COMPLETED → IN_PROGRESS`뿐입니다. `COMPLETED`에서
-  `TODO`로 직접 가는 요청은 `409`로 거부되므로, `TODO`로 돌아가려면 두 단계
-  (`COMPLETED → IN_PROGRESS → TODO`)를 거쳐야 합니다.
+- `TODO`에서 곧바로 `COMPLETED`로 완료할 수 있습니다(“완료했어요” 토글).
+- 완료를 되돌리는 전이(`COMPLETED → IN_PROGRESS` 또는 `COMPLETED → TODO`)는
+  완료로 얻은 역량을 회수(`REVOKED`)하고 재분석을 예약합니다.
 - 단계 상태 변경은 로드맵이 `ACTIVE` 상태일 때만 가능하고, 성공 시 로드맵
   버전과 프로필 버전이 모두 증가합니다. 위 예시의 버전 값(`2`, `3`)은 설명용
   값이므로 하드코딩하지 말고, 변경할 때마다 자원을 다시 조회해 얻은 현재

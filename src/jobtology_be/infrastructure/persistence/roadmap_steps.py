@@ -62,9 +62,11 @@ class RoadmapStepRepository(OutboxRepository):
                 raise MissingRecordError(resource="roadmap step")
             valid_transition = (step_row.state, request.state) in {
                 ("TODO", "IN_PROGRESS"),
+                ("TODO", "COMPLETED"),
                 ("IN_PROGRESS", "TODO"),
                 ("IN_PROGRESS", "COMPLETED"),
                 ("COMPLETED", "IN_PROGRESS"),
+                ("COMPLETED", "TODO"),
             }
             if not valid_transition:
                 raise PersistenceConflictError(resource="step state transition")
@@ -84,7 +86,7 @@ class RoadmapStepRepository(OutboxRepository):
                 .values(version=roadmaps.c.version + 1, updated_at=datetime.now(UTC))
             )
             event_kind = "STEP_COMPLETED" if request.state == "COMPLETED" else "STEP_STATE_UPDATED"
-            if step_row.state == "COMPLETED" and request.state == "IN_PROGRESS":
+            if step_row.state == "COMPLETED" and request.state in {"IN_PROGRESS", "TODO"}:
                 completion_event_id = await session.scalar(
                     select(step_completion_inheritances.c.original_completion_event_id).where(
                         step_completion_inheritances.c.step_id == request.step_id

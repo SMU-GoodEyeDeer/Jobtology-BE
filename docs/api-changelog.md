@@ -1,5 +1,11 @@
 # API changelog
 
+## 2026-10-05 — direct step completion toggle
+
+- `PATCH /api/v1/roadmaps/{id}/steps/{step_id}` also accepts `TODO → COMPLETED`
+  and `COMPLETED → TODO`, matching the deployed browser's 완료/완료 취소 toggle.
+  Reverting a completion still revokes the derived capability and recomputes.
+
 ## 2026-10-05 — FE-compatible product reads
 
 - `GET /api/v1/occupations` is public (no session), with a `name` field from the
