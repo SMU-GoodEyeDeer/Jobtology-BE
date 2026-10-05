@@ -4,7 +4,11 @@
   "deploy": {
     "variables": {
       "JOBTOLOGY_AUTH_ENABLED": "false",
-      "JOBTOLOGY_GUEST_SESSIONS_ENABLED": "true"
+      "JOBTOLOGY_GUEST_SESSIONS_ENABLED": "true",
+      "JOBTOLOGY_PRODUCT_ROLES_ENABLED": "true",
+      "JOBTOLOGY_PRODUCT_ROLE_ARTIFACT_APPROVAL_PATH": "/app/config/product_roles/approvals/ae6fec57e085516cabafec05c09dd9f3859505eae1d8dcab7b08a4057db83fc6.json",
+      "JOBTOLOGY_INPROCESS_WORKER_ENABLED": "true",
+      "JOBTOLOGY_CAPABILITY_LIST_AUTHORITATIVE": "true"
     },
     "startCommand": "uvicorn jobtology_be.main:app --host 0.0.0.0 --port ${PORT:-8000}"
   }
