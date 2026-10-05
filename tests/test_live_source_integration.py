@@ -1,0 +1,207 @@
+"""Disposable restricted-reader live source feed through HTTP."""
+
+import importlib
+import secrets
+import socket
+import subprocess
+import sys
+import threading
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from uuid import uuid4
+
+import anyio
+import asyncpg
+import pytest
+from fastapi.testclient import TestClient
+
+from jobtology_be.api.dependencies import ApiDependencies
+from jobtology_be.api.identity import AuthenticatedPrincipal
+from jobtology_be.infrastructure.persistence.live_source_feed import PostgresLiveSourceFeed
+from jobtology_be.infrastructure.persistence.source_catalog import PostgresSourceCatalog
+from jobtology_be.main import create_app
+from jobtology_be.settings import Settings
+
+DB_TESTS = Path(__file__).resolve().parents[2] / "Jobtology-DB/hop/ontology/tests"
+
+
+@dataclass(frozen=True, slots=True)
+class Identity:
+    async def current_principal(self) -> AuthenticatedPrincipal:
+        return AuthenticatedPrincipal(user_id=uuid4())
+
+
+def test_live_feed_from_disposable_postgres_through_http() -> None:
+    # Given an isolated DB test harness and Docker daemon
+    if not (DB_TESTS / "run.py").is_file():
+        pytest.fail("Sibling Jobtology-DB fixture is required")
+    try:
+        daemon = subprocess.run(["docker", "info", "--format", "{{.ServerVersion}}"],
+                                capture_output=True, text=True, timeout=10, check=False)
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        pytest.skip(f"Disposable PostgreSQL requires Docker: {type(exc).__name__}")
+    if daemon.returncode:
+        pytest.skip("Disposable PostgreSQL requires a running Docker daemon")
+
+    sys.path.insert(0, str(DB_TESTS))
+    try:
+        db = importlib.import_module("run")
+    finally:
+        sys.path.remove(str(DB_TESTS))
+    container = f"jobtology-live-be-{uuid4().hex}"
+    admin_password = secrets.token_urlsafe(24)
+    reader_password = secrets.token_urlsafe(24)
+    db.__dict__["PG"] = container
+    catalog = None
+    tunnel = None
+    try:
+        db.cmd(["docker", "run", "-d", "--name", container, "-p", "127.0.0.1::5432",
+                "-e", f"POSTGRES_PASSWORD={admin_password}", "-e", "POSTGRES_DB=ontologytest",
+                "postgres:18-alpine"])
+        db.boot()
+        old = {
+            "kind": "JobPosting", "posting_id": "old", "title": "Old release only",
+            "organization_code": "OLD", "date_posted": "2026-08-01",
+        }
+        db.sql("INSERT INTO ingestion.run(run_id,source_id,mode,policy_revision,state,created_at,completed_at) "
+               "VALUES('old-job-alio','job_alio','FULL','fixture','READY',"
+               "'2026-08-01T00:00:00Z','2026-08-01T00:01:00Z'); "
+               "INSERT INTO ingestion.partition(run_id,partition_id,kind,page_size) "
+               "VALUES('old-job-alio','all','FILE',1); "
+               "INSERT INTO ingestion.document(run_id,document_id,partition_id,page_no,raw_path,raw_sha256,byte_length,encoding,http_status,retrieved_at,selected,verified_at) "
+               "VALUES('old-job-alio','doc','all',1,'old.json',repeat('a',64),1,'UTF-8',200,"
+               "'2026-08-01T00:00:30Z',true,now()); "
+               "INSERT INTO ingestion.record(run_id,document_id,locator,source_record_id,source_payload,normalized) "
+               f"VALUES('old-job-alio','doc','0','old',{db.js(old)},{db.js(old)})")
+        db.load_sources({
+            "job_alio": [
+                {"kind": "JobPosting", "posting_id": "001", "representation": "list",
+                 "title": "Engineer list", "organization_code": "C001", "organization_name": "Agency",
+                 "date_posted": "2026-10-01", "closing_date": "2026-11-30",
+                 "regions": "Seoul", "employment_type": "regular",
+                 "ncs_category_codes": "2001", "ncs_category_names": "Software",
+                 "eligibility_text": "PRIVATE_ELIGIBILITY"},
+                {"kind": "JobPosting", "posting_id": "001", "representation": "detail",
+                 "title": "Engineer detail", "organization_code": "C001", "organization_name": "Agency",
+                 "date_posted": "2026-10-01", "closing_date": "2026-11-30",
+                 "regions": "Seoul", "employment_type": "regular",
+                 "ncs_category_codes": "2001", "ncs_category_names": "Software",
+                 "source_url": "https://example.org/jobs/001", "headcount": 2,
+                 "preference_text": "PRIVATE_PREFERENCE"},
+                {"kind": "JobPosting", "posting_id": "002", "representation": "list",
+                 "title": "Analyst", "organization_code": "C002",
+                 "date_posted": "2026-10-02", "closing_date": "2026-10-10",
+                 "regions": "Busan", "employment_type": "contract",
+                 "disqualification_text": "PRIVATE_DISQUALIFICATION"},
+                {"kind": "JobPosting", "posting_id": "002", "representation": "detail",
+                 "title": "Analyst", "organization_code": "C002",
+                 "date_posted": "2026-10-02", "closing_date": "2026-10-10",
+                 "regions": "Busan", "employment_type": "contract"},
+            ],
+            "qnet_schedule": [
+                {"kind": "ExamSession", "qualification_code": "T5H0", "year": 2026,
+                 "round": 1, "category_code": "C", "name": "First exam",
+                 "dates": {"docRegStartDt": "2026-10-01", "docRegEndDt": "2026-10-07"}},
+                {"kind": "ExamSession", "qualification_code": "T5H0", "year": 2026,
+                 "round": 2, "category_code": "C", "name": "Second exam",
+                 "dates": {"docRegStartDt": "2026-12-01", "docRegEndDt": "2026-12-07"}},
+            ],
+            "ncs_qualification": [
+                {"kind": "QualificationMapping", "competency_code": "2001020101_24v2",
+                 "qualification_code": "T5H0", "qualification_name": "IT qualification",
+                 "standard_version": "24V2", "unit_type": "MAND",
+                 "minimum_training_hours": 40, "total_training_hours": 410,
+                 "examining_organization": "Agency"},
+            ],
+        })
+        db.sql((db.ROOT / "hop/ontology/sql/catalog_reader_grants.psql").read_text())
+        db.sql(f"ALTER ROLE jobtology_catalog_reader PASSWORD {db.q(reader_password)}")
+
+        address = db.cmd(["docker", "port", container, "5432/tcp"])
+        port = int(address.rsplit(":", 1)[1])
+        host_port = port
+        if db.cmd(["docker", "context", "show"]) == "colima":
+            with socket.socket() as reserved:
+                reserved.bind(("127.0.0.1", 0))
+                host_port = reserved.getsockname()[1]
+            tunnel = subprocess.Popen(
+                ["ssh", "-F", str(Path.home() / ".colima/ssh_config"),
+                 "-o", "ExitOnForwardFailure=yes", "-N", "-L",
+                 f"127.0.0.1:{host_port}:127.0.0.1:{port}", "colima"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+        deadline = time.monotonic() + 15
+        while True:
+            try:
+                with socket.create_connection(("127.0.0.1", host_port), timeout=1):
+                    break
+            except OSError:
+                if tunnel is not None and tunnel.poll() is not None:
+                    pytest.fail("Colima SSH tunnel exited before PostgreSQL became reachable")
+                if time.monotonic() >= deadline:
+                    pytest.fail("Docker published PostgreSQL port did not become reachable from host")
+                threading.Event().wait(min(0.1, deadline - time.monotonic()))
+        url = (f"postgresql+asyncpg://jobtology_catalog_reader:{reader_password}"
+               f"@127.0.0.1:{host_port}/ontologytest")
+
+        async def check_reader_privileges() -> None:
+            connection = await asyncpg.connect(user="jobtology_catalog_reader",
+                password=reader_password, host="127.0.0.1", port=host_port,
+                database="ontologytest")
+            try:
+                assert await connection.fetchval("SELECT current_user") == "jobtology_catalog_reader"
+                assert await connection.fetchval("SELECT has_function_privilege(current_user, 'catalog.live_postings_v1(text,text,text,date,integer,integer)', 'EXECUTE')") is True
+                assert await connection.fetchval("SELECT has_schema_privilege(current_user, 'ingestion', 'USAGE')") is False
+                with pytest.raises(asyncpg.InsufficientPrivilegeError):
+                    await connection.fetchval("SELECT count(*) FROM ingestion.record")
+            finally:
+                await connection.close()
+
+        anyio.run(check_reader_privileges)
+        catalog = PostgresSourceCatalog.create(url)
+        feed = PostgresLiveSourceFeed(engine=catalog.engine)
+        app = create_app(Settings(), dependencies=ApiDependencies(
+            identity_provider=Identity(), source_catalog=catalog, live_source_feed=feed,
+        ))
+        # When an authenticated user browses the current source independently of catalog approval
+        with TestClient(app) as client:
+            try:
+                listing = client.get("/api/v2/live/postings")
+                filtered = client.get("/api/v2/live/postings", params={
+                    "q": "Engineer", "region": "Seoul", "ncs_category": "2001",
+                    "open_on": "2026-10-05",
+                })
+                page = client.get("/api/v2/live/postings", params={"limit": 1, "offset": 1})
+                detail = client.get("/api/v2/live/postings/001")
+                absent = client.get("/api/v2/live/postings/missing")
+                exams = client.get("/api/v2/live/exam-sessions", params={
+                    "qualification": "T5H0", "from": "2026-10-01", "to": "2026-10-31",
+                })
+                # Then only the latest READY feed and safe declared fields are returned
+                assert [r.status_code for r in (listing, filtered, page, detail, exams)] == [200] * 5
+                assert absent.status_code == 404
+                assert listing.json()["contract_version"] == "hop-live-source-v1"
+                assert listing.json()["total"] == 2
+                assert {item["posting_id"] for item in listing.json()["items"]} == {"001", "002"}
+                assert filtered.json()["total"] == 1
+                assert filtered.json()["items"][0]["title"] == "Engineer detail"
+                assert page.json()["total"] == 2 and len(page.json()["items"]) == 1
+                assert detail.json()["item"]["posting_id"] == "001"
+                assert exams.json()["total"] == 1
+                assert exams.json()["items"][0]["qualification_code"] == "T5H0"
+                for response in (listing, filtered, page, detail, exams):
+                    assert all(term not in response.text.lower() for term in (
+                        "eligibility", "preference", "selection", "disqualification",
+                    ))
+            finally:
+                if client.portal is not None:
+                    client.portal.call(catalog.dispose)
+                    catalog = None
+    finally:
+        if catalog is not None:
+            anyio.run(catalog.dispose)
+        if tunnel is not None:
+            tunnel.terminate()
+            tunnel.wait(timeout=5)
+        subprocess.run(["docker", "rm", "-fv", container], capture_output=True, check=False)
