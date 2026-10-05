@@ -91,6 +91,7 @@ class RoadmapStepView:
     outcomes: tuple[ProductJsonValue, ...]
     criteria: tuple[ProductJsonValue, ...]
     prerequisite_step_ids: tuple[UUID, ...]
+    title: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

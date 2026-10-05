@@ -216,6 +216,14 @@ class PostgresProductQueries:
             ).one_or_none()
             if roadmap is None:
                 raise MissingRecordError(resource="roadmap")
+            proposal_steps = await session.scalar(
+                select(route_proposals.c.steps).where(
+                    route_proposals.c.id == roadmap.proposal_id,
+                    route_proposals.c.user_id == user_id,
+                )
+            )
+            if proposal_steps is None:
+                raise MissingRecordError(resource="route proposal")
             step_rows = (
                 await session.execute(
                     select(
@@ -246,6 +254,7 @@ class PostgresProductQueries:
             prerequisite_ids.setdefault(dependency.step_id, []).append(
                 dependency.prerequisite_step_id
             )
+        proposal_titles = {step["step_key"]: step["title"] for step in proposal_steps}
         return RoadmapView(
             roadmap_id=roadmap.id,
             roadmap_version=roadmap.version,
@@ -269,6 +278,7 @@ class PostgresProductQueries:
                     outcomes=tuple(row.outcomes),
                     criteria=tuple(row.criteria),
                     prerequisite_step_ids=tuple(prerequisite_ids.get(row.id, [])),
+                    title=proposal_titles.get(row.step_key),
                 )
                 for row in step_rows
             ),

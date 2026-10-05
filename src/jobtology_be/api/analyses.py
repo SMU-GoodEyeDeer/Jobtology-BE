@@ -3,7 +3,7 @@ from typing import Annotated, ClassVar, Literal, assert_never
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, StrictInt
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, StrictInt, TypeAdapter
 from starlette.responses import JSONResponse
 
 from jobtology_be.api.errors import ErrorResponse
@@ -17,6 +17,10 @@ from jobtology_be.api.idempotency import (
 from jobtology_be.api.identity import AuthenticatedPrincipal, require_authenticated_principal
 from jobtology_be.api.product_queries import require_product_queries
 from jobtology_be.application.queries import AnalysisView, ProductQueries, RecomputeView
+from jobtology_be.application.requirement_metadata import (
+    RequirementMetadataLookup,
+    build_analysis_summary,
+)
 from jobtology_be.application.services.analyses import (
     AnalysisRequestCommand,
     AnalysisService,
@@ -60,8 +64,28 @@ class RecomputeResponse(BaseModel):
     profile_version: int
     state: str
     resulting_analysis_id: UUID | None
+    analysis_id: UUID | None
     proposal_id: UUID | None
     error_code: str | None
+
+
+class AnalysisSkillResponse(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
+
+    name: str
+    type: Literal["필수", "우대"]
+    demand_pct: int | None
+    difficulty: str | None
+    experienced_pct: None = None
+    achievement: str | None
+
+
+class AnalysisResultResponse(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
+
+    required_pct: int | None
+    preferred_pct: int | None
+    skills: tuple[AnalysisSkillResponse, ...]
 
 
 class AnalysisResponse(BaseModel):
@@ -77,24 +101,32 @@ class AnalysisResponse(BaseModel):
     status: str
     reference_at: datetime
     results: dict[str, JsonValue] | None
+    result: AnalysisResultResponse | None
 
 
 async def require_analysis_service() -> AnalysisService:
     raise HTTPException(status_code=503)
 
 
+def require_requirement_metadata() -> RequirementMetadataLookup | None:
+    return None
+
+
 def _recompute_response(result: RecomputeView) -> RecomputeResponse:
     return RecomputeResponse(
         recompute_request_id=result.recompute_request_id,
         profile_version=result.profile_version,
-        state=result.state,
+        state="COMPLETED" if result.state == "READY" else result.state,
         resulting_analysis_id=result.resulting_analysis_id,
+        analysis_id=result.resulting_analysis_id,
         proposal_id=result.proposal_id,
         error_code=result.error_code,
     )
 
 
-def _analysis_response(result: AnalysisView) -> AnalysisResponse:
+def _analysis_response(
+    result: AnalysisView, metadata_lookup: RequirementMetadataLookup | None
+) -> AnalysisResponse:
     return AnalysisResponse(
         analysis_id=result.analysis_id,
         goal_id=result.goal_id,
@@ -105,7 +137,10 @@ def _analysis_response(result: AnalysisView) -> AnalysisResponse:
         methodology_version=result.methodology_version,
         status=result.status,
         reference_at=result.reference_at,
-        results=result.results,
+        results=TypeAdapter(dict[str, JsonValue]).validate_python(result.results)
+        if result.results is not None else None,
+        result=AnalysisResultResponse.model_validate(summary, from_attributes=True)
+        if (summary := build_analysis_summary(result.results, metadata_lookup)) else None,
     )
 
 
@@ -233,5 +268,6 @@ async def get_analysis(
     analysis_id: UUID,
     principal: Annotated[AuthenticatedPrincipal, Depends(require_authenticated_principal)],
     product_queries: Annotated[ProductQueries, Depends(require_product_queries)],
+    metadata_lookup: Annotated[RequirementMetadataLookup | None, Depends(require_requirement_metadata)],
 ) -> AnalysisResponse:
-    return _analysis_response(await product_queries.get_analysis(principal.user_id, analysis_id))
+    return _analysis_response(await product_queries.get_analysis(principal.user_id, analysis_id), metadata_lookup)

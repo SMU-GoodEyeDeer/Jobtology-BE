@@ -137,7 +137,7 @@ def test_dashboard_excludes_actions_after_trusted_source_invalidation(
 
     # Then
     assert recompute_response.status_code == 200
-    assert recompute_response.json()["state"] == "READY"
+    assert recompute_response.json()["state"] == "COMPLETED"
     assert authoritative_detail.status_code == 200
     assert authoritative_detail.json()["release_id"] == "release-reviewed-v1"
     assert activation_response.status_code == 200

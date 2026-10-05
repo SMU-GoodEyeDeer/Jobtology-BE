@@ -200,8 +200,9 @@ def test_m5_goal_worker_and_roadmap_lifecycle_use_postgresql(
     assert recompute_response.json() == {
         "recompute_request_id": str(publication.recompute_request_id),
         "profile_version": 2,
-        "state": "READY",
+        "state": "COMPLETED",
         "resulting_analysis_id": str(publication.analysis_id),
+        "analysis_id": str(publication.analysis_id),
         "proposal_id": str(publication.proposal_id),
         "error_code": None,
     }

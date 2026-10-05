@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import Protocol
 from uuid import UUID
 
 from sqlalchemy import select
@@ -10,7 +11,7 @@ from jobtology_be.application.m5_queries import (
     RouteProposalView,
     TraceView,
 )
-from jobtology_be.corpus.local_snapshot import LocalJsonPublishedCorpusSnapshotReader
+from jobtology_be.corpus.snapshot import PublishedCorpusSnapshot
 from jobtology_be.infrastructure.persistence.contracts import MissingRecordError
 from jobtology_be.infrastructure.persistence.database import Database
 from jobtology_be.infrastructure.persistence.m5_dashboard_queries import PostgresM5DashboardQueries
@@ -26,15 +27,20 @@ def _current_utc() -> datetime:
     return datetime.now(UTC)
 
 
+class PublishedSnapshotCatalog(Protocol):
+    @property
+    def snapshots(self) -> tuple[PublishedCorpusSnapshot, ...]: ...
+
+
 class PostgresM5Queries(PostgresM5DashboardQueries):
     def __init__(
         self,
         database: Database,
-        snapshot_reader: LocalJsonPublishedCorpusSnapshotReader | None = None,
+        snapshot_reader: PublishedSnapshotCatalog | None = None,
         now: Callable[[], datetime] = _current_utc,
     ) -> None:
         super().__init__(database, now)
-        self._snapshot_reader = snapshot_reader
+        self._snapshot_reader: PublishedSnapshotCatalog | None = snapshot_reader
 
     async def get_occupations(self) -> tuple[OccupationView, ...]:
         if self._snapshot_reader is None:

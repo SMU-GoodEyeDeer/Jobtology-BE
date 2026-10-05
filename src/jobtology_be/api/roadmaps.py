@@ -1,7 +1,8 @@
-from typing import Annotated, assert_never
+from typing import Annotated, Final, assert_never
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
+from pydantic import JsonValue, TypeAdapter
 from starlette.responses import JSONResponse
 
 from jobtology_be.api.errors import ErrorResponse
@@ -29,10 +30,16 @@ from jobtology_be.application.services.roadmaps import (
     RoadmapMutationCommand,
     RoadmapResult,
     RoadmapService,
+    RoadmapState,
+    StepState,
     StepStateCommand,
 )
 
 router = APIRouter(tags=["roadmaps"])
+_ROADMAP_STATE: Final = TypeAdapter[RoadmapState](RoadmapState)
+_STEP_STATE: Final = TypeAdapter[StepState](StepState)
+_JSON_OBJECT: Final = TypeAdapter(dict[str, JsonValue])
+_JSON_ARRAY: Final = TypeAdapter(tuple[JsonValue, ...])
 
 
 async def require_roadmap_service() -> RoadmapService:
@@ -51,13 +58,13 @@ def _detail_response(roadmap: RoadmapView) -> RoadmapDetailResponse:
     return RoadmapDetailResponse(
         roadmap_id=roadmap.roadmap_id,
         roadmap_version=roadmap.roadmap_version,
-        state=roadmap.state,
+        state=_ROADMAP_STATE.validate_python(roadmap.state),
         goal_id=roadmap.goal_id,
         proposal_id=roadmap.proposal_id,
         title=roadmap.title,
         profile_version=roadmap.profile_version,
         release_id=roadmap.release_id,
-        validity=roadmap.validity,
+        validity=_JSON_OBJECT.validate_python(roadmap.validity),
         steps=tuple(
             RoadmapStepResponse(
                 step_id=step.step_id,
@@ -65,12 +72,14 @@ def _detail_response(roadmap: RoadmapView) -> RoadmapDetailResponse:
                 position=step.position,
                 action_id=step.action_id,
                 template_revision=step.template_revision,
-                state=step.state,
+                state=_STEP_STATE.validate_python(step.state),
                 planned_start=step.planned_start,
                 planned_end=step.planned_end,
-                outcomes=step.outcomes,
-                criteria=step.criteria,
+                outcomes=_JSON_ARRAY.validate_python(step.outcomes),
+                criteria=_JSON_ARRAY.validate_python(step.criteria),
                 prerequisite_step_ids=step.prerequisite_step_ids,
+                title=step.title,
+                description=step.criteria[0] if step.criteria and isinstance(step.criteria[0], str) else None,
             )
             for step in roadmap.steps
         ),
@@ -214,7 +223,9 @@ async def mutate_roadmap(
         case "ARCHIVE":
             state = "ARCHIVED"
         case "RENAME":
-            state = (await product_queries.get_roadmap(principal.user_id, roadmap_id)).state
+            state = _ROADMAP_STATE.validate_python(
+                (await product_queries.get_roadmap(principal.user_id, roadmap_id)).state
+            )
         case unreachable:
             assert_never(unreachable)
     return _response(

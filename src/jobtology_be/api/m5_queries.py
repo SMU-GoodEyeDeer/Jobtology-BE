@@ -1,8 +1,8 @@
-from typing import Annotated, ClassVar
+from typing import Annotated, ClassVar, Final
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict, JsonValue
+from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter
 
 from jobtology_be.api.identity import AuthenticatedPrincipal, require_authenticated_principal
 from jobtology_be.application.m5_queries import (
@@ -13,13 +13,17 @@ from jobtology_be.application.m5_queries import (
     RouteProposalView,
     TraceView,
 )
+from jobtology_be.application.requirement_metadata import OccupationDisplayNames
 
 router = APIRouter(tags=["m5-queries"])
+_JSON_OBJECT: Final = TypeAdapter(dict[str, JsonValue])
+_JSON_STEPS: Final = TypeAdapter(tuple[dict[str, JsonValue], ...])
 
 
 class OccupationResponse(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
     occupation_id: str
+    name: str
     basis_version: str
     release_id: str
 
@@ -67,6 +71,10 @@ async def require_m5_queries() -> M5Queries:
     raise HTTPException(status_code=503)
 
 
+def require_occupation_display_names() -> OccupationDisplayNames | None:
+    return None
+
+
 @router.get(
     "/occupations",
     response_model=tuple[OccupationResponse, ...],
@@ -74,14 +82,14 @@ async def require_m5_queries() -> M5Queries:
     description="Lists occupations from the configured published corpus snapshot.",
 )
 async def get_occupations(
-    _: Annotated[AuthenticatedPrincipal, Depends(require_authenticated_principal)],
     queries: Annotated[M5Queries, Depends(require_m5_queries)],
+    display_names: Annotated[OccupationDisplayNames | None, Depends(require_occupation_display_names)],
 ) -> tuple[OccupationResponse, ...]:
     try:
         occupations = await queries.get_occupations()
     except M5DataUnavailableError as error:
         raise HTTPException(status_code=503) from error
-    return tuple(_occupation_response(item) for item in occupations)
+    return tuple(_occupation_response(item, display_names) for item in occupations)
 
 
 @router.get(
@@ -126,9 +134,13 @@ async def get_dashboard(
     return _dashboard_response(await queries.get_dashboard(principal.user_id, goal_id))
 
 
-def _occupation_response(value: OccupationView) -> OccupationResponse:
+def _occupation_response(
+    value: OccupationView, display_names: OccupationDisplayNames | None
+) -> OccupationResponse:
     return OccupationResponse(
         occupation_id=value.occupation_id,
+        name=(display_names.display_name(value.occupation_id) if display_names else None)
+        or value.occupation_id,
         basis_version=value.basis_version,
         release_id=value.release_id,
     )
@@ -143,8 +155,8 @@ def _route_proposal_response(value: RouteProposalView) -> RouteProposalResponse:
         profile_version=value.profile_version,
         feasibility=value.feasibility,
         optimization_status=value.optimization_status,
-        constraints_snapshot=dict(value.constraints_snapshot),
-        steps=tuple(dict(step) for step in value.steps),
+        constraints_snapshot=_JSON_OBJECT.validate_python(value.constraints_snapshot),
+        steps=_JSON_STEPS.validate_python(value.steps),
         basis_version=value.basis_version,
         release_id=value.release_id,
         methodology_version=value.methodology_version,
@@ -156,9 +168,9 @@ def _trace_response(value: TraceView) -> TraceResponse:
         trace_id=value.trace_id,
         kind=value.kind,
         input_hash=value.input_hash,
-        versions=dict(value.versions),
+        versions=_JSON_OBJECT.validate_python(value.versions),
         release_id=value.release_id,
-        outputs=dict(value.outputs),
+        outputs=_JSON_OBJECT.validate_python(value.outputs),
     )
 
 

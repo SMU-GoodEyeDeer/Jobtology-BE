@@ -85,6 +85,7 @@ def test_configured_query_routes_return_published_user_scoped_results(
         assert occupations_response.json() == [
             {
                 "occupation_id": "BACKEND_DEVELOPER",
+                "name": "BACKEND_DEVELOPER",
                 "basis_version": "reviewed-v1",
                 "release_id": "release-reviewed-v1",
             }
@@ -104,7 +105,7 @@ def test_configured_query_routes_return_published_user_scoped_results(
 
     # Then
     assert recompute_response.status_code == 200
-    assert recompute_response.json()["state"] == "READY"
+    assert recompute_response.json()["state"] == "COMPLETED"
     assert trace_response.status_code == 200
     assert trace_response.json()["outputs"]
     assert dashboard_response.status_code == 200
@@ -191,7 +192,7 @@ def test_dashboard_hides_a_latest_analysis_when_the_profile_has_advanced(
 
     # When / Then
     assert initial_recompute.status_code == 200
-    assert initial_recompute.json()["state"] == "READY"
+    assert initial_recompute.json()["state"] == "COMPLETED"
     assert initial_dashboard.status_code == 200
     assert initial_dashboard.json()["analysis_id"] == initial_recompute.json()["resulting_analysis_id"]
     assert profile_advance.status_code == 200

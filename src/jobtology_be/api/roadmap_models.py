@@ -2,7 +2,16 @@ from datetime import datetime
 from typing import ClassVar, Literal, assert_never
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, StrictInt, StrictStr, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    StrictInt,
+    StrictStr,
+    computed_field,
+    model_validator,
+)
 
 
 class RoadmapCreateRequest(BaseModel):
@@ -78,6 +87,8 @@ class RoadmapStepResponse(BaseModel):
     outcomes: tuple[JsonValue, ...]
     criteria: tuple[JsonValue, ...]
     prerequisite_step_ids: tuple[UUID, ...]
+    title: str | None
+    description: str | None
 
 
 class RoadmapDetailResponse(RoadmapResponse):
@@ -88,6 +99,16 @@ class RoadmapDetailResponse(RoadmapResponse):
     release_id: str | None
     validity: dict[str, JsonValue]
     steps: tuple[RoadmapStepResponse, ...]
+
+    @computed_field
+    @property
+    def status(self) -> Literal["DRAFT", "ACTIVE", "ARCHIVED"]:
+        return self.state
+
+    @computed_field
+    @property
+    def version(self) -> int:
+        return self.roadmap_version
 
 
 class RoadmapListResponse(BaseModel):

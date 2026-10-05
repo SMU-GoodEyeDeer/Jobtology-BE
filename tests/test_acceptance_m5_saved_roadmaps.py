@@ -93,6 +93,7 @@ def test_saved_roadmap_detail_rename_diff_activation_and_archive_use_postgresql(
         roadmap_id = UUID(create_response.json()["roadmap_id"])
         list_response = client.get("/api/v1/roadmaps")
         draft_detail = client.get(f"/api/v1/roadmaps/{roadmap_id}")
+        proposal_response = client.get(f"/api/v1/route-proposals/{proposal_id}")
         rename_response = client.patch(
             f"/api/v1/roadmaps/{roadmap_id}",
             json={
@@ -134,11 +135,18 @@ def test_saved_roadmap_detail_rename_diff_activation_and_archive_use_postgresql(
 
     # Then
     assert recompute_response.status_code == 200
-    assert recompute_response.json()["state"] == "READY"
+    assert recompute_response.json()["state"] == "COMPLETED"
     assert list_response.status_code == 200
     assert list_response.json()["items"][0]["roadmap_id"] == str(roadmap_id)
     assert draft_detail.status_code == 200
     assert draft_detail.json()["state"] == "DRAFT"
+    assert proposal_response.status_code == 200
+    proposal_titles = {step["step_key"]: step["title"] for step in proposal_response.json()["steps"]}
+    assert proposal_titles
+    assert all(step["title"] == proposal_titles[step["step_key"]]
+               for step in draft_detail.json()["steps"])
+    assert all(step["description"] == (step["criteria"][0] if step["criteria"] else None)
+               for step in draft_detail.json()["steps"])
     assert rename_response.json() == {
         "roadmap_id": str(roadmap_id),
         "roadmap_version": 2,

@@ -1,7 +1,23 @@
 # API changelog
 
+## 2026-10-05 — FE-compatible product reads
+
+- `GET /api/v1/occupations` is public (no session), with a `name` field from the
+  configured role display names or an occupation-ID fallback. An unavailable
+  published snapshot still returns 503.
+- `GET /api/v1/recomputations/{id}` maps persisted READY to response state
+  `COMPLETED` and adds `analysis_id` alongside `resulting_analysis_id`.
+- `GET /api/v1/analyses/{id}` adds `result` with available coverage percentages
+  and unmet skill summaries; missing metadata stays null and estimated hours
+  are explicitly labeled. The existing `results` field remains intact.
+- Saved roadmap list/detail add `status`/`version` aliases; steps add the
+  proposal-matched `title` and first completion criterion as `description`.
+
 ## 2026-10-05 — authenticated live source feed
 
+- Added `GET /api/v2/live/ncs-demand` for reviewed, source-linked NCS evidence
+  with prefix filtering and pagination, without reviewer identity or private
+  decision detail.
 - Added `/api/v2/live/postings`, `/api/v2/live/postings/{posting_id}`, and
   `/api/v2/live/exam-sessions` as read-only, authenticated source views. They
   use the newest READY ingestion runs rather than the sealed catalog release;

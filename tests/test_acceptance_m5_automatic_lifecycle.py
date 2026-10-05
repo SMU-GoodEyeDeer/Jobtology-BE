@@ -140,7 +140,7 @@ def test_configured_api_worker_carries_completion_and_reversal_context(
     with TestClient(_application(acceptance_database_url, user_id)) as client:
         initial_recompute = client.get(f"/api/v1/recomputations/{initial_recompute_id}")
     assert initial_recompute.status_code == 200
-    assert initial_recompute.json()["state"] == "READY"
+    assert initial_recompute.json()["state"] == "COMPLETED"
     assert initial_recompute.json()["profile_version"] == 5
     initial_proposal_id = UUID(initial_recompute.json()["proposal_id"])
 
@@ -196,7 +196,7 @@ def test_configured_api_worker_carries_completion_and_reversal_context(
     with TestClient(_application(acceptance_database_url, user_id)) as client:
         completion_recompute = client.get(f"/api/v1/recomputations/{completion_recompute_id}")
         assert completion_recompute.status_code == 200
-        assert completion_recompute.json()["state"] == "READY"
+        assert completion_recompute.json()["state"] == "COMPLETED"
         completion_analysis_id = UUID(completion_recompute.json()["resulting_analysis_id"])
         completion_analysis = client.get(f"/api/v1/analyses/{completion_analysis_id}")
         reversal_response = client.patch(
@@ -220,5 +220,5 @@ def test_configured_api_worker_carries_completion_and_reversal_context(
         reversal_recompute = client.get(f"/api/v1/recomputations/{reversal_recompute_id}")
 
     assert reversal_recompute.status_code == 200
-    assert reversal_recompute.json()["state"] == "READY"
+    assert reversal_recompute.json()["state"] == "COMPLETED"
     assert reversal_recompute.json()["profile_version"] == 8

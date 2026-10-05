@@ -91,11 +91,23 @@ analysis와 route planning은 아직 제공되지 않거나 의도적으로 지�
 원천 공고/시험 정보를 사용자 적격성·선호·선발 결과나 분석 근거로 해석하면 안 됩니다.
 정확한 응답 필드는 [소스 카탈로그 API 계약](source-catalog-api.md)을 참고하세요.
 
+`GET /api/v2/live/ncs-demand?ncs_prefix=200102`는 출처별 귀속 항목이 있는 가장 최근 READY 연결 발행물에서
+공고와 연결된 NCS 능력단위의 근거 요약을 조회합니다. `ncs_prefix`는 2–8자리 숫자이며
+생략할 수 있습니다. `limit=20`(1–100), `offset=0`(0 이상)을 지원합니다.
+근거에는 공고 ID·제목·직무/업무 요약(최대 3건), 연결 건수, 자격 연결을 담지만
+검토자 신원·사유·결정 ID는 노출하지 않습니다. 연결 근거를 사용자 적격성 판정이나
+채용공고의 공식 요구조건으로 해석하지 마세요. 발행물의 `created_at`, 원천
+`run_id`, `is_latest_publication`을 함께 확인하세요. 항목이 없는 최신 발행물 대신
+과거 발행물의 연결이 제공될 수 있으며, **과거 근거는 오늘의 채용 수요가 아닙니다.**
+
 ## 현재 인증 상태 (fail-closed)
 
 **Google 로그인은 현재 비활성화되어 있으며 `JOBTOLOGY_AUTH_ENABLED=false`로 유지합니다.**
 
-- 인증이 필요한 모든 제품 및 v2 native catalog 라우트는 표준 `401 UNAUTHENTICATED`
+- `GET /api/v1/occupations`는 공개 목록이며 인증이 필요하지 않습니다. 구성된 공개
+  직무 스냅샷이 없으면 503을 반환합니다. 각 항목의 `name`은 표시 이름이며 매핑이
+  없으면 `occupation_id`가 사용됩니다.
+- 그 외 인증이 필요한 제품 및 v2 native catalog 라우트는 표준 `401 UNAUTHENTICATED`
   envelope으로 일관되게 거부됩니다.
 - 신뢰되는 사용자 식별 헤더, 개발용 로그인 엔드포인트, 우회용 테스트 사용자는 없습니다.
   임의 헤더·cookie·fixture로 사용자를 가장할 수 없습니다.
@@ -133,19 +145,25 @@ Idempotency-Key: <클라이언트 생성 UUID>
 
 `GET /api/v1/recomputations/{recompute_request_id}` 를 약 2초 간격으로 폴링합니다.
 
-상태 전이는 `PENDING → RUNNING → READY 또는 FAILED`입니다.
+내부 저장 상태는 `PENDING → RUNNING → READY 또는 FAILED`이며, 폴링 응답은
+저장된 `READY`를 프런트엔드용 `COMPLETED`로 변환합니다.
 
-- `READY`: 성공 종료 상태입니다. `resulting_analysis_id`와 `proposal_id`가
+- `COMPLETED`: 성공 종료 상태입니다. `analysis_id`와 `resulting_analysis_id`
+  (같은 값), `proposal_id`가
   채워져 있습니다. **폴링을 중단하세요.**
 - `FAILED`: 실패 종료 상태입니다. `error_code`로 실패 원인을 안내합니다. 특히
   `NATIVE_SOURCE_UNSUPPORTED`는 Neo4j 원본에 검증된 편집 baseline·활동 template이 없어
   작업이 실패한 경우입니다. 폴링을 중단하고 사용자에게 안내하세요.
 - 그 외(`PENDING`, `RUNNING`): 계속 폴링합니다.
 
-종료 상태(`READY`/`FAILED`)에 도달하면 반드시 폴링을 멈춰야 합니다. 완료를
-나타내는 상태 이름은 `READY`입니다(`COMPLETED`가 아님에 유의).
+종료 상태(`COMPLETED`/`FAILED`)에 도달하면 반드시 폴링을 멈춰야 합니다.
 
-분석 결과 상세는 `GET /api/v1/analyses/{analysis_id}` 로 조회합니다.
+분석 결과 상세는 `GET /api/v1/analyses/{analysis_id}` 로 조회합니다. 기존 원본
+`results`에 더해 `result`에는 필수/우대 충족률(`required_pct`, `preferred_pct`),
+아직 충족하지 않은 역량 `skills`가 필수 우선·이름순으로 포함됩니다. 각 역량의
+`demand_pct`·NCS 수준·학습 시간은 승인된 직무 메타데이터가 있을 때만 표시되며,
+20시간 등의 추정치는 `achievement`에 `(추정)`으로 명시됩니다. 저장 결과가
+없으면 `result`는 null입니다.
 
 ### 4. 로드맵 제안 확인
 
@@ -178,6 +196,10 @@ PATCH /api/v1/roadmaps/{roadmap_id}
 
 `operation`은 `ACTIVATE`, `ARCHIVE`, `RENAME`을 지원합니다. 실수로 즉시
 활성화되는 일이 없도록, 저장과 활성화는 반드시 별도 사용자 동작으로 구성하세요.
+`GET /api/v1/roadmaps`와 `GET /api/v1/roadmaps/{roadmap_id}`의 각 로드맵에는
+기존 `state`/`roadmap_version`과 동일한 `status`/`version` 별칭이 포함됩니다.
+단계의 `title`은 연결된 제안의 같은 `step_key`에서 읽고, `description`은 첫
+완료 기준 문자열입니다(없으면 null). 제안 제목을 임의 생성하지 않습니다.
 
 ### 6. 단계 진행 표시
 

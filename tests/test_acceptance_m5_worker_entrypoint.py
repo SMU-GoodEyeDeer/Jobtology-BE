@@ -113,4 +113,4 @@ def test_configured_worker_entrypoint_publishes_a_context_bound_request(
     with TestClient(_application(acceptance_database_url, user_id)) as client:
         recompute_response = client.get(f"/api/v1/recomputations/{request_id}")
     assert recompute_response.status_code == 200
-    assert recompute_response.json()["state"] == "READY"
+    assert recompute_response.json()["state"] == "COMPLETED"
