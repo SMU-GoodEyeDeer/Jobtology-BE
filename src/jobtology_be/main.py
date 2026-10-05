@@ -16,6 +16,7 @@ from jobtology_be.api.google_auth import (
     router as google_auth_router,
 )
 from jobtology_be.api.guide import router as guide_router
+from jobtology_be.api.live_source import router as live_source_router
 from jobtology_be.api.neo4j_catalog import router as neo4j_catalog_router
 from jobtology_be.api.router import router
 from jobtology_be.api.source_catalog import router as source_catalog_router
@@ -35,6 +36,7 @@ from jobtology_be.corpus.source_factory import build_configured_corpus_source
 from jobtology_be.editorial.reader import DraftReadService, load_drafts
 from jobtology_be.infrastructure.persistence.auth_store import PostgresAuthStore
 from jobtology_be.infrastructure.persistence.database import Database
+from jobtology_be.infrastructure.persistence.live_source_feed import PostgresLiveSourceFeed
 from jobtology_be.infrastructure.persistence.m5_queries import PostgresM5Queries
 from jobtology_be.infrastructure.persistence.preference_queries import PostgresRoutePreferencesQuery
 from jobtology_be.infrastructure.persistence.queries import PostgresProductQueries
@@ -76,12 +78,15 @@ def create_app(
     neo4j_catalog = dependencies.neo4j_catalog
     product_queries = dependencies.product_queries
     source_catalog = dependencies.source_catalog
+    live_source_feed = dependencies.live_source_feed
     source_catalog_resource = None
     if settings.catalog_database_url is not None and source_catalog is None:
         source_catalog_resource = PostgresSourceCatalog.create(
             settings.catalog_database_url.get_secret_value()
         )
         source_catalog = source_catalog_resource
+    if live_source_feed is None and isinstance(source_catalog, PostgresSourceCatalog):
+        live_source_feed = PostgresLiveSourceFeed(engine=source_catalog.engine)
     editorial_drafts = dependencies.editorial_drafts
     if settings.editorial_draft_path is not None and editorial_drafts is None:
         editorial_drafts = DraftReadService(load_drafts(settings.editorial_draft_path))
@@ -190,6 +195,7 @@ def create_app(
             goal_service=goal_service,
             product_queries=product_queries,
             source_catalog=source_catalog,
+            live_source_feed=live_source_feed,
             editorial_drafts=editorial_drafts,
             m5_queries=m5_queries,
             neo4j_catalog=neo4j_catalog,
@@ -214,6 +220,7 @@ def create_app(
     app.include_router(editorial_drafts_router, prefix="/api/v1")
     app.include_router(neo4j_catalog_router, prefix="/api/v2")
     app.include_router(source_catalog_router, prefix="/api/v2")
+    app.include_router(live_source_router, prefix="/api/v2")
     app.include_router(guide_router)
     if settings.enable_fixtures:
         from jobtology_be.api.fixtures import router as fixtures_router

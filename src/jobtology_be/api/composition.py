@@ -16,6 +16,7 @@ from jobtology_be.api.goals import require_goal_service
 from jobtology_be.api.guest_session import GuestSessionBootstrap
 from jobtology_be.api.idempotency import IdempotencyStore, require_idempotency_store
 from jobtology_be.api.identity import SessionIdentityProvider, require_authenticated_principal
+from jobtology_be.api.live_source import require_live_source_feed
 from jobtology_be.api.m5_queries import require_m5_queries
 from jobtology_be.api.neo4j_catalog import Neo4jCatalogQueries, require_neo4j_catalog_queries
 from jobtology_be.api.preferences import require_preferences_service
@@ -35,6 +36,7 @@ from jobtology_be.corpus.source_factory import ConfiguredCorpusSource
 from jobtology_be.editorial.reader import DraftReadService
 from jobtology_be.infrastructure.persistence.auth_store import PostgresAuthStore
 from jobtology_be.infrastructure.persistence.database import Database
+from jobtology_be.infrastructure.persistence.live_source_feed import LiveSourceFeed
 from jobtology_be.infrastructure.persistence.source_catalog import (
     CatalogQueries,
     PostgresSourceCatalog,
@@ -57,6 +59,7 @@ OPENAPI_TAGS = [
     {"name": "FE mock samples", "description": "명시적으로 활성화한 프론트엔드 mock 전용 읽기 전용 DTO 예시입니다."},
     {"name": "product", "description": "인증된 Jobtology 제품 API입니다."},
     {"name": "source catalog", "description": "승인된 PostgreSQL 소스 전용 읽기 계약입니다."},
+    {"name": "live source feed", "description": "매일 수집되는 최신 원천 데이터(공고·시험일정)를 조회합니다. 봉인된 카탈로그 릴리스와 별개입니다."},
     {"name": "editorial drafts", "description": "명시적으로 설정한 미검토 초안 읽기입니다."},
 ]
 
@@ -145,6 +148,11 @@ def register_api_dependencies(app: FastAPI, dependencies: ApiDependencies, setti
             return source_catalog
 
         app.dependency_overrides[require_source_catalog] = get_injected_source_catalog
+    if (live_source_feed := dependencies.live_source_feed) is not None:
+        def get_injected_live_source_feed() -> LiveSourceFeed:
+            return live_source_feed
+
+        app.dependency_overrides[require_live_source_feed] = get_injected_live_source_feed
     if (editorial_drafts := dependencies.editorial_drafts) is not None:
         def get_injected_editorial_drafts() -> DraftReadService:
             return editorial_drafts

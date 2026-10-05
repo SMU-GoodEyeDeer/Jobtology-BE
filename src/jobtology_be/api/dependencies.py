@@ -17,6 +17,7 @@ from jobtology_be.application.services.preferences import PreferencesService
 from jobtology_be.application.services.profiles import ProfileService
 from jobtology_be.application.services.roadmaps import RoadmapService
 from jobtology_be.editorial.reader import DraftReadService
+from jobtology_be.infrastructure.persistence.live_source_feed import LiveSourceFeed
 from jobtology_be.infrastructure.persistence.source_catalog import CatalogQueries
 from jobtology_be.modules.auth.google_oidc import GoogleIdentityProvider
 from jobtology_be.modules.auth.session import SessionStore
@@ -35,6 +36,7 @@ class ApiDependencies:
     neo4j_catalog: Neo4jCatalogQueries | None = None
     product_queries: ProductQueries | None = None
     source_catalog: CatalogQueries | None = None
+    live_source_feed: LiveSourceFeed | None = None
     editorial_drafts: DraftReadService | None = None
     roadmap_service: RoadmapService | None = None
     analysis_service: AnalysisService | None = None
