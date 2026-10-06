@@ -79,6 +79,15 @@ oauth_login_attempts = Table(
 )
 Index("oauth_login_attempts_expiry_index", oauth_login_attempts.c.expires_at)
 
+llm_credentials = Table(
+    "llm_credentials",
+    METADATA,
+    Column("provider", String(64), primary_key=True),
+    Column("ciphertext", LargeBinary, nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False, server_default=UTC_NOW),
+    CheckConstraint("char_length(provider) > 0", name="llm_credentials_provider_check"),
+)
+
 auth_sessions = Table(
     "auth_sessions",
     METADATA,

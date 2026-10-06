@@ -7,6 +7,7 @@ from pathlib import Path
 from uuid import UUID
 
 import anyio
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from test_acceptance_m5_worker import CAPABILITY_ENTITY_ID, CAPABILITY_LABEL, _snapshot
@@ -22,6 +23,13 @@ from jobtology_be.chat.service import (
 )
 from jobtology_be.infrastructure.persistence.contracts import JsonValue
 from jobtology_be.llm.client import ChatGptOAuthClient, LlmMessage, LlmUnavailableError
+from jobtology_be.llm.credentials import (
+    CredentialStoreError,
+    FileCredentialStore,
+    OAuthCredentials,
+    generate_encryption_key,
+    parse_encryption_key,
+)
 from jobtology_be.main import create_app
 from jobtology_be.settings import Settings
 
@@ -162,7 +170,7 @@ def _token(expires_in: float) -> str:
 def test_oauth_client_rejects_expired_tokens_without_refreshing(tmp_path: Path) -> None:
     auth = tmp_path / "auth.json"
     auth.write_text(json.dumps({"tokens": {"access_token": _token(-10), "account_id": "a", "refresh_token": "r"}}))
-    client = ChatGptOAuthClient(auth_path=auth, model="m")
+    client = ChatGptOAuthClient(store=FileCredentialStore(auth), model="m")
 
     with pytest.raises(LlmUnavailableError):
         anyio.run(client.credentials)
@@ -173,6 +181,53 @@ def test_oauth_client_reads_valid_credentials_and_reports_unreadable_files(tmp_p
     token = _token(3600)
     auth.write_text(json.dumps({"tokens": {"access_token": token, "account_id": "acct", "refresh_token": "r"}}))
 
-    assert anyio.run(ChatGptOAuthClient(auth_path=auth, model="m").credentials) == (token, "acct")
+    assert anyio.run(ChatGptOAuthClient(store=FileCredentialStore(auth), model="m").credentials) == (token, "acct")
     with pytest.raises(LlmUnavailableError):
-        anyio.run(ChatGptOAuthClient(auth_path=tmp_path / "missing.json", model="m").credentials)
+        anyio.run(ChatGptOAuthClient(store=FileCredentialStore(tmp_path / "missing.json"), model="m").credentials)
+
+
+class MemoryStore:
+    def __init__(self, credentials: OAuthCredentials | None) -> None:
+        self.credentials = credentials
+        self.saved: list[OAuthCredentials] = []
+
+    async def load(self) -> OAuthCredentials | None:
+        return self.credentials
+
+    async def save(self, credentials: OAuthCredentials) -> None:
+        self.credentials = credentials
+        self.saved.append(credentials)
+
+
+def test_oauth_client_refreshes_an_expiring_token_and_persists_the_rotation() -> None:
+    fresh = _token(3600)
+    store = MemoryStore(OAuthCredentials.model_validate(
+        {"tokens": {"access_token": _token(60), "account_id": "acct", "refresh_token": "old"}, "auth_mode": "chatgpt"}
+    ))
+    requests: list[dict[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json={"access_token": fresh, "refresh_token": "new"})
+
+    client = ChatGptOAuthClient(
+        store=store, model="m", refresh_enabled=True, http_transport=httpx.MockTransport(handler)
+    )
+
+    assert anyio.run(client.credentials) == (fresh, "acct")
+    assert requests[0]["grant_type"] == "refresh_token"
+    assert requests[0]["refresh_token"] == "old"
+    assert store.saved[0].tokens.refresh_token == "new"
+    assert store.saved[0].model_dump()["auth_mode"] == "chatgpt"
+
+
+def test_oauth_client_reports_missing_credentials() -> None:
+    with pytest.raises(LlmUnavailableError):
+        anyio.run(ChatGptOAuthClient(store=MemoryStore(None), model="m").credentials)
+
+
+def test_encryption_keys_must_be_32_bytes_of_base64() -> None:
+    assert len(parse_encryption_key(generate_encryption_key())) == 32
+    for bad in ("short", "!!!not-base64!!!"):
+        with pytest.raises(CredentialStoreError):
+            parse_encryption_key(bad)

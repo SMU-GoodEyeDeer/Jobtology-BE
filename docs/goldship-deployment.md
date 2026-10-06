@@ -82,6 +82,37 @@ Neo4j는 Coolify가 관리하지 않는다. `maxjo@goldship:/home/maxjo/jobtolog
 **Community 에디션**이라 읽기 전용 역할을 만들 수 없다. 그래서 BE는 관리자 계정 `neo4j`를 쓰며, 코드 수준에서
 bounded 읽기 쿼리만 실행한다. Neo4j 비밀번호를 바꾸면 이 변수도 함께 갱신해야 한다.
 
+### AI 챗봇 (ChatGPT OAuth)
+
+| 변수 | 값 |
+| --- | --- |
+| `JOBTOLOGY_LLM_PROVIDER` | `chatgpt_oauth` (끄려면 `disabled`) |
+| `JOBTOLOGY_CREDENTIAL_ENCRYPTION_KEY` | `<secret>` — `python -m jobtology_be.llm.credentials_cli generate-key`로 만든 32바이트 키 |
+| `JOBTOLOGY_OPENAI_OAUTH_REFRESH` | `true` — 서버 전용 로그인일 때만 |
+| `JOBTOLOGY_OPENAI_MODEL` | 기본 `gpt-5.6-luna` |
+
+OAuth 토큰은 `.env`나 환경 변수에 넣지 않는다. 접근 토큰은 며칠 뒤 만료되고 갱신 때마다 refresh token이
+바뀌므로, 서버가 갱신 결과를 다시 써야 한다. 그래서 토큰은 앱 DB `llm_credentials` 테이블에
+AES-256-GCM으로 암호화해 저장하고, 키만 환경 변수로 둔다. 키를 잃으면 토큰을 다시 넣는다.
+
+**반드시 서버 전용 ChatGPT 로그인을 쓴다.** 개인 PC의 Codex 로그인을 그대로 넣으면 서버가 갱신할 때
+PC 쪽 로그인이 끊긴다.
+
+```sh
+# 1) 로컬에서 서버 전용 로그인 (브라우저 로그인)
+export CODEX_HOME="$(mktemp -d)" && codex login
+# 2) 운영 DB에 암호화 저장 (토큰은 출력되지 않음)
+CN=$(ssh maxjo@goldship "docker ps --filter name=w131qqclc6wyke8347y9puqo --format '{{.Names}}' | head -1")
+ssh maxjo@goldship "docker exec -i $CN /app/.venv/bin/python -m jobtology_be.llm.credentials_cli import" \
+  < "$CODEX_HOME/auth.json"
+rm -rf "$CODEX_HOME"
+# 상태 확인 (만료까지 남은 시간, refresh token 유무)
+ssh maxjo@goldship "docker exec $CN /app/.venv/bin/python -m jobtology_be.llm.credentials_cli status"
+```
+
+`GET /api/v1/chat/status`가 `available: true`이면 FE 챗봇이 AI 답변을 쓴다. 토큰을 바꿀 때는 재배포 없이
+`import`만 다시 실행한다.
+
 ## 4. 배포 흐름
 
 `main`에 push하면 [CI](../.github/workflows/ci.yml)가 실행된다.
@@ -99,7 +130,7 @@ Coolify의 push 자동배포는 꺼져 있으므로, CI가 실패한 커밋은 �
 ## 5. 마이그레이션
 
 Alembic은 이미지 안의 `/app/.venv/bin/alembic`에 있다(이미지에는 `uv`, `curl`, `wget`도 있다). 현재 적용된
-revision은 `20260922_04 (head)`이다.
+revision은 `20261006_01 (head)`이다.
 
 새 migration이 들어간 커밋을 배포할 때는 새 컨테이너에서 **한 번만** 실행한다.
 

@@ -3,14 +3,14 @@ import json
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import ClassVar, Final, Literal, Protocol, override
+from typing import Final, Literal, Protocol, override
 
 import anyio
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ValidationError
 
 from jobtology_be.infrastructure.persistence.contracts import JsonValue
+from jobtology_be.llm.credentials import CredentialStore, CredentialStoreError, OAuthCredentials
 
 type ChatRole = Literal["user", "assistant"]
 
@@ -128,17 +128,18 @@ class OpenAIApiKeyClient:
 
 @dataclass(slots=True)
 class ChatGptOAuthClient:
-    """ChatGPT-account OAuth (Codex `auth.json`) against the Codex Responses backend.
+    """ChatGPT-account OAuth (Codex login) against the Codex Responses backend.
 
-    The auth file is read on each call so an operator can replace it without a restart.
-    Refreshing rotates the refresh token; enable it only for a login dedicated to this
-    server, otherwise the same login on another device is signed out.
+    Credentials are loaded from the store on each call so an operator can replace them
+    without a restart. Refreshing rotates the refresh token; enable it only for a login
+    dedicated to this server, otherwise the same login on another device is signed out.
     """
 
-    auth_path: Path
+    store: CredentialStore
     model: str
     refresh_enabled: bool = False
     timeout_seconds: float = 90.0
+    http_transport: httpx.AsyncBaseTransport | None = None
     _lock: anyio.Lock = field(default_factory=anyio.Lock)
 
     async def complete_json(
@@ -184,24 +185,23 @@ class ChatGptOAuthClient:
 
     async def credentials(self) -> tuple[str, str]:
         async with self._lock:
-            document = self._read()
+            try:
+                document = await self.store.load()
+            except CredentialStoreError as error:
+                raise LlmUnavailableError("OAuth credentials unreadable") from error
+            if document is None:
+                raise LlmUnavailableError("OAuth credentials not configured")
             if self.refresh_enabled and _expires_soon(document.tokens.access_token):
                 document = await self._refresh(document)
             if _expires_soon(document.tokens.access_token, margin=0):
                 raise LlmUnavailableError("OAuth access token expired")
             return document.tokens.access_token, document.tokens.account_id
 
-    def _read(self) -> "_AuthFile":
-        try:
-            return _AuthFile.model_validate_json(self.auth_path.read_text())
-        except (OSError, ValidationError) as error:
-            raise LlmUnavailableError("OAuth credentials unreadable") from error
-
-    async def _refresh(self, document: "_AuthFile") -> "_AuthFile":
+    async def _refresh(self, document: OAuthCredentials) -> OAuthCredentials:
         if not document.tokens.refresh_token:
             raise LlmUnavailableError("OAuth refresh token missing")
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
+            async with httpx.AsyncClient(timeout=30, transport=self.http_transport) as client:
                 response = await client.post(
                     CHATGPT_OAUTH_TOKEN_URL,
                     json={
@@ -222,31 +222,12 @@ class ChatGptOAuthClient:
         updated = document.model_copy(
             update={
                 "tokens": document.tokens.model_copy(
-                    update={
-                        key: value
-                        for key, value in refreshed.model_dump().items()
-                        if value is not None
-                    }
+                    update={key: value for key, value in refreshed.model_dump().items() if value is not None}
                 )
             }
         )
-        self.auth_path.write_text(updated.model_dump_json(indent=2))
+        await self.store.save(updated)
         return updated
-
-
-class _OAuthTokens(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow", frozen=True)
-
-    access_token: str = Field(min_length=1)
-    account_id: str = Field(min_length=1)
-    refresh_token: str | None = None
-    id_token: str | None = None
-
-
-class _AuthFile(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow", frozen=True)
-
-    tokens: _OAuthTokens
 
 
 class _RefreshResponse(BaseModel):

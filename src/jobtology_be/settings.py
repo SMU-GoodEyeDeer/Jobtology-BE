@@ -69,8 +69,10 @@ class Settings(BaseSettings):
     llm_provider: Literal["disabled", "openai_api_key", "chatgpt_oauth"] = "disabled"
     openai_api_key: SecretStr | None = None
     openai_model: str = Field(default="gpt-5.6-luna", min_length=1)
+    openai_oauth_store: Literal["database", "file"] = "database"
     openai_oauth_auth_path: Path | None = None
     openai_oauth_refresh: bool = False
+    credential_encryption_key: SecretStr | None = None
     guest_session_max_new_per_minute: int = Field(default=30, ge=1, le=1000)
     google_client_id: str | None = Field(default=None, min_length=1)
     google_client_secret: SecretStr | None = Field(default=None, min_length=1)

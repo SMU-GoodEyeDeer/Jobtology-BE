@@ -19,6 +19,7 @@ import jobtology_be.main  # noqa: F401  (loads the package in an order free of i
 from jobtology_be.application.queries import CapabilityView, GoalView
 from jobtology_be.chat.service import ChatCapabilityService
 from jobtology_be.llm.client import ChatGptOAuthClient, LlmMessage, LlmUnavailableError
+from jobtology_be.llm.credentials import FileCredentialStore
 from jobtology_be.product_roles.builder import build_product_roles
 from jobtology_be.product_roles.models import ArtifactApproval, ProductRoleInputs, ProductRolePolicy
 
@@ -50,7 +51,7 @@ def _snapshots():
 
 async def _run(auth: Path, model: str, cases_path: Path, concurrency: int) -> dict:
     snapshots = _snapshots()
-    client = ChatGptOAuthClient(auth_path=auth, model=model)
+    client = ChatGptOAuthClient(store=FileCredentialStore(auth), model=model)
     cases = json.loads(cases_path.read_text())["cases"]
     results: list[dict] = []
     limiter = anyio.Semaphore(concurrency)

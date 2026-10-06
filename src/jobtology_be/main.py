@@ -156,7 +156,7 @@ def create_app(
                 capability_list_authoritative=settings.capability_list_authoritative,
             )
     chat_service = dependencies.chat_service
-    llm_client = build_llm_client(settings)
+    llm_client = build_llm_client(settings, database)
     if (
         chat_service is None and llm_client is not None
         and role_holder is not None and product_queries is not None

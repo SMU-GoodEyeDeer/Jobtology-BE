@@ -11,6 +11,9 @@
 - Added `GET /api/v1/chat/status` and `POST /api/v1/chat/messages` (stateless; capability
   candidates restricted to the active goal's approved requirements with verbatim user quotes).
   Configure with `JOBTOLOGY_LLM_PROVIDER` (`disabled` default, `openai_api_key`, `chatgpt_oauth`).
+- ChatGPT OAuth credentials are stored AES-256-GCM encrypted in the application database
+  (`llm_credentials`, migration `20261006_01`) and refreshed in place; manage them with
+  `python -m jobtology_be.llm.credentials_cli`.
 
 ## 2026-10-05 — onboarding checklist and partial routes
 
