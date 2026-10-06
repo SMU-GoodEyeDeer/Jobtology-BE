@@ -1,6 +1,7 @@
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import ClassVar
+from typing import ClassVar, Final
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -31,6 +32,18 @@ class _CapabilityDetails(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="ignore", frozen=True)
 
     experience_codes: tuple[str, ...] = ()
+
+
+# Route conditions are optional (onboarding no longer asks for them); users without saved
+# preferences are planned with these conservative defaults until they set their own.
+DEFAULT_ROUTE_PREFERENCES: Final[Mapping[str, object]] = {
+    "available_hours_per_week": 10,
+    "budget_mode": "REGULAR",
+    "max_out_of_pocket_krw": None,
+    "fastest_path": False,
+    "needs_portfolio": False,
+    "career_switch": False,
+}
 
 
 class AnalysisContextInputsUnavailableError(Exception):
@@ -86,8 +99,6 @@ class PostgresAnalysisContextInputSource:
                 ).where(route_preferences.c.user_id == user_id)
             )
             preference_row = preference.one_or_none()
-            if preference_row is None:
-                raise AnalysisContextInputsUnavailableError("route preferences are unavailable")
 
             capability_rows = (
                 await session.execute(
@@ -111,7 +122,9 @@ class PostgresAnalysisContextInputSource:
                 for capability in capability_rows
             )
             constraints = PlanningConstraints.model_validate(
-                {
+                {"target_by": target_by, **DEFAULT_ROUTE_PREFERENCES}
+                if preference_row is None
+                else {
                     "target_by": target_by,
                     "available_hours_per_week": preference_row.available_hours_per_week,
                     "budget_mode": preference_row.budget_mode,

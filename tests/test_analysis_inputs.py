@@ -124,16 +124,18 @@ async def _exercise_source(database_url: str) -> None:
             database,
             include_preferences=False,
         )
-        with pytest.raises(AnalysisContextInputsUnavailableError, match="route preferences"):
-            await source.load_context_inputs(
-                missing_preferences_user_id,
-                AnalysisRequestCommand(
-                    goal_id=missing_preferences_goal_id,
-                    expected_profile_version=1,
-                    basis_type="EDITORIAL",
-                ),
-                REFERENCE_AT,
-            )
+        defaulted = await source.load_context_inputs(
+            missing_preferences_user_id,
+            AnalysisRequestCommand(
+                goal_id=missing_preferences_goal_id,
+                expected_profile_version=1,
+                basis_type="EDITORIAL",
+            ),
+            REFERENCE_AT,
+        )
+        assert defaulted.constraints.available_hours_per_week == 10
+        assert defaulted.constraints.budget_mode == "REGULAR"
+        assert not defaulted.constraints.fastest_path
 
         invalid_timezone_user_id, invalid_timezone_goal_id = await _seed_context_inputs(
             database,

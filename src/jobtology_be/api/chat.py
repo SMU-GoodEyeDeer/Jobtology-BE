@@ -27,6 +27,7 @@ class ChatRequest(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
 
     messages: tuple[ChatMessageIn, ...] = Field(min_length=1, max_length=20)
+    mode: Literal["counsel", "onboarding"] = "counsel"
 
     @field_validator("messages")
     @classmethod
@@ -108,6 +109,7 @@ async def send_chat_messages(
         result = await service.respond(
             principal.user_id,
             tuple(LlmMessage(role=message.role, text=message.text) for message in request.messages),
+            request.mode,
         )
     except LlmUnavailableError as error:
         raise HTTPException(status_code=503) from error

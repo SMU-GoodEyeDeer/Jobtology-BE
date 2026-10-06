@@ -1,7 +1,7 @@
 import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Final, Protocol
+from typing import Final, Literal, Protocol
 from uuid import UUID
 
 from jobtology_be.application.queries import CapabilityView, GoalView
@@ -15,8 +15,7 @@ MAX_QUOTE_LENGTH: Final = 300
 INSTRUCTIONS: Final = """\
 너는 대학생의 IT 진로를 돕는 커리어 상담가다. 한국어로 짧고 친근하게(3문장 이내) 답한다.
 
-역할 1 — 상담 답변(reply): 사용자의 질문에 답하고, 사용자가 이미 해 본 경험을 더 자세히 말하도록 \
-구체적인 질문을 하나 덧붙인다. 확실하지 않은 사실(채용 통계, 연봉 등)은 지어내지 않는다.
+{reply_role}
 
 역할 2 — 역량 후보(candidates): 사용자가 **이미 직접 해 본 경험**을 말했을 때만, 아래 [허용 역량 목록]에서 \
 해당하는 역량의 code를 고른다.
@@ -50,6 +49,22 @@ SCHEMA: Final[dict[str, JsonValue]] = {
     },
     "required": ["reply", "candidates"],
     "additionalProperties": False,
+}
+
+
+type ChatMode = Literal["counsel", "onboarding"]
+
+REPLY_ROLES: Final[dict[str, str]] = {
+    "counsel": (
+        "역할 1 — 상담 답변(reply): 사용자의 질문에 답하고, 사용자가 이미 해 본 경험을 더 자세히 "
+        "말하도록 구체적인 질문을 하나 덧붙인다. 확실하지 않은 사실(채용 통계, 연봉 등)은 지어내지 않는다."
+    ),
+    "onboarding": (
+        "역할 1 — 온보딩 질문(reply): 지금은 처음 가입한 사용자의 경험을 파악하는 중이다. 사용자의 말에 "
+        "한 문장으로 반응한 뒤, [허용 역량 목록] 중 아직 대화에서 다루지 않은 영역 하나를 골라 실제로 해 본 "
+        "적이 있는지 쉬운 말로 묻는다(질문은 한 번에 하나, 기술명 예시를 곁들인다). 진로 상담이나 학습 추천은 "
+        "하지 않는다. 사용자가 그만하고 싶어 하면 짧게 마무리 인사만 한다."
+    ),
 }
 
 
@@ -151,7 +166,9 @@ class ChatCapabilityService:
     snapshots: Callable[[], tuple[PublishedCorpusSnapshot, ...]]
     display_name: Callable[[str], str | None]
 
-    async def respond(self, user_id: UUID, messages: Sequence[LlmMessage]) -> ChatReply:
+    async def respond(
+        self, user_id: UUID, messages: Sequence[LlmMessage], mode: ChatMode = "counsel"
+    ) -> ChatReply:
         goals = await self.queries.list_goals(user_id)
         occupation_id = next(
             (goal.occupation_id for goal in goals if goal.status == "ACTIVE" and goal.occupation_id),
@@ -174,6 +191,7 @@ class ChatCapabilityService:
             )
             allowed = allowed_capabilities(snapshot, owned)
         instructions = INSTRUCTIONS.format(
+            reply_role=REPLY_ROLES[mode],
             occupation=(self.display_name(occupation_id) if occupation_id else None) or "미정",
             allowed="\n".join(
                 f"- {item.code}: {item.label}" + (f" — {', '.join(item.hints)}" if item.hints else "")

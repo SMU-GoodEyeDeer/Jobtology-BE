@@ -1,5 +1,12 @@
 # API changelog
 
+## Unreleased (ai_onboarding) — chat-driven onboarding
+
+- Route preferences are optional for analysis; users without them are planned with
+  10 hours/week and REGULAR budget defaults.
+- `POST /api/v1/chat/messages` accepts `mode: "onboarding"` to ask about uncovered capability
+  areas one at a time instead of counseling.
+
 ## 2026-10-06 — faster analysis reads, solver settings, AI chat
 
 - `POST /api/v1/analyses` returns the existing PENDING/RUNNING/READY request for the same goal

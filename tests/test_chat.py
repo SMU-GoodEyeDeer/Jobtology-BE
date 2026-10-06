@@ -231,3 +231,12 @@ def test_encryption_keys_must_be_32_bytes_of_base64() -> None:
     for bad in ("short", "!!!not-base64!!!"):
         with pytest.raises(CredentialStoreError):
             parse_encryption_key(bad)
+
+
+def test_onboarding_mode_asks_about_uncovered_capabilities_instead_of_counseling() -> None:
+    llm = FakeLlm({"reply": "다음 질문", "candidates": []})
+
+    anyio.run(lambda: _service(llm).respond(USER_ID, (LlmMessage("user", "시작할게요"),), "onboarding"))
+
+    assert "온보딩 질문" in llm.instructions
+    assert "상담 답변" not in llm.instructions

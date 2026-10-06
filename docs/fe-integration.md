@@ -124,7 +124,8 @@ analysis와 route planning은 아직 제공되지 않거나 의도적으로 지�
 ### 1. 사용자 입력
 
 프로필(`PUT /api/v1/me/profile`), 역량(`POST/PATCH /api/v1/me/capabilities`),
-목표(`POST /api/v1/me/goals`)를 입력합니다. 각 자원은 서버가 관리하는 `version`을
+목표(`POST /api/v1/me/goals`)를 입력합니다. 경로 조건(`PUT /api/v1/me/route-preferences`)은 선택이며,
+저장하지 않으면 주 10시간·일반 예산 기본값으로 분석합니다. 각 자원은 서버가 관리하는 `version`을
 갖고, 이후 분석 요청 시 `expected_profile_version`으로 사용합니다.
 
 #### 온보딩 "이미 해본 것" 체크리스트
@@ -199,6 +200,8 @@ Idempotency-Key: <클라이언트 생성 UUID>
 `{reply, occupation_id, candidates: [{entity_id, label, evidence_quote}]}`를 돌려줍니다.
 
 - 서버는 대화를 저장하지 않습니다(무상태). 클라이언트가 최근 대화를 다시 보냅니다.
+- 요청에 `"mode": "onboarding"`을 넣으면 상담 대신 아직 이야기하지 않은 역량 영역을 하나씩 묻는 온보딩
+  질문으로 답합니다(기본 `"counsel"`).
 - 후보는 활성 목표 직무의 승인된 요구 역량 중 아직 보유하지 않은 것만, 사용자 발화를 글자 그대로
   인용한 근거와 함께 나옵니다. **자동 저장하지 않습니다.**
 - 사용자가 확인하면 `POST /api/v1/me/capabilities`로 `category: "chat"`, `raw_text: label`,
