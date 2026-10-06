@@ -64,6 +64,13 @@ class Settings(BaseSettings):
     product_role_artifact_approval_path: Path | None = None
     inprocess_worker_enabled: bool = False
     capability_list_authoritative: bool = False
+    solver_worker_count: int = Field(default=8, ge=1, le=16)
+    solver_time_limit_seconds: float | None = Field(default=10.0, gt=0, le=60)
+    llm_provider: Literal["disabled", "openai_api_key", "chatgpt_oauth"] = "disabled"
+    openai_api_key: SecretStr | None = None
+    openai_model: str = Field(default="gpt-5.6-luna", min_length=1)
+    openai_oauth_auth_path: Path | None = None
+    openai_oauth_refresh: bool = False
     guest_session_max_new_per_minute: int = Field(default=30, ge=1, le=1000)
     google_client_id: str | None = Field(default=None, min_length=1)
     google_client_secret: SecretStr | None = Field(default=None, min_length=1)

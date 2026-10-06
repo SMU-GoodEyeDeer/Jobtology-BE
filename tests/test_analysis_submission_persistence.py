@@ -1,5 +1,5 @@
 from collections.abc import Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from os import environ
 from pathlib import Path
@@ -17,7 +17,6 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from jobtology_be.infrastructure.persistence.contracts import (
     AnalysisRecomputeSubmission,
     JsonValue,
-    PersistenceConflictError,
     UserCreate,
 )
 from jobtology_be.infrastructure.persistence.database import Database
@@ -180,8 +179,10 @@ async def _exercise_atomic_submission(database_url: str) -> None:
             "source": "analysis-api",
         }
 
-        with pytest.raises(PersistenceConflictError):
-            await store.submit_analysis_recompute(submission)
+        repeated = await store.submit_analysis_recompute(
+            replace(submission, dedupe_key="analysis-submission-2")
+        )
+        assert repeated == request
 
         async with database.sessions() as session:
             after_counts = (
@@ -196,6 +197,17 @@ async def _exercise_atomic_submission(database_url: str) -> None:
                 )
             ).one()
         assert after_counts == before_counts
+
+        async with database.sessions.begin() as session:
+            await session.execute(
+                text("UPDATE recompute_requests SET state = 'FAILED' WHERE id = :id"),
+                {"id": request.request_id},
+            )
+        retried = await store.submit_analysis_recompute(
+            replace(submission, dedupe_key="analysis-submission-3")
+        )
+        assert retried.request_id != request.request_id
+        assert retried.state == "PENDING"
     finally:
         await database.dispose()
 

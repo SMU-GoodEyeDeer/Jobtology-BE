@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Protocol, assert_never, override
 from uuid import uuid4
@@ -32,7 +32,11 @@ from jobtology_be.modules.profiles.normalizer import (
 from jobtology_be.planning.candidate_models import CandidateTemplateError
 from jobtology_be.planning.candidates import CandidateGenerator
 from jobtology_be.planning.cp_sat_planner import CpSatRoutePlanner
-from jobtology_be.planning.solver_models import InvalidPlanningProblemError
+from jobtology_be.planning.solver_models import (
+    SOLVER_WORKER_COUNT,
+    InvalidPlanningProblemError,
+    SolverSettings,
+)
 from jobtology_be.settings import CorpusSource
 from jobtology_be.workers.context import (
     InvalidRecomputeContextError,
@@ -139,6 +143,8 @@ class RecomputeWorker:
     finalizer: RecomputeFinalizer
     allow_fixture: bool = False
     source_snapshot_reader: SourceAwarePublishedCorpusSnapshotReader | None = None
+    solver_worker_count: int = SOLVER_WORKER_COUNT
+    solver_time_limit_seconds: float | None = None
 
     async def process(self, work_item: RecomputeWorkItem) -> RecomputeFinalization:
         context = await self.context_reader.get_context(work_item)
@@ -185,9 +191,13 @@ class RecomputeWorker:
             context.completeness,
         )
         candidate_set = CandidateGenerator(snapshot.templates).build(analysis)
+        problem = build_planning_problem(context, analysis, candidate_set)
+        if self.solver_time_limit_seconds is not None:
+            problem = replace(
+                problem, settings=SolverSettings(time_limit_seconds=self.solver_time_limit_seconds)
+            )
         planning_result = await anyio.to_thread.run_sync(
-            CpSatRoutePlanner().plan,
-            build_planning_problem(context, analysis, candidate_set),
+            CpSatRoutePlanner(worker_count=self.solver_worker_count).plan, problem
         )
         if planning_result.feasibility is None:
             raise SolverTimeoutError()
@@ -261,6 +271,8 @@ def build_leased_recompute_worker(
     allow_fixture: bool = False,
     source_snapshot_reader: SourceAwarePublishedCorpusSnapshotReader | None = None,
     eligible_corpus_sources: frozenset[CorpusSource] | None = None,
+    solver_worker_count: int = SOLVER_WORKER_COUNT,
+    solver_time_limit_seconds: float | None = None,
 ) -> LeasedRecomputeWorker:
     return LeasedRecomputeWorker(
         claimer=store,
@@ -270,6 +282,8 @@ def build_leased_recompute_worker(
             finalizer=store,
             allow_fixture=allow_fixture,
             source_snapshot_reader=source_snapshot_reader,
+            solver_worker_count=solver_worker_count,
+            solver_time_limit_seconds=solver_time_limit_seconds,
         ),
         failure_finalizer=store,
         eligible_corpus_sources=eligible_corpus_sources,

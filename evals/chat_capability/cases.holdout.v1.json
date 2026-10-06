@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "notes": "프롬프트 수정 후 처음 측정하는 검증 세트. 프롬프트를 이 세트에 맞춰 고치지 않는다.",
+  "cases": [
+    {"id": "h-be-01", "occupation": "BACKEND_DEVELOPER", "messages": ["FastAPI로 동아리 출석 체크 API를 만들었고, pytest로 엔드포인트 테스트도 짰어요."], "expected": ["2001020211", "2001020227"], "acceptable": ["2001020212", "2001020231", "2001020230"]},
+    {"id": "h-be-02", "occupation": "BACKEND_DEVELOPER", "messages": ["리눅스 서버에 nginx 깔고 GitHub Actions로 자동 배포 파이프라인 만들었어요."], "expected": ["2001020214"], "acceptable": ["2001020233", "2001020234", "2001020209", "2001020208"]},
+    {"id": "h-be-03", "occupation": "BACKEND_DEVELOPER", "messages": ["CREATE TABLE부터 해서 외래키, 인덱스까지 직접 정의해서 DB를 구축했어요."], "expected": ["2001020405"], "acceptable": ["2001020404", "2001020403", "2001020414", "2001020413", "2001020415"]},
+    {"id": "h-be-04", "occupation": "BACKEND_DEVELOPER", "messages": ["자바로 객체지향 과제를 하면서 상속이랑 예외 처리를 써봤어요."], "expected": ["2001020230"], "acceptable": ["2001020231"]},
+    {"id": "h-be-n1", "occupation": "BACKEND_DEVELOPER", "messages": ["면접에서 트랜잭션 격리 수준 질문이 나오면 어떻게 답해야 하나요?"], "expected": [], "acceptable": []},
+    {"id": "h-be-n2", "occupation": "BACKEND_DEVELOPER", "messages": ["유튜브로 Kotlin 강의를 보고 있어요. 아직 코드를 짜본 적은 없어요."], "expected": [], "acceptable": []},
+    {"id": "h-be-n3", "occupation": "BACKEND_DEVELOPER", "messages": ["우리 팀장님이 MSA 구조로 서버를 다 짜셨어요. 저는 기획만 했어요."], "expected": [], "acceptable": ["2001020201", "2001020219"]},
+    {"id": "h-da-01", "occupation": "DATA_ANALYST", "messages": ["공공데이터를 받아서 pandas로 중복 제거하고 형변환해서 정리했어요."], "expected": ["2001010510"], "acceptable": ["2001010516"]},
+    {"id": "h-da-02", "occupation": "DATA_ANALYST", "messages": ["XGBoost로 고객 이탈 예측 모델을 만들고 파생변수도 몇 개 새로 만들어 성능을 올렸어요."], "expected": ["2001010507", "2001010512"], "acceptable": ["2001010513", "2001010514", "2001010510"]},
+    {"id": "h-da-03", "occupation": "DATA_ANALYST", "messages": ["설문 데이터로 카이제곱 검정을 해봤어요."], "expected": ["2001010506"], "acceptable": ["2001010511"]},
+    {"id": "h-da-n1", "occupation": "DATA_ANALYST", "messages": ["SQLD 자격증을 따면 데이터 분석가 취업에 도움이 될까요?"], "expected": [], "acceptable": []},
+    {"id": "h-da-n2", "occupation": "DATA_ANALYST", "messages": ["태블로가 뭔지 궁금해요. 써본 적은 없어요."], "expected": [], "acceptable": []}
+  ]
+}

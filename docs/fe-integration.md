@@ -160,6 +160,10 @@ Idempotency-Key: <클라이언트 생성 UUID>
 { "goal_id": "...", "expected_profile_version": 3, "basis_type": "EDITORIAL" }
 ```
 
+- 같은 목표·같은 프로필 버전으로 진행 중이거나 완료된 계산이 있으면 새로 계산하지 않고 그 요청을
+  그대로 돌려줍니다. 화면 진입 시에는 먼저 `GET /api/v1/dashboard?goal_id=...`의
+  `state`/`analysis_id`로 저장된 결과를 조회하고, 결과가 없을 때만 분석을 요청하세요.
+  프로필·역량·조건이 바뀌면 서버가 자동으로 재계산합니다.
 - 성공 시 `202 Accepted`와 함께 `{recompute_request_id, state, status_url}`을
   반환합니다. `status_url`이 폴링 주소입니다.
 - 재계산은 비동기입니다. 응답이 왔다고 분석이 끝난 것이 아닙니다.
@@ -187,6 +191,19 @@ Idempotency-Key: <클라이언트 생성 UUID>
 `demand_pct`·NCS 수준·학습 시간은 승인된 직무 메타데이터가 있을 때만 표시되며,
 20시간 등의 추정치는 `achievement`에 `(추정)`으로 명시됩니다. 저장 결과가
 없으면 `result`는 null입니다.
+
+### 3-1. AI 챗봇과 역량 후보
+
+`GET /api/v1/chat/status` → `{available}`. `false`이면 AI 대화가 설정되지 않은 것이니 기존 화면을
+유지하세요. `POST /api/v1/chat/messages`에 최근 대화(최대 20개, 마지막은 사용자)를 보내면
+`{reply, occupation_id, candidates: [{entity_id, label, evidence_quote}]}`를 돌려줍니다.
+
+- 서버는 대화를 저장하지 않습니다(무상태). 클라이언트가 최근 대화를 다시 보냅니다.
+- 후보는 활성 목표 직무의 승인된 요구 역량 중 아직 보유하지 않은 것만, 사용자 발화를 글자 그대로
+  인용한 근거와 함께 나옵니다. **자동 저장하지 않습니다.**
+- 사용자가 확인하면 `POST /api/v1/me/capabilities`로 `category: "chat"`, `raw_text: label`,
+  `details: {"source": "chat", "evidence_quote": ...}`를 저장합니다. 원문 대신 근거 문장만 남깁니다.
+- LLM 미설정·실패 시 `503`, 사용자당 분당 20회를 넘으면 `429`입니다.
 
 ### 4. 로드맵 제안 확인
 

@@ -1,5 +1,9 @@
 from datetime import UTC, datetime, timedelta
 
+import pytest
+from ortools.sat.python import cp_model
+
+from jobtology_be.planning import cp_sat_planner
 from jobtology_be.planning.candidate_models import Candidate, KnownKrwCost, UnknownKrwCost
 from jobtology_be.planning.contracts import PlanningConstraints
 from jobtology_be.planning.cp_sat_planner import CpSatRoutePlanner
@@ -234,3 +238,54 @@ def test_plan_replays_with_pinned_objective_and_solver_inputs() -> None:
     assert first.trace.solver_seed == SOLVER_RANDOM_SEED
     assert first.trace.candidate_versions == (CandidateVersion(action_id="api", template_revision=1),)
     assert first.trace.objective.version == OBJECTIVE_VERSION
+
+
+def test_plan_uses_and_records_the_configured_solver_worker_count() -> None:
+    request = problem((candidate("api", frozenset({"api"})),))
+
+    result = CpSatRoutePlanner(worker_count=4).plan(request)
+
+    assert result.feasibility is RouteFeasibility.FEASIBLE
+    assert result.trace.solver_worker_count == 4
+
+
+def _unknown_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    real_solve = cp_sat_planner._solve
+    calls = {"count": 0}
+
+    def solve(model: cp_model.CpModel, request: PlanningProblem, worker_count: int) -> tuple[cp_model.CpSolver, int]:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return cp_model.CpSolver(), cp_model.UNKNOWN
+        return real_solve(model, request, worker_count)
+
+    monkeypatch.setattr(cp_sat_planner, "_solve", solve)
+
+
+def test_plan_recovers_a_full_route_when_the_first_solve_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
+    _unknown_once(monkeypatch)
+
+    result = CpSatRoutePlanner().plan(problem((candidate("api", frozenset({"api"})),)))
+
+    assert result.feasibility is RouteFeasibility.FEASIBLE
+    assert result.optimization_status is OptimizationStatus.FEASIBLE
+    assert [step.action_id for step in result.scheduled_steps] == ["api"]
+
+
+def test_plan_recovers_a_partial_route_when_the_first_solve_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
+    _unknown_once(monkeypatch)
+    request = problem(
+        (
+            candidate("big", frozenset({"big"}), estimated_hours=3),
+            candidate("small", frozenset({"small"}), estimated_hours=1),
+        ),
+        required=frozenset({"big", "small"}),
+        slots=calendar(3),
+    )
+
+    result = CpSatRoutePlanner().plan(request)
+
+    assert result.feasibility is RouteFeasibility.PARTIAL
+    assert result.optimization_status is OptimizationStatus.TIMEOUT
+    assert result.trace.partial_route_diagnostic is not None
+    assert result.trace.partial_route_diagnostic.unmet_required_requirement_keys == ("big",)

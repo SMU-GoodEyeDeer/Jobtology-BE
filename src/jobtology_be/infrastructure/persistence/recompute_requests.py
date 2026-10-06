@@ -14,8 +14,12 @@ from jobtology_be.infrastructure.persistence.outbox import OutboxRepository
 from jobtology_be.infrastructure.persistence.schema import (
     goals,
     profiles,
+    recompute_contexts,
+    recompute_requests,
     user_state_events,
 )
+
+REUSABLE_RECOMPUTE_STATES = ("PENDING", "RUNNING", "READY")
 
 
 class RecomputeRequestRepository(OutboxRepository):
@@ -54,6 +58,22 @@ class RecomputeRequestRepository(OutboxRepository):
         goal_owner = await session.scalar(select(goals.c.user_id).where(goals.c.id == submission.goal_id))
         if goal_owner != submission.user_id:
             raise MissingRecordError(resource="goal")
+        reusable = (
+            await session.execute(
+                select(recompute_requests.c.id, recompute_requests.c.state)
+                .join(recompute_contexts, recompute_contexts.c.request_id == recompute_requests.c.id)
+                .where(
+                    recompute_requests.c.user_id == submission.user_id,
+                    recompute_requests.c.profile_version == submission.expected_profile_version,
+                    recompute_requests.c.state.in_(REUSABLE_RECOMPUTE_STATES),
+                    recompute_contexts.c.payload["goal_id"].astext == str(submission.goal_id),
+                )
+                .order_by(recompute_requests.c.created_at.desc())
+                .limit(1)
+            )
+        ).one_or_none()
+        if reusable is not None:
+            return RecomputeRequestSnapshot(request_id=reusable.id, state=reusable.state)
         trigger_event_id = uuid4()
         await session.execute(
             insert(user_state_events).values(

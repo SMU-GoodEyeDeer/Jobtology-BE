@@ -31,6 +31,7 @@ from jobtology_be.application.services.goals import PersistentGoalService
 from jobtology_be.application.services.preferences import PersistentPreferencesService
 from jobtology_be.application.services.profiles import PersistentProfileService
 from jobtology_be.application.services.roadmaps import PersistentRoadmapService
+from jobtology_be.chat.service import ChatCapabilityService
 from jobtology_be.corpus.source_factory import build_configured_corpus_source
 from jobtology_be.editorial.reader import DraftReadService, load_drafts
 from jobtology_be.infrastructure.persistence.auth_store import PostgresAuthStore
@@ -41,6 +42,7 @@ from jobtology_be.infrastructure.persistence.preference_queries import PostgresR
 from jobtology_be.infrastructure.persistence.queries import PostgresProductQueries
 from jobtology_be.infrastructure.persistence.source_catalog import PostgresSourceCatalog
 from jobtology_be.infrastructure.persistence.store import PostgresApplicationStore
+from jobtology_be.llm.factory import build_llm_client
 from jobtology_be.modules.auth.google_oidc import GoogleOidcProvider
 from jobtology_be.modules.auth.session_cookies import (
     OAuthCallbackQueryMiddleware,
@@ -153,6 +155,18 @@ def create_app(
                 database, role_holder,
                 capability_list_authoritative=settings.capability_list_authoritative,
             )
+    chat_service = dependencies.chat_service
+    llm_client = build_llm_client(settings)
+    if (
+        chat_service is None and llm_client is not None
+        and role_holder is not None and product_queries is not None
+    ):
+        chat_service = ChatCapabilityService(
+            llm=llm_client,
+            queries=product_queries,
+            snapshots=lambda: role_holder.snapshots,
+            display_name=role_holder.display_name,
+        )
     if corpus_source is not None and neo4j_catalog is None:
         neo4j_catalog = corpus_source.native_catalog
     if (settings.auth_enabled or settings.guest_sessions_enabled) and session_store is None:
@@ -191,6 +205,8 @@ def create_app(
                 store=store,
                 snapshot_reader=role_holder,
                 eligible_corpus_sources=frozenset({"local_json"}),
+                solver_worker_count=settings.solver_worker_count,
+                solver_time_limit_seconds=settings.solver_time_limit_seconds,
             ),
             database=database,
             roadmap_service=roadmap_service or PersistentRoadmapService(store),
@@ -232,6 +248,7 @@ def create_app(
             analysis_service=analysis_service,
             capability_service=capability_service,
             onboarding_checklist=onboarding_checklist,
+            chat_service=chat_service,
             idempotency_store=idempotency_store,
             session_store=session_store,
         ),

@@ -28,11 +28,14 @@ from jobtology_be.planning.solver_models import (
 
 @dataclass(frozen=True, slots=True)
 class CpSatRoutePlanner:
+    worker_count: int = SOLVER_WORKER_COUNT
+
     def plan(self, problem: PlanningProblem) -> PlanningResult:
         candidates = tuple(sorted(problem.candidates, key=lambda candidate: candidate.action_id))
         rejections, is_preflight_infeasible = _preflight(problem, candidates)
         if is_preflight_infeasible:
             return planning_result(
+                worker_count=self.worker_count,
                 problem=problem,
                 candidates=candidates,
                 feasibility=RouteFeasibility.INFEASIBLE,
@@ -44,11 +47,12 @@ class CpSatRoutePlanner:
         artifacts = build_route_model(
             problem, candidates, require_required_coverage=True
         )
-        solver, status = _solve(artifacts.model, problem)
+        solver, status = _solve(artifacts.model, problem, self.worker_count)
         match status:
             case cp_model.OPTIMAL:
                 solved_steps = scheduled_steps(problem, artifacts, solver)
                 return planning_result(
+                    worker_count=self.worker_count,
                     problem=problem,
                     candidates=candidates,
                     feasibility=route_feasibility(problem, solved_steps),
@@ -60,6 +64,7 @@ class CpSatRoutePlanner:
             case cp_model.FEASIBLE:
                 solved_steps = scheduled_steps(problem, artifacts, solver)
                 return planning_result(
+                    worker_count=self.worker_count,
                     problem=problem,
                     candidates=candidates,
                     feasibility=route_feasibility(problem, solved_steps),
@@ -69,9 +74,10 @@ class CpSatRoutePlanner:
                     diagnostic=None,
                 )
             case cp_model.INFEASIBLE:
-                diagnostic = _partial_diagnostic(problem, candidates)
+                diagnostic = _partial_diagnostic(problem, candidates, self.worker_count)
                 if diagnostic.scheduled_steps:
                     return planning_result(
+                        worker_count=self.worker_count,
                         problem=problem,
                         candidates=candidates,
                         feasibility=RouteFeasibility.PARTIAL,
@@ -81,6 +87,7 @@ class CpSatRoutePlanner:
                         diagnostic=diagnostic,
                     )
                 return planning_result(
+                    worker_count=self.worker_count,
                     problem=problem,
                     candidates=candidates,
                     feasibility=RouteFeasibility.INFEASIBLE,
@@ -90,12 +97,39 @@ class CpSatRoutePlanner:
                     diagnostic=diagnostic,
                 )
             case cp_model.UNKNOWN:
+                # No full-coverage route was found in time. Fall back to the best route
+                # without the coverage constraint; it is a regular route only when it
+                # still covers every required requirement.
+                diagnostic = _partial_diagnostic(problem, candidates, self.worker_count)
+                if not diagnostic.scheduled_steps:
+                    return planning_result(
+                        worker_count=self.worker_count,
+                        problem=problem,
+                        candidates=candidates,
+                        feasibility=None,
+                        status=OptimizationStatus.TIMEOUT,
+                        scheduled_steps=(),
+                        rejections=rejections,
+                        diagnostic=None,
+                    )
+                if diagnostic.unmet_required_requirement_keys:
+                    return planning_result(
+                        worker_count=self.worker_count,
+                        problem=problem,
+                        candidates=candidates,
+                        feasibility=RouteFeasibility.PARTIAL,
+                        status=OptimizationStatus.TIMEOUT,
+                        scheduled_steps=diagnostic.scheduled_steps,
+                        rejections=rejections,
+                        diagnostic=diagnostic,
+                    )
                 return planning_result(
+                    worker_count=self.worker_count,
                     problem=problem,
                     candidates=candidates,
-                    feasibility=None,
-                    status=OptimizationStatus.TIMEOUT,
-                    scheduled_steps=(),
+                    feasibility=route_feasibility(problem, diagnostic.scheduled_steps),
+                    status=OptimizationStatus.FEASIBLE,
+                    scheduled_steps=diagnostic.scheduled_steps,
                     rejections=rejections,
                     diagnostic=None,
                 )
@@ -112,10 +146,12 @@ class UnexpectedCpSatStatusError(Exception):
         return f"unexpected CP-SAT status: {self.status}"
 
 
-def _solve(model: cp_model.CpModel, problem: PlanningProblem) -> tuple[cp_model.CpSolver, int]:
+def _solve(
+    model: cp_model.CpModel, problem: PlanningProblem, worker_count: int
+) -> tuple[cp_model.CpSolver, int]:
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = problem.settings.time_limit_seconds
-    solver.parameters.num_search_workers = SOLVER_WORKER_COUNT
+    solver.parameters.num_search_workers = worker_count
     solver.parameters.random_seed = SOLVER_RANDOM_SEED
     return solver, solver.solve(model)
 
@@ -179,10 +215,10 @@ def _has_unknown_cost(candidate: Candidate) -> bool:
 
 
 def _partial_diagnostic(
-    problem: PlanningProblem, candidates: tuple[Candidate, ...]
+    problem: PlanningProblem, candidates: tuple[Candidate, ...], worker_count: int
 ) -> PartialRouteDiagnostic:
     artifacts = build_route_model(problem, candidates, require_required_coverage=False)
-    solver, status = _solve(artifacts.model, problem)
+    solver, status = _solve(artifacts.model, problem, worker_count)
     match status:
         case cp_model.OPTIMAL | cp_model.FEASIBLE:
             unmet = tuple(

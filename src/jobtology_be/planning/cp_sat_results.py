@@ -86,6 +86,7 @@ def route_feasibility(
 
 def planning_result(
     *,
+    worker_count: int = SOLVER_WORKER_COUNT,
     problem: PlanningProblem,
     candidates: tuple[Candidate, ...],
     feasibility: RouteFeasibility | None,
@@ -110,7 +111,7 @@ def planning_result(
             CandidateVersion(candidate.action_id, candidate.template_revision) for candidate in candidates
         ),
         solver_seed=SOLVER_RANDOM_SEED,
-        solver_worker_count=SOLVER_WORKER_COUNT,
+        solver_worker_count=worker_count,
         time_limit_seconds=problem.settings.time_limit_seconds,
         optimization_status=status,
         rejections=rejections,

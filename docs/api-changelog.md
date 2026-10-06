@@ -1,5 +1,17 @@
 # API changelog
 
+## 2026-10-06 — faster analysis reads, solver settings, AI chat
+
+- `POST /api/v1/analyses` returns the existing PENDING/RUNNING/READY request for the same goal
+  and profile version instead of enqueueing a new recompute.
+- The in-process worker uses `JOBTOLOGY_SOLVER_WORKER_COUNT` (default 8) CP-SAT workers and
+  `JOBTOLOGY_SOLVER_TIME_LIMIT_SECONDS` (default 10). When a full-coverage solve times out, the
+  planner now falls back to the best route instead of failing: a regular route if it still covers
+  every required requirement, otherwise `PARTIAL`.
+- Added `GET /api/v1/chat/status` and `POST /api/v1/chat/messages` (stateless; capability
+  candidates restricted to the active goal's approved requirements with verbatim user quotes).
+  Configure with `JOBTOLOGY_LLM_PROVIDER` (`disabled` default, `openai_api_key`, `chatgpt_oauth`).
+
 ## 2026-10-05 — onboarding checklist and partial routes
 
 - Added public `GET /api/v1/occupations/{occupation_id}/capability-checklist` with the

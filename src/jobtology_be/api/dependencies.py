@@ -20,6 +20,7 @@ from jobtology_be.application.services.goals import GoalService
 from jobtology_be.application.services.preferences import PreferencesService
 from jobtology_be.application.services.profiles import ProfileService
 from jobtology_be.application.services.roadmaps import RoadmapService
+from jobtology_be.chat.service import ChatCapabilityService
 from jobtology_be.editorial.reader import DraftReadService
 from jobtology_be.infrastructure.persistence.live_source_feed import LiveSourceFeed
 from jobtology_be.infrastructure.persistence.source_catalog import CatalogQueries
@@ -51,4 +52,5 @@ class ApiDependencies:
     analysis_recompute_submitter: AnalysisRecomputeSubmitter | None = None
     capability_service: CapabilityService | None = None
     onboarding_checklist: OnboardingChecklistCatalog | None = None
+    chat_service: ChatCapabilityService | None = None
     idempotency_store: IdempotencyStore | None = None

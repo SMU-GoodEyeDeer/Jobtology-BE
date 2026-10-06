@@ -12,6 +12,7 @@ from jobtology_be.api.auth_session import (
 )
 from jobtology_be.api.capabilities import require_capability_service
 from jobtology_be.api.capability_checklist import require_onboarding_checklist
+from jobtology_be.api.chat import require_chat_service
 from jobtology_be.api.dependencies import ApiDependencies
 from jobtology_be.api.editorial_drafts import require_editorial_drafts
 from jobtology_be.api.goals import require_goal_service
@@ -43,6 +44,7 @@ from jobtology_be.application.services.goals import GoalService
 from jobtology_be.application.services.preferences import PreferencesService
 from jobtology_be.application.services.profiles import ProfileService
 from jobtology_be.application.services.roadmaps import RoadmapService
+from jobtology_be.chat.service import ChatCapabilityService
 from jobtology_be.corpus.local_snapshot import LocalJsonPublishedCorpusSnapshotReader
 from jobtology_be.corpus.source_factory import ConfiguredCorpusSource
 from jobtology_be.editorial.reader import DraftReadService
@@ -255,6 +257,11 @@ def register_api_dependencies(app: FastAPI, dependencies: ApiDependencies, setti
             return onboarding_checklist
 
         app.dependency_overrides[require_onboarding_checklist] = get_injected_onboarding_checklist
+    if (chat_service := dependencies.chat_service) is not None:
+        def get_injected_chat_service() -> ChatCapabilityService:
+            return chat_service
+
+        app.dependency_overrides[require_chat_service] = get_injected_chat_service
     if (idempotency_store := dependencies.idempotency_store) is not None:
         def get_injected_idempotency_store() -> IdempotencyStore:
             return idempotency_store
