@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: SMU-GoodEyeDeer/Jobtology-DB
-          ref: df116968bf30767eced0f862db3fc8ac4b9d61f7
+          ref: 96840cad6401ef6b2c69018959c2ddfa53984af8
           path: Jobtology-DB
       - uses: astral-sh/setup-uv@v6
         with:

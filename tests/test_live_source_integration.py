@@ -268,6 +268,7 @@ def test_live_feed_from_disposable_postgres_through_http(tmp_path: Path) -> None
         inputs = ProductRoleInputs.model_validate_json(db.sql(
             f"SELECT CAST(catalog.product_role_inputs_v1(ARRAY[{codes}]::text[]) AS text)"
         ))
+        assert inputs.linked_postings is not None
         draft = build_product_roles(inputs, policy)
         approval_path = tmp_path / "synthetic-artifact-approval.json"
         approval_path.write_text(json.dumps({
@@ -291,6 +292,7 @@ def test_live_feed_from_disposable_postgres_through_http(tmp_path: Path) -> None
             assert metadata.ncs_level == 4
             assert metadata.estimated_hours == 20
             assert metadata.hours_basis == "ESTIMATED"
+            assert metadata.demand_base is not None
             occupations = client.get("/api/v1/occupations")
             assert occupations.status_code == 200
             assert "BACKEND_DEVELOPER" in {

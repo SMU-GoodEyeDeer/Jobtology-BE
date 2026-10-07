@@ -75,6 +75,8 @@ class AnalysisSkillResponse(BaseModel):
     name: str
     type: Literal["필수", "우대"]
     demand_pct: int | None
+    demand_postings: int | None
+    demand_base: int | None
     difficulty: str | None
     experienced_pct: None = None
     achievement: str | None

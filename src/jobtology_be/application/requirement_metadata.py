@@ -13,6 +13,8 @@ class RequirementMetadata:
     demand_pct: int | None
     estimated_hours: int | None
     hours_basis: Literal['OFFICIAL', 'ESTIMATED'] | None
+    demand_postings: int | None = None
+    demand_base: int | None = None
 
 
 class RequirementMetadataLookup(Protocol):
@@ -28,6 +30,8 @@ class SkillSummary:
     name: str
     type: Literal['필수', '우대']
     demand_pct: int | None
+    demand_postings: int | None
+    demand_base: int | None
     difficulty: str | None
     achievement: str | None
 
@@ -80,6 +84,8 @@ def build_analysis_summary(
             name=item.label,
             type='필수' if item.necessity == 'REQUIRED' else '우대',
             demand_pct=metadata.demand_pct if metadata else None,
+            demand_postings=metadata.demand_postings if metadata else None,
+            demand_base=metadata.demand_base if metadata else None,
             difficulty=f'NCS 수준 {metadata.ncs_level}' if metadata and metadata.ncs_level is not None else None,
             achievement=(f'학습 {hours}시간' + (' (추정)' if metadata and metadata.hours_basis == 'ESTIMATED' else ''))
             if hours is not None else None,

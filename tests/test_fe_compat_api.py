@@ -37,7 +37,8 @@ class Metadata:
     def lookup(self, requirement_key: str) -> RequirementMetadata | None:
         return {
             'required': RequirementMetadata(ncs_level=4, demand_pct=32,
-                                            estimated_hours=40, hours_basis='OFFICIAL'),
+                                            estimated_hours=40, hours_basis='OFFICIAL',
+                                            demand_postings=16, demand_base=50),
             'preferred': RequirementMetadata(ncs_level=6, demand_pct=None,
                                              estimated_hours=20, hours_basis='ESTIMATED'),
         }.get(requirement_key)
@@ -147,9 +148,9 @@ def test_analysis_result_projects_unmet_skills_and_metadata() -> None:
         'required_pct': 70, 'preferred_pct': None,
         'skills': [
             {'name': '서버 구현', 'type': '필수', 'demand_pct': 32,
-             'difficulty': 'NCS 수준 4', 'experienced_pct': None, 'achievement': '학습 40시간'},
+             'demand_postings': 16, 'demand_base': 50, 'difficulty': 'NCS 수준 4', 'experienced_pct': None, 'achievement': '학습 40시간'},
             {'name': '고급 분석', 'type': '우대', 'demand_pct': None,
-             'difficulty': 'NCS 수준 6', 'experienced_pct': None,
+             'demand_postings': None, 'demand_base': None, 'difficulty': 'NCS 수준 6', 'experienced_pct': None,
              'achievement': '학습 20시간 (추정)'},
         ],
     }

@@ -18,8 +18,17 @@ a published corpus snapshot. NCS level at most 5 or linked posting evidence make
 requirement REQUIRED; other units are PREFERRED. Evidence is source context,
 not an official vacancy requirement or an eligibility determination. The
 minimum positive qualification training hours is used when available; otherwise
-the estimated duration is 20 hours. Demand percentages are null because these
-source counts do not define a statistically meaningful denominator.
+the estimated duration is 20 hours. Demand uses `linked_postings` (DB migration
+028): the denominator is the number of distinct linked postings (`<posting_source>:<posting_id>`,
+currently `job_alio` and `nara_job`) linking any version of any unit selected for the role,
+and each unit's numerator is the distinct postings among them linking any version of that
+unit. `demand_pct = round(100 × numerator / denominator)` only when the denominator is at
+least 20 (`DEMAND_MIN_BASE_POSTINGS`); otherwise it is null while `demand_postings` and
+`demand_base` are still exposed. Inputs without `linked_postings` (DB before 028) keep all
+three values null. The posting list and the demand rule are part of the approved artifact
+digest, so applying 028 or new link publications requires a fresh artifact approval.
+Evidence comes from reviewed, possibly historical link publications; it is not a vacancy
+census and must not be presented as today's demand.
 
 All runtime flags default to **off**:
 

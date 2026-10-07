@@ -67,12 +67,19 @@ class InputEvidence(RoleModel):
     publication_ids: tuple[str, ...] = ()
 
 
+class InputLinkedPosting(RoleModel):
+    posting_key: str = Field(min_length=1)
+    competency_codes: tuple[str, ...]
+
+
 class ProductRoleInputs(RoleModel):
     contract_version: Literal["jobtology-product-role-inputs-v1"]
     sources: tuple[InputSource, ...]
     units: tuple[InputUnit, ...]
     qualifications: tuple[InputQualification, ...]
     evidence: tuple[InputEvidence, ...]
+    # Absent before DB migration 028; demand percentages then stay null.
+    linked_postings: tuple[InputLinkedPosting, ...] | None = None
 
 
 class ArtifactApproval(RoleModel):
