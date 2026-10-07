@@ -7,7 +7,7 @@
 - `POST /api/v1/chat/messages` accepts `mode: "onboarding"` to ask about uncovered capability
   areas one at a time instead of counseling.
 - `GET /api/v1/analyses/{id}` `result.skills[]` now fills `demand_pct` (share of the role's
-  distinct NCS-linked postings that link the skill; null below 20 linked postings) and adds
+  distinct NCS-linked postings that link the skill; null below 5 linked postings) and adds
   `demand_postings` and `demand_base`. Requires Jobtology-DB migration
   `028_product_role_demand_base.sql` and a new product-role artifact approval.
 

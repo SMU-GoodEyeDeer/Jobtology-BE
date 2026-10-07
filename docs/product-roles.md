@@ -23,7 +23,7 @@ the estimated duration is 20 hours. Demand uses `linked_postings` (DB migration
 currently `job_alio` and `nara_job`) linking any version of any unit selected for the role,
 and each unit's numerator is the distinct postings among them linking any version of that
 unit. `demand_pct = round(100 × numerator / denominator)` only when the denominator is at
-least 20 (`DEMAND_MIN_BASE_POSTINGS`); otherwise it is null while `demand_postings` and
+least 5 (`DEMAND_MIN_BASE_POSTINGS`); otherwise it is null while `demand_postings` and
 `demand_base` are still exposed. Inputs without `linked_postings` (DB before 028) keep all
 three values null. The posting list and the demand rule are part of the approved artifact
 digest, so applying 028 or new link publications requires a fresh artifact approval.
@@ -35,7 +35,7 @@ All runtime flags default to **off**:
 | Environment variable | Effect when enabled |
 |---|---|
 | `JOBTOLOGY_PRODUCT_ROLES_ENABLED` | Load role inputs at startup and enable occupations/analysis from the generated release. Requires `JOBTOLOGY_CATALOG_DATABASE_URL` and the product database. A failed load keeps occupations and analysis at 503 without preventing process startup. |
-| `JOBTOLOGY_PRODUCT_ROLE_ARTIFACT_APPROVAL_PATH` | Path to a separate owner-reviewed JSON record `{ "sha256": "<full draft digest>", "approved_by": "<reviewer>", "reviewed_at": "<timezone-aware ISO instant>" }`. Owner-approved records live in `config/product_roles/approvals/<digest>.json`; the deployed record is `ae6fec57…83fc6.json` (approved 2026-10-05). Missing/invalid/mismatched approval leaves the generated draft unpublished and the runtime at 503. |
+| `JOBTOLOGY_PRODUCT_ROLE_ARTIFACT_APPROVAL_PATH` | Path to a separate owner-reviewed JSON record `{ "sha256": "<full draft digest>", "approved_by": "<reviewer>", "reviewed_at": "<timezone-aware ISO instant>" }`. Owner-approved records live in `config/product_roles/approvals/<digest>.json`; the deployed record is `42083def…f0b55d.json` (approved 2026-10-08; identical role content to `ae6fec57…83fc6` plus demand metadata). Missing/invalid/mismatched approval leaves the generated draft unpublished and the runtime at 503. |
 | `JOBTOLOGY_INPROCESS_WORKER_ENABLED` | While a role release is loaded, process at most one queued local-json-labeled recompute every three seconds. A READY feasible targeted analysis creates and activates a titled roadmap only when the goal has no ACTIVE roadmap; later recomputes (e.g. after step completion) keep the existing roadmap. |
 | `JOBTOLOGY_CAPABILITY_LIST_AUTHORITATIVE` | Treat the stored capability list as complete; unmatched requirements are UNMET, including an empty capability list. |
 

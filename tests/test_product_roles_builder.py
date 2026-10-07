@@ -166,12 +166,12 @@ def test_demand_pct_uses_distinct_role_postings_as_denominator() -> None:
 
 
 def test_demand_pct_is_null_below_minimum_base_but_counts_remain() -> None:
-    # Given only 19 distinct linked role postings
+    # Given only 4 distinct linked role postings
     policy = ProductRolePolicy.model_validate_json(POLICY.read_text())
-    inputs = _demand_inputs(_postings("server", 19, ["2001020211_24v2"]))
+    inputs = _demand_inputs(_postings("server", 4, ["2001020211_24v2"]))
     # When built, then the small sample yields no percentage but keeps raw counts
     server = _approved(inputs, policy).metadata["BACKEND_DEVELOPER:2001020211"]
-    assert (server.demand_postings, server.demand_base, server.demand_pct) == (19, 19, None)
+    assert (server.demand_postings, server.demand_base, server.demand_pct) == (4, 4, None)
 
 
 def test_demand_is_unknown_without_linked_postings_and_digest_covers_them() -> None:
@@ -185,4 +185,4 @@ def test_demand_is_unknown_without_linked_postings_and_digest_covers_them() -> N
     assert linked.metadata["BACKEND_DEVELOPER:2001020211"].demand_base == 0
     assert legacy.digest != linked.digest
     assert json.loads(legacy.document)["demand_rule"] == {
-        "basis": "DISTINCT_LINKED_POSTINGS_PER_ROLE", "min_base_postings": 20}
+        "basis": "DISTINCT_LINKED_POSTINGS_PER_ROLE", "min_base_postings": 5}

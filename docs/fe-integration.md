@@ -196,7 +196,7 @@ Idempotency-Key: <클라이언트 생성 UUID>
 `demand_pct`(공고 요구 정도)는 해당 직무 역량에 NCS 링크가 연결된 공고(job_alio·
 nara_job, 중복 제거) 중 이 역량을 요구한 공고의 비율(0–100 정수)입니다. 근거로
 `demand_postings`(이 역량 연결 공고 수)와 `demand_base`(직무 연결 공고 수)를 함께
-내려줍니다. `demand_base`가 20건 미만이면 표본 부족으로 `demand_pct`는 null이지만
+내려줍니다. `demand_base`가 5건 미만이면 표본 부족으로 `demand_pct`는 null이지만
 두 건수는 그대로 제공되므로 "N건 중 M건"으로 표시할 수 있습니다. 근거 데이터 자체가
 없으면 세 값 모두 null이며, null은 0%와 다르게(미표시) 처리해야 합니다. 링크 근거는
 검토된 과거 발행분일 수 있으므로 "오늘의 수요"로 표현하지 마세요.

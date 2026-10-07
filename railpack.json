@@ -6,7 +6,7 @@
       "JOBTOLOGY_AUTH_ENABLED": "false",
       "JOBTOLOGY_GUEST_SESSIONS_ENABLED": "true",
       "JOBTOLOGY_PRODUCT_ROLES_ENABLED": "true",
-      "JOBTOLOGY_PRODUCT_ROLE_ARTIFACT_APPROVAL_PATH": "/app/config/product_roles/approvals/ae6fec57e085516cabafec05c09dd9f3859505eae1d8dcab7b08a4057db83fc6.json",
+      "JOBTOLOGY_PRODUCT_ROLE_ARTIFACT_APPROVAL_PATH": "/app/config/product_roles/approvals/42083def8dce5b0c290c6510cb5180da60c20e23ed622576b12ea3860bf0b55d.json",
       "JOBTOLOGY_INPROCESS_WORKER_ENABLED": "true",
       "JOBTOLOGY_CAPABILITY_LIST_AUTHORITATIVE": "true"
     },

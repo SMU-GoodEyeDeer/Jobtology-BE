@@ -16,7 +16,7 @@ from jobtology_be.product_roles.models import (
     RolePolicy,
 )
 
-DEMAND_MIN_BASE_POSTINGS = 20
+DEMAND_MIN_BASE_POSTINGS = 5
 
 
 @dataclass(frozen=True, slots=True)
