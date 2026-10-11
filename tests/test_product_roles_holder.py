@@ -128,7 +128,7 @@ def test_product_roles_holder_fails_closed_when_catalog_unavailable(monkeypatch:
 
 
 def test_holder_rejects_missing_and_changed_artifact_approval(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture,
 ) -> None:
     # Given a mutable in-memory SQL source and initially absent artifact approval
     payload = [{"contract_version": "jobtology-product-role-inputs-v1",
@@ -173,6 +173,7 @@ def test_holder_rejects_missing_and_changed_artifact_approval(
             assert await holder.load() is False
             assert holder.available is False
             assert holder.draft is not None
+            assert f"no artifact approval at {approval_path} for draft digest {holder.draft.digest}" in caplog.text
             with pytest.raises(PublishedSnapshotUnavailableError):
                 await holder.get_snapshot(PublishedSnapshotSelection(
                     "BACKEND_DEVELOPER", "product-roles-v1", "unapproved",
@@ -186,9 +187,14 @@ def test_holder_rejects_missing_and_changed_artifact_approval(
             assert await holder.load() is True
             assert holder.snapshots[0].release.release_id == old_release
             payload[0]["sources"][0]["run_id"] = "ncs-2"
+            approved_digest = holder.draft.digest
+            caplog.clear()
             # Then a changed source invalidates the exact approval and clears loaded state
             assert await holder.load() is False
             assert holder.available is False
+            assert holder.draft.digest != approved_digest
+            assert (f"draft digest {holder.draft.digest}, approved digest {approved_digest}"
+                    in caplog.text)
             assert holder.display_name("BACKEND_DEVELOPER") is None
             assert holder.lookup("BACKEND_DEVELOPER:2001020211") is None
             with pytest.raises(PublishedSnapshotUnavailableError):

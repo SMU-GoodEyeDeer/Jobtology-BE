@@ -1,3 +1,4 @@
+import logging
 from importlib.resources.abc import Traversable
 
 from pydantic import ValidationError
@@ -22,6 +23,9 @@ from jobtology_be.product_roles.builder import (
     build_product_roles,
 )
 from jobtology_be.product_roles.models import ArtifactApproval, ProductRoleInputs, ProductRolePolicy
+
+_logger = logging.getLogger(__name__)
+_UNAVAILABLE = "Product role release not loaded; occupations, checklist and analysis return 503"
 
 
 class ProductRoleHolder:
@@ -64,15 +68,28 @@ class ProductRoleHolder:
                 )
                 payload = result.scalar_one()
             if not isinstance(payload, str):
+                _logger.warning("%s: catalog returned no product role inputs", _UNAVAILABLE)
                 return False
             self._draft = build_product_roles(ProductRoleInputs.model_validate_json(payload), policy)
             if self.approval_path is None or not self.approval_path.is_file():
+                _logger.warning(
+                    "%s: no artifact approval at %s for draft digest %s",
+                    _UNAVAILABLE, self.approval_path, self._draft.digest,
+                )
                 return False
             approval = ArtifactApproval.model_validate_json(self.approval_path.read_text())
+            if approval.sha256 != self._draft.digest:
+                _logger.warning(
+                    "%s: catalog data changed since approval — draft digest %s, approved digest %s. "
+                    "Review the draft and add config/product_roles/approvals/<draft digest>.json.",
+                    _UNAVAILABLE, self._draft.digest, approval.sha256,
+                )
+                return False
             self._built = self._draft.publish(approval)
         except (SQLAlchemyError, ValidationError, ProductRoleBuildError,
                 CorpusSnapshotError, EditorialBaselineError, CandidateTemplateError,
-                OSError, TimeoutError, ValueError):
+                OSError, TimeoutError, ValueError) as error:
+            _logger.warning("%s: load failed (%s)", _UNAVAILABLE, type(error).__name__, exc_info=True)
             return False
         return True
 
