@@ -12,7 +12,11 @@ from jobtology_be.infrastructure.persistence.roadmap_source_validity import (
     parse_source_validity,
     source_is_current,
 )
-from jobtology_be.infrastructure.persistence.schema import roadmap_steps, step_dependencies
+from jobtology_be.infrastructure.persistence.schema import (
+    roadmap_steps,
+    route_proposals,
+    step_dependencies,
+)
 from jobtology_be.modules.dashboard.next_actions import (
     NextActionRequest,
     RoadmapCandidate,
@@ -35,6 +39,7 @@ async def load_next_actions(
             await session.execute(
                 select(
                     roadmap_steps.c.id,
+                    roadmap_steps.c.step_key,
                     roadmap_steps.c.position,
                     roadmap_steps.c.action_id,
                     roadmap_steps.c.state,
@@ -61,6 +66,10 @@ async def load_next_actions(
         prerequisites.setdefault(dependency["step_id"], []).append(
             str(dependency["prerequisite_step_id"])
         )
+    proposal_steps = await session.scalar(
+        select(route_proposals.c.steps).where(route_proposals.c.id == roadmap.view.proposal_id)
+    )
+    step_titles = {step["step_key"]: step["title"] for step in proposal_steps or ()}
     completed = frozenset(str(step["id"]) for step in step_rows if step["state"] == "COMPLETED")
     selection = select_next_actions(
         NextActionRequest(
@@ -79,7 +88,7 @@ async def load_next_actions(
                     roadmap_id=str(roadmap.view.roadmap_id),
                     roadmap_version=roadmap.view.roadmap_version,
                     step_id=str(step["id"]),
-                    title=step["action_id"],
+                    title=step_titles.get(step["step_key"]) or step["action_id"],
                     state=StepState(step["state"]),
                     roadmap_position=step["position"],
                     due_at=step["planned_end"],
