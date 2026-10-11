@@ -74,3 +74,14 @@ jobs:
           done
           echo "Deployment timed out (last status: ${status})"
           exit 1
+      - name: Verify product role release is loaded
+        if: steps.head.outputs.current == 'true'
+        run: |
+          for _ in $(seq 1 12); do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' https://jobtology.yeongmin.net/api/v1/occupations || true)
+            if [ "$code" = "200" ]; then echo "Occupations available"; exit 0; fi
+            echo "GET /api/v1/occupations -> ${code}; retrying"
+            sleep 10
+          done
+          echo "::error::Product role release did not load (occupations ${code}). Check the app log for 'Product role release not loaded'; a changed catalog needs a new approval in config/product_roles/approvals/."
+          exit 1
