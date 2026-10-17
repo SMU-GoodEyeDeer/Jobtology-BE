@@ -51,6 +51,7 @@ class ChatResponse(BaseModel):
     reply: str
     occupation_id: str | None
     candidates: tuple[ChatCandidateOut, ...]
+    suggestions: tuple[str, ...] = ()
 
 
 class ChatStatusResponse(BaseModel):
@@ -91,7 +92,8 @@ async def chat_status(
     summary="Send chat messages",
     description=(
         "Stateless: the client sends the recent conversation and the server does not store it. "
-        "Returns a counseling reply and capability candidates restricted to the active goal's "
+        "Returns a counseling reply, up to four follow-up questions the user may ask next "
+        "(`suggestions`), and capability candidates restricted to the active goal's "
         "approved requirements, each with a verbatim user quote. Candidates are not saved; "
         "after the user confirms, save one with `POST /api/v1/me/capabilities` "
         "(`category: \"chat\"`, `raw_text`: candidate label, `details.evidence_quote`)."
@@ -122,4 +124,5 @@ async def send_chat_messages(
             )
             for item in result.candidates
         ),
+        suggestions=result.suggestions,
     )

@@ -205,7 +205,8 @@ nara_job, 중복 제거) 중 이 역량을 요구한 공고의 비율(0–100 �
 
 `GET /api/v1/chat/status` → `{available}`. `false`이면 AI 대화가 설정되지 않은 것이니 기존 화면을
 유지하세요. `POST /api/v1/chat/messages`에 최근 대화(최대 20개, 마지막은 사용자)를 보내면
-`{reply, occupation_id, candidates: [{entity_id, label, evidence_quote}]}`를 돌려줍니다.
+`{reply, occupation_id, candidates: [{entity_id, label, evidence_quote}], suggestions: [string]}`를 돌려줍니다.
+`suggestions`는 이 대화에 이어 사용자가 물어볼 만한 짧은 질문 최대 4개입니다(추천 질문 칩으로 사용).
 
 - 서버는 대화를 저장하지 않습니다(무상태). 클라이언트가 최근 대화를 다시 보냅니다.
 - 요청에 `"mode": "onboarding"`을 넣으면 상담 대신 아직 이야기하지 않은 역량 영역을 하나씩 묻는 온보딩

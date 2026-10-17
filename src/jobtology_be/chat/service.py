@@ -11,6 +11,8 @@ from jobtology_be.llm.client import LlmClient, LlmMessage
 
 MAX_CANDIDATES: Final = 3
 MAX_QUOTE_LENGTH: Final = 300
+MAX_SUGGESTIONS: Final = 4
+MAX_SUGGESTION_LENGTH: Final = 60
 
 INSTRUCTIONS: Final = """\
 너는 대학생의 IT 진로를 돕는 커리어 상담가다. 한국어로 짧고 친근하게(3문장 이내) 답한다.
@@ -25,6 +27,10 @@ INSTRUCTIONS: Final = """\
 - evidence_quote에는 근거가 되는 사용자 발화를 **글자 그대로** 짧게 복사한다(요약·수정 금지).
 - 최대 3개. 해당 없으면 빈 배열.
 
+역할 3 — 추천 질문(suggestions): 지금 대화 흐름에서 사용자가 이어서 물어볼 만한 질문 3개를 사용자 말투로 만든다.
+- 각 25자 안팎의 짧은 반말 질문(예: "Docker는 어떻게 시작해?"). 이미 답한 질문은 반복하지 않는다.
+- 목표 직무와 [허용 역량 목록]에서 아직 다루지 않은 역량·기술을 우선 활용한다.
+
 [목표 직무] {occupation}
 [허용 역량 목록] (code: 역량명 — 관련 기술 예시)
 {allowed}
@@ -34,6 +40,7 @@ SCHEMA: Final[dict[str, JsonValue]] = {
     "type": "object",
     "properties": {
         "reply": {"type": "string"},
+        "suggestions": {"type": "array", "items": {"type": "string"}},
         "candidates": {
             "type": "array",
             "items": {
@@ -47,7 +54,7 @@ SCHEMA: Final[dict[str, JsonValue]] = {
             },
         },
     },
-    "required": ["reply", "candidates"],
+    "required": ["reply", "candidates", "suggestions"],
     "additionalProperties": False,
 }
 
@@ -88,6 +95,7 @@ class ChatReply:
     reply: str
     occupation_id: str | None
     candidates: tuple[ChatCandidate, ...]
+    suggestions: tuple[str, ...] = ()
 
 
 def _normalize(text: str) -> str:
@@ -153,6 +161,19 @@ def select_candidates(
     return tuple(selected.values())[:MAX_CANDIDATES]
 
 
+def select_suggestions(raw: object) -> tuple[str, ...]:
+    if not isinstance(raw, list):
+        return ()
+    selected: dict[str, str] = {}
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        text = re.sub(r"\s+", " ", item).strip()
+        if text and len(text) <= MAX_SUGGESTION_LENGTH:
+            _ = selected.setdefault(text.casefold(), text)
+    return tuple(selected.values())[:MAX_SUGGESTIONS]
+
+
 class ChatQueries(Protocol):
     async def list_goals(self, user_id: UUID) -> tuple[GoalView, ...]: ...
 
@@ -211,4 +232,5 @@ class ChatCapabilityService:
                 allowed,
                 [message.text for message in messages if message.role == "user"],
             ),
+            suggestions=select_suggestions(result.get("suggestions")),
         )

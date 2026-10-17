@@ -20,6 +20,7 @@ from jobtology_be.chat.service import (
     ChatCapabilityService,
     allowed_capabilities,
     select_candidates,
+    select_suggestions,
 )
 from jobtology_be.infrastructure.persistence.contracts import JsonValue
 from jobtology_be.llm.client import ChatGptOAuthClient, LlmMessage, LlmUnavailableError
@@ -58,6 +59,16 @@ def test_select_candidates_keeps_only_allowed_codes_with_verbatim_user_quotes() 
 def test_select_candidates_ignores_malformed_model_output() -> None:
     assert select_candidates("nope", ALLOWED, ["x"]) == ()
     assert select_candidates([{"code": 1}, "x", {"evidence_quote": "x"}], ALLOWED, ["x"]) == ()
+
+
+def test_select_suggestions_trims_dedupes_and_bounds_model_questions() -> None:
+    raw = ["  Docker는 어떻게 시작해?  ", "Docker는 어떻게 시작해?", "", 3, "x" * 61,
+           "정보처리산업기사 따야 해?", "포트폴리오 뭐부터 만들까?", "SQL 공부 순서 알려줘", "다섯 번째"]
+
+    assert select_suggestions(raw) == (
+        "Docker는 어떻게 시작해?", "정보처리산업기사 따야 해?", "포트폴리오 뭐부터 만들까?", "SQL 공부 순서 알려줘",
+    )
+    assert select_suggestions(None) == ()
 
 
 def test_allowed_capabilities_excludes_requirements_the_user_already_has() -> None:
@@ -142,7 +153,10 @@ def test_chat_api_reports_unavailable_and_returns_503_without_a_configured_llm()
 
 def test_chat_api_returns_reply_and_candidates_and_validates_the_conversation() -> None:
     code = CAPABILITY_ENTITY_ID.rsplit(":", 1)[-1]
-    llm = FakeLlm({"reply": "멋져요", "candidates": [{"code": code, "evidence_quote": "API를 배포했어요"}]})
+    llm = FakeLlm({
+        "reply": "멋져요", "candidates": [{"code": code, "evidence_quote": "API를 배포했어요"}],
+        "suggestions": ["배포 자동화는 어떻게 해?"],
+    })
     app = create_app(
         Settings(enable_fixtures=False),
         dependencies=ApiDependencies(identity_provider=StaticIdentityProvider(), chat_service=_service(llm)),
@@ -158,6 +172,7 @@ def test_chat_api_returns_reply_and_candidates_and_validates_the_conversation() 
         "reply": "멋져요",
         "occupation_id": "BACKEND_DEVELOPER",
         "candidates": [{"entity_id": CAPABILITY_ENTITY_ID, "label": CAPABILITY_LABEL, "evidence_quote": "API를 배포했어요"}],
+        "suggestions": ["배포 자동화는 어떻게 해?"],
     }
     assert bad.status_code == 422
 
