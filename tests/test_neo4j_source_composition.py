@@ -74,6 +74,7 @@ class RecordingNativeRepository:
 @dataclass(slots=True)
 class RecordingNeo4jSource:
     native_catalog: ConfiguredNeo4jCatalog
+    neo4j_read_client: None = None
     closed: bool = False
 
     async def aclose(self) -> None:

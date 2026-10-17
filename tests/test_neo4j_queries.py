@@ -5,6 +5,8 @@ from jobtology_be.corpus.neo4j_queries import (
     LIST_OCCUPATIONS_QUERY_ID,
     LIST_PUBLICATIONS_QUERY_ID,
     NEO4J_CORPUS_READ_QUERY_CATALOG,
+    ROLE_EVIDENCE_NCS_QUERY_ID,
+    ROLE_EVIDENCE_ONET_QUERY_ID,
 )
 
 
@@ -22,6 +24,8 @@ def test_catalog_registers_only_fixed_observed_read_definitions() -> None:
         GET_PUBLICATION_BY_ID_QUERY_ID,
         LIST_ALIGNMENTS_QUERY_ID,
         GET_ENRICHMENT_QUERY_ID,
+        ROLE_EVIDENCE_NCS_QUERY_ID,
+        ROLE_EVIDENCE_ONET_QUERY_ID,
     )
     assert all("\n" not in definition.statement for definition in definitions)
     assert all("RETURN *" not in definition.statement for definition in definitions)

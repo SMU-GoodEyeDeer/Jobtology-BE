@@ -26,6 +26,10 @@ from jobtology_be.api.preferences import require_preferences_service
 from jobtology_be.api.product_queries import require_product_queries
 from jobtology_be.api.profiles import require_profile_service
 from jobtology_be.api.roadmaps import require_roadmap_service
+from jobtology_be.api.role_evidence_graph import (
+    RoleEvidenceGraphSource,
+    require_role_evidence_graph,
+)
 from jobtology_be.api.source_catalog import require_source_catalog
 from jobtology_be.application.m5_queries import M5Queries
 from jobtology_be.application.queries import ProductQueries
@@ -237,6 +241,11 @@ def register_api_dependencies(app: FastAPI, dependencies: ApiDependencies, setti
             return neo4j_catalog
 
         app.dependency_overrides[require_neo4j_catalog_queries] = get_injected_neo4j_catalog
+    if (role_evidence_graph := dependencies.role_evidence_graph) is not None:
+        def get_injected_role_evidence_graph() -> RoleEvidenceGraphSource:
+            return role_evidence_graph
+
+        app.dependency_overrides[require_role_evidence_graph] = get_injected_role_evidence_graph
     if (roadmap_service := dependencies.roadmap_service) is not None:
         def get_injected_roadmap_service() -> RoadmapService:
             return roadmap_service

@@ -61,6 +61,7 @@ class StaticIdentityProvider:
 class RecordingCorpusSource:
     local_snapshot_reader: LocalJsonPublishedCorpusSnapshotReader | None
     native_catalog: None = None
+    neo4j_read_client: None = None
     closed: bool = False
 
     async def aclose(self) -> None:

@@ -4,6 +4,7 @@ from jobtology_be.api.google_auth import GoogleLoginStore
 from jobtology_be.api.idempotency import IdempotencyStore
 from jobtology_be.api.identity import IdentityProvider
 from jobtology_be.api.neo4j_catalog import Neo4jCatalogQueries
+from jobtology_be.api.role_evidence_graph import RoleEvidenceGraphSource
 from jobtology_be.application.m5_queries import M5Queries
 from jobtology_be.application.queries import ProductQueries
 from jobtology_be.application.requirement_metadata import (
@@ -40,6 +41,7 @@ class ApiDependencies:
     goal_service: GoalService | None = None
     m5_queries: M5Queries | None = None
     neo4j_catalog: Neo4jCatalogQueries | None = None
+    role_evidence_graph: RoleEvidenceGraphSource | None = None
     product_queries: ProductQueries | None = None
     source_catalog: CatalogQueries | None = None
     live_source_feed: LiveSourceFeed | None = None

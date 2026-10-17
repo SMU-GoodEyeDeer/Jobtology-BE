@@ -23,6 +23,7 @@ from jobtology_be.api.google_auth import (
 from jobtology_be.api.guide import router as guide_router
 from jobtology_be.api.live_source import router as live_source_router
 from jobtology_be.api.neo4j_catalog import router as neo4j_catalog_router
+from jobtology_be.api.role_evidence_graph import router as role_evidence_graph_router
 from jobtology_be.api.router import create_api_shell, router
 from jobtology_be.api.source_catalog import router as source_catalog_router
 from jobtology_be.application.services.analyses import PersistentAnalysisService
@@ -32,6 +33,7 @@ from jobtology_be.application.services.preferences import PersistentPreferencesS
 from jobtology_be.application.services.profiles import PersistentProfileService
 from jobtology_be.application.services.roadmaps import PersistentRoadmapService
 from jobtology_be.chat.service import ChatCapabilityService
+from jobtology_be.corpus.role_evidence_graph import Neo4jRoleEvidenceGraph
 from jobtology_be.corpus.source_factory import build_configured_corpus_source
 from jobtology_be.editorial.reader import DraftReadService, load_drafts
 from jobtology_be.infrastructure.persistence.auth_store import PostgresAuthStore
@@ -55,6 +57,7 @@ from jobtology_be.product_roles.checklist import (
 )
 from jobtology_be.product_roles.context import ProductRoleAnalysisContextFactory
 from jobtology_be.product_roles.holder import ProductRoleHolder
+from jobtology_be.product_roles.models import ProductRolePolicy
 from jobtology_be.product_roles.worker import InProcessRecomputeLoop
 from jobtology_be.settings import Settings
 from jobtology_be.workers.recompute import build_leased_recompute_worker
@@ -169,6 +172,15 @@ def create_app(
         )
     if corpus_source is not None and neo4j_catalog is None:
         neo4j_catalog = corpus_source.native_catalog
+    role_evidence_graph = dependencies.role_evidence_graph
+    if (
+        role_evidence_graph is None and corpus_source is not None
+        and (neo4j_client := corpus_source.neo4j_read_client) is not None
+    ):
+        role_evidence_graph = Neo4jRoleEvidenceGraph(
+            policy=ProductRolePolicy.model_validate_json(policy_path.read_text()),
+            client=neo4j_client,
+        )
     if (settings.auth_enabled or settings.guest_sessions_enabled) and session_store is None:
         if database is None:
             raise ValueError("Enabled authentication requires a database URL or injected session store")
@@ -244,6 +256,7 @@ def create_app(
             editorial_drafts=editorial_drafts,
             m5_queries=m5_queries,
             neo4j_catalog=neo4j_catalog,
+            role_evidence_graph=role_evidence_graph,
             roadmap_service=roadmap_service,
             analysis_service=analysis_service,
             capability_service=capability_service,
@@ -266,6 +279,7 @@ def create_app(
     app.include_router(google_auth_router, prefix="/api/v1")
     app.include_router(editorial_drafts_router, prefix="/api/v1")
     app.include_router(neo4j_catalog_router, prefix="/api/v2")
+    app.include_router(role_evidence_graph_router, prefix="/api/v2")
     app.include_router(source_catalog_router, prefix="/api/v2")
     app.include_router(live_source_router, prefix="/api/v2")
     app.include_router(guide_router)

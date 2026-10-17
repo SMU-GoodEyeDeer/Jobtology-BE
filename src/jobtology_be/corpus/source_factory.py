@@ -92,6 +92,10 @@ class ConfiguredCorpusSource:
                 assert_never(unreachable)
 
     @property
+    def neo4j_read_client(self) -> Neo4jQueryApiReadClient | None:
+        return self._neo4j_client
+
+    @property
     def legacy_snapshot_reader(self) -> PublishedCorpusSnapshotReader:
         if self._local_snapshot_reader is None:
             return _UnavailableSnapshotReader()

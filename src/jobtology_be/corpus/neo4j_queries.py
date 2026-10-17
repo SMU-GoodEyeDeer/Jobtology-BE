@@ -96,6 +96,77 @@ _ENRICHMENT_STATEMENT: Final = (
     "LIMIT $limit"
 )
 
+ROLE_EVIDENCE_NCS_QUERY_ID: Final = Neo4jReadQueryId("role-evidence.ncs-occupations")
+ROLE_EVIDENCE_ONET_QUERY_ID: Final = Neo4jReadQueryId("role-evidence.onet-occupations")
+
+ROLE_EVIDENCE_NCS_FIELDS: Final = (
+    "id",
+    "code",
+    "name",
+    "postings",
+    "sample_postings",
+    "competencies",
+    "onet",
+    "qualifications",
+)
+ROLE_EVIDENCE_ONET_FIELDS: Final = ("id", "code", "name", "skills", "technologies")
+
+# Per NCS occupation: inferred posting count, a few sample postings, the latest
+# current-version competency units (reviewed posting links first), the O*NET
+# occupations that the same postings were matched to, and the Q-Net
+# qualifications covering the most of its units with their exam sessions.
+_ROLE_EVIDENCE_NCS_STATEMENT: Final = (
+    "MATCH (o:entity:occupation) WHERE o.code IN $codes AND NOT o:ontologyObject "
+    "CALL (o) { OPTIONAL MATCH (o)<-[:INFERRED_NCS_OCCUPATION]-(p:jobPosting) "
+    "RETURN count(DISTINCT p) AS postings } "
+    "CALL (o) { MATCH (o)<-[:INFERRED_NCS_OCCUPATION]-(p:jobPosting) "
+    "WITH p ORDER BY p.source_created_at DESC, p.id LIMIT $posting_limit "
+    "RETURN collect({id: p.id, title: p.title, source_id: p.source_id}) AS sample_postings } "
+    "CALL (o) { MATCH (c:entity:ncsCompetency)-[:CLASSIFIED_AS]->(o) "
+    "WHERE NOT c:ontologyObject AND NOT c.name CONTAINS '(구버전)' "
+    "WITH left(c.code, 10) AS base, c ORDER BY c.code DESC "
+    "WITH base, collect(c)[0] AS latest "
+    "OPTIONAL MATCH (:reviewedNcsEnrichment)-[a:ALIGNS_WITH_NCS]->(t:entity:ncsCompetency) "
+    "WHERE a.accepted = true AND left(t.code, 10) = base "
+    "WITH latest, count(a) AS links ORDER BY links DESC, latest.code LIMIT $competency_limit "
+    "RETURN collect({id: latest.id, code: latest.code, name: latest.name, links: links}) "
+    "AS competencies } "
+    "CALL (o) { MATCH (o)<-[:INFERRED_NCS_OCCUPATION]-(p:jobPosting)"
+    "-[:INFERRED_ONET_OCCUPATION]->(x:onetCatalogObject:occupation) "
+    "WITH x, count(DISTINCT p) AS shared ORDER BY shared DESC, x.code LIMIT $onet_limit "
+    "RETURN collect({id: x.id, code: x.code, name: x.name, shared: shared}) AS onet } "
+    "CALL (o) { MATCH (c:entity:ncsCompetency)-[:CLASSIFIED_AS]->(o) WHERE NOT c:ontologyObject "
+    "MATCH (c)-[:QUALIFICATION_MAPPING]->(q:entity:qualification) "
+    "WITH q, count(DISTINCT left(c.code, 10)) AS units "
+    "ORDER BY units DESC, q.code LIMIT $qualification_limit "
+    "OPTIONAL MATCH (q)-[:HAS_EXAM_SESSION]->(e:entity:examSession) "
+    "WITH q, units, e ORDER BY e.code DESC "
+    "WITH q, units, count(e) AS sessions, collect(e.name)[0] AS latest_session "
+    "ORDER BY units DESC, q.code "
+    "RETURN collect({id: q.id, code: q.code, name: q.name, units: units, sessions: sessions, "
+    "latest_session: latest_session}) AS qualifications } "
+    "RETURN o.id AS id, o.code AS code, o.name AS name, postings, sample_postings, "
+    "competencies, onet, qualifications ORDER BY o.code LIMIT $limit"
+)
+# Per O*NET occupation: most important essential skills and hot technologies
+# (in-demand first, then those hot across the most occupations).
+_ROLE_EVIDENCE_ONET_STATEMENT: Final = (
+    "MATCH (x:onetCatalogObject:occupation) WHERE x.code IN $codes "
+    "CALL (x) { MATCH (x)-[r:ONET_ESSENTIAL_SKILL]->(e:onetDetail) "
+    "WHERE r.scale_name = 'Importance' "
+    "WITH e, r ORDER BY r.data_value DESC, e.element_name LIMIT $skill_limit "
+    "RETURN collect({id: e.id, name: e.element_name, importance: r.data_value}) AS skills } "
+    "CALL (x) { MATCH (x)-[r:ONET_SOFTWARE_EXAMPLE]->(s:onetDetail) "
+    "WHERE r.hot_technology = true "
+    "WITH s, r, COUNT { (s)<-[h:ONET_SOFTWARE_EXAMPLE]-() WHERE h.hot_technology = true } "
+    "AS spread ORDER BY r.in_demand DESC, spread DESC, s.workplace_example "
+    "LIMIT $technology_limit "
+    "RETURN collect({id: s.id, name: s.workplace_example, in_demand: r.in_demand}) "
+    "AS technologies } "
+    "RETURN x.id AS id, x.code AS code, x.name AS name, skills, technologies "
+    "ORDER BY x.code LIMIT $limit"
+)
+
 NEO4J_CORPUS_READ_QUERY_CATALOG: Final = Neo4jReadQueryCatalog(
     definitions=(
         Neo4jReadQueryDefinition(
@@ -117,6 +188,14 @@ NEO4J_CORPUS_READ_QUERY_CATALOG: Final = Neo4jReadQueryCatalog(
         Neo4jReadQueryDefinition(
             query_id=GET_ENRICHMENT_QUERY_ID,
             statement=_ENRICHMENT_STATEMENT,
+        ),
+        Neo4jReadQueryDefinition(
+            query_id=ROLE_EVIDENCE_NCS_QUERY_ID,
+            statement=_ROLE_EVIDENCE_NCS_STATEMENT,
+        ),
+        Neo4jReadQueryDefinition(
+            query_id=ROLE_EVIDENCE_ONET_QUERY_ID,
+            statement=_ROLE_EVIDENCE_ONET_STATEMENT,
         ),
     )
 )
