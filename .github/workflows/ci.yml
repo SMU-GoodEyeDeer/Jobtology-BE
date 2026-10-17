@@ -61,7 +61,8 @@ jobs:
           COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
         run: |
           auth="Authorization: Bearer ${COOLIFY_TOKEN}"
-          response=$(curl --fail-with-body -sS -H "$auth" "${COOLIFY_URL}/api/v1/deploy?uuid=${COOLIFY_APP_UUID}")
+          response=$(curl --fail-with-body -sS -X POST -H "$auth" -H "Content-Type: application/json" \
+            --data "$(jq -n --arg uuid "$COOLIFY_APP_UUID" '{uuid: $uuid}')" "${COOLIFY_URL}/api/v1/deploy")
           deployment=$(jq -r '.deployments[0].deployment_uuid' <<<"$response")
           echo "Coolify deployment ${deployment}"
           for _ in $(seq 1 90); do
