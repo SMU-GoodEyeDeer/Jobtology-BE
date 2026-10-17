@@ -69,6 +69,15 @@ class RecomputeResponse(BaseModel):
     error_code: str | None
 
 
+class AnalysisQualificationResponse(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(
+        extra="forbid", frozen=True, strict=True, from_attributes=True,
+    )
+
+    code: str
+    name: str | None
+
+
 class AnalysisSkillResponse(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
 
@@ -80,6 +89,13 @@ class AnalysisSkillResponse(BaseModel):
     difficulty: str | None
     experienced_pct: None = None
     achievement: str | None
+    requirement_key: str
+    ncs_base_code: str | None
+    status: Literal["UNMET", "NEEDS_INPUT"]
+    ncs_level: int | None
+    estimated_hours: int | None
+    hours_basis: Literal["OFFICIAL", "ESTIMATED"] | None
+    qualifications: tuple[AnalysisQualificationResponse, ...]
 
 
 class AnalysisResultResponse(BaseModel):

@@ -1,5 +1,21 @@
 # API changelog
 
+## 2026-10-17 — skill-detail panel reads
+
+- `GET /api/v1/analyses/{analysis_id}` adds `requirement_key`, `ncs_base_code`,
+  `status`, `ncs_level`, `estimated_hours`, `hours_basis`, and `qualifications`
+  (`code`, nullable `name`) to `result.skills[]`. Existing fields, ordering, and
+  exclusion of satisfied requirements are unchanged. Missing metadata yields null
+  detail values and an empty qualification array, while stored key/status remain.
+- Base codes and selected-version qualification mappings are display projections
+  of already-hashed inputs; the product-role draft document/digest and existing
+  artifact approval are unchanged. No new approval is needed for this API change.
+- Added authenticated `GET /api/v2/live/ncs-units/{base_code}` through restricted,
+  read-only `catalog.live_ncs_unit_v1(text)`. It returns the existing live envelope
+  with `item: {base_code, code, name, level, definition}`; level/definition may be
+  null. Exactly 10 ASCII digits and no query parameters are allowed (422).
+  Missing item is 404; missing configuration/function/grant or read failure is 503.
+
 ## Unreleased (ai_onboarding) — chat-driven onboarding
 
 - Route preferences are optional for analysis; users without them are planned with

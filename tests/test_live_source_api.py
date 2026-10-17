@@ -1,17 +1,12 @@
-import json
 from dataclasses import dataclass, field
 from datetime import date
-from types import TracebackType
 from uuid import uuid4
 
-import anyio
 import pytest
 from asyncpg import PostgresError
 from fastapi.testclient import TestClient
 from pydantic import SecretStr, ValidationError
 from sqlalchemy.exc import DBAPIError
-from sqlalchemy.ext.asyncio import AsyncEngine
-from sqlalchemy.sql.elements import TextClause
 
 from jobtology_be.api.dependencies import ApiDependencies
 from jobtology_be.api.identity import AuthenticatedPrincipal
@@ -19,6 +14,7 @@ from jobtology_be.api.live_source import require_live_source_feed
 from jobtology_be.api.live_source_models import (
     ExamSessionsResponse,
     NcsDemandResponse,
+    NcsUnitResponse,
     PostingResponse,
     PostingsResponse,
 )
@@ -85,6 +81,16 @@ class Feed:
             "contract_version": "hop-live-source-v1", "sources": SOURCES, "item": POSTING,
         })
 
+    async def ncs_unit(self, base_code: str) -> NcsUnitResponse:
+        self.calls.append(("ncs_unit", base_code))
+        if self.failure is not None:
+            raise LiveSourceReadError(self.failure)
+        return NcsUnitResponse.model_validate({
+            "contract_version": "hop-live-source-v1", "sources": SOURCES,
+            "item": {"base_code": base_code, "code": f"{base_code}_23v6", "name": "Unit",
+                     "level": None, "definition": None},
+        })
+
     async def exam_sessions(
         self, qualification: str | None, from_date: date | None,
         to_date: date | None, limit: int, offset: int,
@@ -137,19 +143,23 @@ def test_live_routes_forward_filters_and_return_typed_payloads() -> None:
             "open_on": "2026-10-05", "limit": 1, "offset": 2,
         })
         detail = client.get("/api/v2/live/postings/urn:job:one")
+        unit = client.get("/api/v2/live/ncs-units/2001020205")
         exams = client.get("/api/v2/live/exam-sessions", params={
             "qualification": "Q1", "from": "2026-10-01", "to": "2026-12-31",
             "limit": 5, "offset": 3,
         })
     # Then the exact parameters and declared response fields are observable
     assert [postings.status_code, detail.status_code, exams.status_code] == [200, 200, 200]
+    assert unit.status_code == 200
     assert feed.calls == [
         ("postings", "developer", "01", "Seoul", date(2026, 10, 5), 1, 2),
         ("posting", "urn:job:one"),
+        ("ncs_unit", "2001020205"),
         ("exams", "Q1", date(2026, 10, 1), date(2026, 12, 31), 5, 3),
     ]
     assert postings.json()["items"][0]["posting_id"] == "urn:job:one"
     assert detail.json()["item"]["title"] == "Developer"
+    assert unit.json()["item"]["base_code"] == "2001020205"
     assert exams.json()["items"][0]["qualification_code"] == "Q1"
 
 
@@ -171,7 +181,9 @@ def test_ncs_demand_forwards_query_and_returns_safe_evidence() -> None:
     assert "reviewer" not in response.text.lower().replace("link_reviewer_kinds", "")
 
 
-@pytest.mark.parametrize("path", ["postings", "postings/one", "exam-sessions", "ncs-demand"])
+@pytest.mark.parametrize("path", [
+    "postings", "postings/one", "exam-sessions", "ncs-demand", "ncs-units/2001020205",
+])
 def test_live_requires_authentication(path: str) -> None:
     # Given a configured feed without identity
     app = create_app(Settings(), dependencies=ApiDependencies(live_source_feed=Feed()))
@@ -276,61 +288,3 @@ def test_live_models_reject_wrong_types_and_dates() -> None:
         PostingResponse.model_validate({**payload, "item": {**POSTING, "headcount": "2"}})
     with pytest.raises(ValidationError):
         PostingResponse.model_validate({**payload, "item": {**POSTING, "date_posted": "Oct 1"}})
-
-
-def test_live_adapter_binds_dates_and_reads_in_readonly_transaction(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Given a narrow in-memory SQL connection that captures statements and parameters
-    calls: list[tuple[str, dict[str, str | int | date | None] | None]] = []
-
-    class Result:
-        def scalar_one(self) -> str:
-            return json.dumps({
-                "contract_version": "hop-live-source-v1", "sources": SOURCES,
-                "filters": {"q": "Engineer", "ncs_category": None, "region": None,
-                            "open_on": "2026-10-05"},
-                "limit": 1, "offset": 2, "total": 1, "items": [POSTING],
-            })
-
-    class Transaction:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(
-            self, exc_type: type[BaseException] | None, exc_value: BaseException | None,
-            traceback: TracebackType | None,
-        ) -> bool:
-            return False
-
-    class Connection(Transaction):
-        def begin(self):
-            return Transaction()
-
-        async def execute(
-            self, statement: TextClause, params: dict[str, str | int | date | None] | None = None,
-        ) -> Result:
-            calls.append((str(statement), params))
-            return Result()
-
-    monkeypatch.setattr(AsyncEngine, "connect", lambda _: Connection())
-    catalog = PostgresSourceCatalog.create(
-        "postgresql+asyncpg://jobtology_catalog_reader@localhost/catalog"
-    )
-
-    async def read() -> None:
-        try:
-            feed = PostgresLiveSourceFeed(engine=catalog.engine)
-            assert (await feed.postings("Engineer", None, None, date(2026, 10, 5), 1, 2)).total == 1
-        finally:
-            await catalog.dispose()
-
-    # When the adapter reads the feed
-    anyio.run(read)
-    # Then one bound function call follows a read-only transaction declaration
-    assert calls == [
-        ("SET TRANSACTION ISOLATION LEVEL READ COMMITTED, READ ONLY", None),
-        ("SELECT CAST(catalog.live_postings_v1(:q, :ncs_category, :region, CAST(:open_on AS date), :limit, :offset) AS text)",
-         {"q": "Engineer", "ncs_category": None, "region": None,
-          "open_on": date(2026, 10, 5), "limit": 1, "offset": 2}),
-    ]

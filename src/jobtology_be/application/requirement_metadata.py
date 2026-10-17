@@ -8,6 +8,12 @@ from jobtology_be.application.queries import ProductJsonValue
 
 
 @dataclass(frozen=True, slots=True)
+class RequirementQualification:
+    code: str
+    name: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class RequirementMetadata:
     ncs_level: int | None
     demand_pct: int | None
@@ -15,6 +21,8 @@ class RequirementMetadata:
     hours_basis: Literal['OFFICIAL', 'ESTIMATED'] | None
     demand_postings: int | None = None
     demand_base: int | None = None
+    ncs_base_code: str | None = None
+    qualifications: tuple[RequirementQualification, ...] = ()
 
 
 class RequirementMetadataLookup(Protocol):
@@ -34,6 +42,13 @@ class SkillSummary:
     demand_base: int | None
     difficulty: str | None
     achievement: str | None
+    requirement_key: str
+    ncs_base_code: str | None
+    status: Literal['UNMET', 'NEEDS_INPUT']
+    ncs_level: int | None
+    estimated_hours: int | None
+    hours_basis: Literal['OFFICIAL', 'ESTIMATED'] | None
+    qualifications: tuple[RequirementQualification, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +104,13 @@ def build_analysis_summary(
             difficulty=f'NCS 수준 {metadata.ncs_level}' if metadata and metadata.ncs_level is not None else None,
             achievement=(f'학습 {hours}시간' + (' (추정)' if metadata and metadata.hours_basis == 'ESTIMATED' else ''))
             if hours is not None else None,
+            requirement_key=item.requirement_key,
+            ncs_base_code=metadata.ncs_base_code if metadata else None,
+            status=item.status,
+            ncs_level=metadata.ncs_level if metadata else None,
+            estimated_hours=hours,
+            hours_basis=metadata.hours_basis if metadata else None,
+            qualifications=metadata.qualifications if metadata else (),
         ))
     return AnalysisSummary(
         required_pct=_coverage_pct(stored.required_coverage),

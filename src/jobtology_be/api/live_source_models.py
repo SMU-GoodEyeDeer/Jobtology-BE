@@ -61,6 +61,18 @@ class PostingResponse(LiveResponse):
     item: PostingItem
 
 
+class NcsUnitItem(LiveRead):
+    base_code: str = Field(pattern=r"^[0-9]{10}$")
+    code: str
+    name: str
+    level: int | None
+    definition: str | None
+
+
+class NcsUnitResponse(LiveResponse):
+    item: NcsUnitItem | None
+
+
 class ExamDates(LiveRead):
     registration_start: DateText | None = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     registration_end: DateText | None = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")

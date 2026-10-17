@@ -10,14 +10,16 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from jobtology_be.api.live_source_models import (
     ExamSessionsResponse,
     NcsDemandResponse,
+    NcsUnitResponse,
     PostingResponse,
     PostingsResponse,
 )
 
-type LiveOperation = Literal["postings", "posting", "exam_sessions", "ncs_demand"]
+type LiveOperation = Literal["postings", "posting", "exam_sessions", "ncs_demand", "ncs_unit"]
 _FUNCTIONS: Final = {
     "postings": "SELECT CAST(catalog.live_postings_v1(:q, :ncs_category, :region, CAST(:open_on AS date), :limit, :offset) AS text)",
     "posting": "SELECT CAST(catalog.live_posting_v1(:posting_id) AS text)",
+    "ncs_unit": "SELECT CAST(catalog.live_ncs_unit_v1(:base_code) AS text)",
     "exam_sessions": "SELECT CAST(catalog.live_exam_sessions_v1(:qualification, CAST(:from_date AS date), CAST(:to_date AS date), :limit, :offset) AS text)",
     "ncs_demand": "SELECT CAST(catalog.live_ncs_demand_v1(:ncs_prefix, :limit, :offset) AS text)",
 }
@@ -52,6 +54,8 @@ class LiveSourceFeed(Protocol):
     ) -> PostingsResponse: ...
 
     async def posting(self, posting_id: str) -> PostingResponse: ...
+
+    async def ncs_unit(self, base_code: str) -> NcsUnitResponse: ...
 
     async def exam_sessions(
         self, qualification: str | None, from_date: date | None,
@@ -95,6 +99,12 @@ class PostgresLiveSourceFeed:
 
     async def posting(self, posting_id: str) -> PostingResponse:
         return await self._read("posting", {"posting_id": posting_id}, PostingResponse)
+
+    async def ncs_unit(self, base_code: str) -> NcsUnitResponse:
+        response = await self._read("ncs_unit", {"base_code": base_code}, NcsUnitResponse)
+        if response.item is None:
+            raise LiveSourceReadError(404)
+        return response
 
     async def exam_sessions(
         self, qualification: str | None, from_date: date | None,

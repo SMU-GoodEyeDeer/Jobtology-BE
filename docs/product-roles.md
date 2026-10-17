@@ -30,6 +30,15 @@ digest, so applying 028 or new link publications requires a fresh artifact appro
 Evidence comes from reviewed, possibly historical link publications; it is not a vacancy
 census and must not be presented as today's demand.
 
+Skill-detail display fields `ncs_base_code` and `qualifications` are derived only
+from the already-hashed `input_units` and `input_qualifications`. Qualifications
+match the selected unit's exact versioned `code`, are deduplicated by qualification
+code and sorted by code, and retain nullable names. They travel through the existing
+metadata lookup but are **not additional digest fields**: hashed `requirement_metadata`
+retains exactly `ncs_level`, `demand_pct`, `estimated_hours`, `hours_basis`,
+`demand_postings`, and `demand_base`. The canonical hashed document is unchanged for
+identical inputs, so exposing these display fields does not require a new approval.
+
 All runtime flags default to **off**:
 
 | Environment variable | Effect when enabled |

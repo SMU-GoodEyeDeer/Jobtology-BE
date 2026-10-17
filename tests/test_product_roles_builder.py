@@ -7,7 +7,12 @@ import pytest
 from pydantic import ValidationError
 
 from jobtology_be.product_roles.builder import build_product_roles
-from jobtology_be.product_roles.models import ArtifactApproval, ProductRoleInputs, ProductRolePolicy
+from jobtology_be.product_roles.models import (
+    ArtifactApproval,
+    InputQualification,
+    ProductRoleInputs,
+    ProductRolePolicy,
+)
 
 POLICY = Path(__file__).resolve().parents[1] / "config/product_roles/policy.v1.json"
 
@@ -34,7 +39,16 @@ def test_builder_selects_latest_unit_and_uses_official_hours() -> None:
             {"code": "2001020212_24v1", "base_code": "2001020212", "name": "인터페이스 구현(구버전)",
              "level": 3, "occupation_code": "20010202", "occupation_name": "Backend"},
         ],
-        "qualifications": [{"competency_code": "2001020211_24v2", "qualification_code": "Q1",
+        "qualifications": [{"competency_code": "2001020211_24v2", "qualification_code": "Q2",
+                             "qualification_name": None, "minimum_training_hours": None,
+                             "total_training_hours": None},
+                            {"competency_code": "2001020211_20v1", "qualification_code": "OLD",
+                             "qualification_name": "Old version only", "minimum_training_hours": 1,
+                             "total_training_hours": 1},
+                            {"competency_code": "2001020211_24v2", "qualification_code": "Q1",
+                             "qualification_name": "Q", "minimum_training_hours": None,
+                             "total_training_hours": None},
+                            {"competency_code": "2001020211_24v2", "qualification_code": "Q1",
                             "qualification_name": "Q", "minimum_training_hours": 42,
                             "total_training_hours": 90}],
         "evidence": [{"competency_code": "2001020211_20v1", "postings": 3, "links": 4,
@@ -59,6 +73,9 @@ def test_builder_selects_latest_unit_and_uses_official_hours() -> None:
     assert built.metadata[requirement.requirement_key].ncs_level == 6
     assert built.metadata[requirement.requirement_key].demand_pct is None
     assert built.metadata[requirement.requirement_key].hours_basis == "OFFICIAL"
+    assert [(item.code, item.name) for item in built.metadata[requirement.requirement_key].qualifications] == [
+        ('Q1', 'Q'), ('Q2', None),
+    ]
 
 
 def test_builder_estimates_hours_and_filters_role_local_aliases() -> None:
@@ -186,3 +203,27 @@ def test_demand_is_unknown_without_linked_postings_and_digest_covers_them() -> N
     assert legacy.digest != linked.digest
     assert json.loads(legacy.document)["demand_rule"] == {
         "basis": "DISTINCT_LINKED_POSTINGS_PER_ROLE", "min_base_postings": 5}
+
+
+@pytest.mark.parametrize('qualified,digest', [
+    (False, 'c09c06d42aaf1806f2ce8544405dd8e774c57c8404a7e1b50834676aae18634c'),
+    (True, '38e28f67d734b52cd1defcdecb1a8a596bb6eef5635fa2aae0023c931545b8bc'),
+])
+def test_skill_details_preserve_origin_main_draft_digest(qualified: bool, digest: str) -> None:
+    # Given the fixed fixture on origin/main b11f49a, captured before display fields
+    policy = ProductRolePolicy.model_validate_json(POLICY.read_text())
+    inputs = _demand_inputs(None)
+    if qualified:
+        inputs = inputs.model_copy(update={'qualifications': (
+            InputQualification(competency_code='2001020211_24v2', qualification_code='Q1',
+                               qualification_name='Q', minimum_training_hours=42,
+                               total_training_hours=90),
+        )})
+    # When the draft is built with display metadata
+    draft = build_product_roles(inputs, policy)
+    # Then the approved document retains its exact pre-change digest
+    assert draft.digest == digest
+    assert draft.metadata['BACKEND_DEVELOPER:2001020211'].ncs_base_code == '2001020211'
+    assert [(item.code, item.name)
+            for item in draft.metadata['BACKEND_DEVELOPER:2001020211'].qualifications] == (
+                [('Q1', 'Q')] if qualified else [])

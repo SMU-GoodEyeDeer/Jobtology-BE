@@ -6,7 +6,10 @@ from types import MappingProxyType
 
 from pydantic import JsonValue, TypeAdapter
 
-from jobtology_be.application.requirement_metadata import RequirementMetadata
+from jobtology_be.application.requirement_metadata import (
+    RequirementMetadata,
+    RequirementQualification,
+)
 from jobtology_be.corpus.local_snapshot import LocalJsonPublishedCorpusSnapshotReader
 from jobtology_be.product_roles.models import (
     ArtifactApproval,
@@ -97,7 +100,13 @@ def build_product_roles(inputs: ProductRoleInputs, policy: ProductRolePolicy) ->
         "demand_rule": {"basis": "DISTINCT_LINKED_POSTINGS_PER_ROLE",
                         "min_base_postings": DEMAND_MIN_BASE_POSTINGS},
         "display_names": names,
-        "requirement_metadata": {key: asdict(value) for key, value in sorted(metadata.items())},
+        "requirement_metadata": {
+            key: {field: content for field, content in asdict(value).items() if field in (
+                "ncs_level", "demand_pct", "estimated_hours", "hours_basis",
+                "demand_postings", "demand_base",
+            )}
+            for key, value in sorted(metadata.items())
+        },
     }
     document = json.dumps(artifact, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     return ProductRoleDraft(
@@ -149,6 +158,14 @@ def _role_document(
             estimated_hours=duration,
             hours_basis="OFFICIAL" if hours else "ESTIMATED",
             demand_postings=demand_postings, demand_base=demand_base,
+            ncs_base_code=base_code,
+            qualifications=tuple(
+                RequirementQualification(code=code, name=name)
+                for code, name in sorted({
+                    item.qualification_code: item.qualification_name
+                    for item in inputs.qualifications if item.competency_code == unit.code
+                }.items())
+            ),
         )
         requirement: dict[str, JsonValue] = {
             "requirement_key": key, "label": unit.name,

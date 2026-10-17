@@ -1,13 +1,14 @@
 from datetime import date
 from typing import Annotated, Final
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 
 from jobtology_be.api.errors import ErrorResponse
 from jobtology_be.api.identity import AuthenticatedPrincipal, require_authenticated_principal
 from jobtology_be.api.live_source_models import (
     ExamSessionsResponse,
     NcsDemandResponse,
+    NcsUnitResponse,
     PostingResponse,
     PostingsResponse,
 )
@@ -64,6 +65,20 @@ async def posting(
         raise HTTPException(status_code=422)
     try:
         return await feed.posting(posting_id)
+    except LiveSourceReadError as error:
+        raise HTTPException(status_code=error.status_code) from None
+
+
+@router.get("/ncs-units/{base_code}", response_model=NcsUnitResponse, responses=_RESPONSES)
+async def ncs_unit(
+    base_code: Annotated[str, Path(pattern=r"^[0-9]{10}$")],
+    request: Request,
+    _: Annotated[AuthenticatedPrincipal, Depends(require_authenticated_principal)],
+    feed: Annotated[LiveSourceFeed, Depends(require_live_source_feed)],
+) -> NcsUnitResponse:
+    _allowed_query(request, frozenset())
+    try:
+        return await feed.ncs_unit(base_code)
     except LiveSourceReadError as error:
         raise HTTPException(status_code=error.status_code) from None
 

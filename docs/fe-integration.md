@@ -91,6 +91,17 @@ analysis와 route planning은 아직 제공되지 않거나 의도적으로 지�
 원천 공고/시험 정보를 사용자 적격성·선호·선발 결과나 분석 근거로 해석하면 안 됩니다.
 정확한 응답 필드는 [소스 카탈로그 API 계약](source-catalog-api.md)을 참고하세요.
 
+`GET /api/v2/live/ncs-units/{base_code}`는 NCS 능력단위 상세를 조회합니다.
+`base_code`는 ASCII 숫자 10자리(예: `2001020205`)여야 하며 쿼리 파라미터는
+허용하지 않습니다(위반 시 `422 VALIDATION_ERROR`). 응답은
+`{contract_version: "hop-live-source-v1", sources, item}`이며 `item`은
+`{base_code, code, name, level, definition}`입니다. `code`는 버전을 포함하고,
+`level`·`definition`은 원천에 값이 없으면 null입니다. DB의 `item: null`은
+성공 응답이 아니라 `404 NOT_FOUND`로 변환됩니다. 인증은 필수이며, DB 함수
+`catalog.live_ncs_unit_v1(text)` 또는 reader 권한이 없거나 원천 조회가 실패하면
+`503 DATA_UNAVAILABLE`입니다. 최신 READY 원천의 설명이므로 분석 당시 승인된
+버전과 다를 수 있습니다. 분석의 `ncs_base_code`가 null이면 조회를 생략하세요.
+
 `GET /api/v2/live/ncs-demand?ncs_prefix=200102`는 출처별 귀속 항목이 있는 가장 최근 READY 연결 발행물에서
 공고와 연결된 NCS 능력단위의 근거 요약을 조회합니다. `ncs_prefix`는 2–8자리 숫자이며
 생략할 수 있습니다. `limit=20`(1–100), `offset=0`(0 이상)을 지원합니다.
@@ -192,6 +203,24 @@ Idempotency-Key: <클라이언트 생성 UUID>
 `demand_pct`·NCS 수준·학습 시간은 승인된 직무 메타데이터가 있을 때만 표시되며,
 20시간 등의 추정치는 `achievement`에 `(추정)`으로 명시됩니다. 저장 결과가
 없으면 `result`는 null입니다.
+
+역량 상세 패널을 위해 `result.skills[]`에 다음 필드가 추가됩니다. 기존 필드와
+필수 우선·이름순 정렬은 유지하며 `SATISFIED` 항목은 계속 제외합니다.
+
+| 필드 | 의미 / 값이 없을 때 |
+|---|---|
+| `requirement_key` | 저장된 요구사항 키(예: `BACKEND_DEVELOPER:2001020205`), 항상 제공 |
+| `ncs_base_code` | 승인된 요구사항의 10자리 NCS 기본 코드, 메타데이터가 없으면 null |
+| `status` | 저장된 `UNMET` 또는 `NEEDS_INPUT`, 항상 제공 |
+| `ncs_level` | NCS 수준 정수, 알 수 없으면 null |
+| `estimated_hours` | 학습 시간 정수, 알 수 없으면 null |
+| `hours_basis` | `OFFICIAL`(공식 시간) / `ESTIMATED`(추정 시간), 알 수 없으면 null |
+| `qualifications` | 승인된 입력의 **선택된 NCS 버전**에 연결된 Q-Net 자격 `{code, name}` 배열. 코드순·코드 중복 제거, 이름은 null 가능 |
+
+자격 연결이 없거나 메타데이터를 사용할 수 없으면 `qualifications`는 `[]`입니다.
+메타데이터가 없을 때는 `ncs_base_code`, `ncs_level`, `estimated_hours`, `hours_basis`가
+모두 null이지만 `requirement_key`와 `status`는 저장값을 유지합니다. null을 0으로
+치환하거나 자격 연결을 취득 자격·응시 적격성으로 해석하지 마세요.
 
 `demand_pct`(공고 요구 정도)는 해당 직무 역량에 NCS 링크가 연결된 공고(job_alio·
 nara_job, 중복 제거) 중 이 역량을 요구한 공고의 비율(0–100 정수)입니다. 근거로

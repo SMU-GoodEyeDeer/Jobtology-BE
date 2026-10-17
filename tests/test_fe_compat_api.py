@@ -18,7 +18,10 @@ from jobtology_be.application.queries import (
     RoadmapStepView,
     RoadmapView,
 )
-from jobtology_be.application.requirement_metadata import RequirementMetadata
+from jobtology_be.application.requirement_metadata import (
+    RequirementMetadata,
+    RequirementQualification,
+)
 from jobtology_be.main import create_app
 from jobtology_be.settings import Settings
 
@@ -38,7 +41,10 @@ class Metadata:
         return {
             'required': RequirementMetadata(ncs_level=4, demand_pct=32,
                                             estimated_hours=40, hours_basis='OFFICIAL',
-                                            demand_postings=16, demand_base=50),
+                                            demand_postings=16, demand_base=50,
+                                            ncs_base_code='2001020211',
+                                            qualifications=(RequirementQualification('Q1', 'Q'),
+                                                            RequirementQualification('Q2', None))),
             'preferred': RequirementMetadata(ncs_level=6, demand_pct=None,
                                              estimated_hours=20, hours_basis='ESTIMATED'),
         }.get(requirement_key)
@@ -148,10 +154,16 @@ def test_analysis_result_projects_unmet_skills_and_metadata() -> None:
         'required_pct': 70, 'preferred_pct': None,
         'skills': [
             {'name': '서버 구현', 'type': '필수', 'demand_pct': 32,
-             'demand_postings': 16, 'demand_base': 50, 'difficulty': 'NCS 수준 4', 'experienced_pct': None, 'achievement': '학습 40시간'},
+             'demand_postings': 16, 'demand_base': 50, 'difficulty': 'NCS 수준 4', 'experienced_pct': None, 'achievement': '학습 40시간',
+             'requirement_key': 'required', 'ncs_base_code': '2001020211', 'status': 'UNMET',
+             'ncs_level': 4, 'estimated_hours': 40, 'hours_basis': 'OFFICIAL',
+             'qualifications': [{'code': 'Q1', 'name': 'Q'}, {'code': 'Q2', 'name': None}]},
             {'name': '고급 분석', 'type': '우대', 'demand_pct': None,
              'demand_postings': None, 'demand_base': None, 'difficulty': 'NCS 수준 6', 'experienced_pct': None,
-             'achievement': '학습 20시간 (추정)'},
+             'achievement': '학습 20시간 (추정)',
+             'requirement_key': 'preferred', 'ncs_base_code': None, 'status': 'NEEDS_INPUT',
+             'ncs_level': 6, 'estimated_hours': 20, 'hours_basis': 'ESTIMATED',
+             'qualifications': []},
         ],
     }
 
@@ -188,6 +200,17 @@ def test_analysis_without_metadata_does_not_invent_ncs_values() -> None:
     assert response.json()['result']['required_pct'] == 70
     assert [(item['demand_pct'], item['difficulty'], item['achievement'])
             for item in response.json()['result']['skills']] == [(None, None, None)] * 2
+    assert response.json()['result']['skills'] == [
+        {'name': name, 'type': kind, 'demand_pct': None, 'demand_postings': None,
+         'demand_base': None, 'difficulty': None, 'experienced_pct': None,
+         'achievement': None, 'requirement_key': key, 'status': status,
+         'ncs_base_code': None, 'ncs_level': None, 'estimated_hours': None,
+         'hours_basis': None, 'qualifications': []}
+        for name, kind, key, status in [
+            ('서버 구현', '필수', 'required', 'UNMET'),
+            ('고급 분석', '우대', 'preferred', 'NEEDS_INPUT'),
+        ]
+    ]
 
 
 def test_saved_roadmap_includes_status_version_and_step_title_description() -> None:

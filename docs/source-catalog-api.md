@@ -96,6 +96,7 @@ run, requests fail closed with 503; unauthenticated requests return 401.
 |---|---|---|
 | `/api/v2/live/postings` | `q`, `ncs_category`, `region`, `open_on=YYYY-MM-DD`, `limit=20` (1–100), `offset=0` (nonnegative) | `contract_version`, `sources`, `filters`, `limit`, `offset`, `total`, `items` |
 | `/api/v2/live/postings/{posting_id}` | source posting ID (URL-encode slashes where possible) | `contract_version`, `sources`, `item` |
+| `/api/v2/live/ncs-units/{base_code}` | exactly 10 ASCII digits (`^[0-9]{10}$`); no query parameters | `contract_version: hop-live-source-v1`, `sources`, `item: {base_code, code, name, level, definition}` |
 | `/api/v2/live/exam-sessions` | `qualification`, `from=YYYY-MM-DD`, `to=YYYY-MM-DD`, `limit=20` (1–100), `offset=0` (nonnegative) | `contract_version`, `sources`, `filters`, `limit`, `offset`, `total`, `items` |
 | `/api/v2/live/ncs-demand` | `ncs_prefix` (2–8 digits), `limit=20` (1–100), `offset=0` (nonnegative) | reviewed NCS linkage inventory (`contract_version`, `sources`, `review`, `filters`, `limit`, `offset`, `total`, `items`) |
 
@@ -111,6 +112,13 @@ Unknown or repeated query keys, invalid filters or pages return 422; missing
 posting returns 404; source/driver/validation failures return 503. Errors use
 the standard envelope without private database messages. There is no
 eligibility, preference, selection, or disqualification text in these responses.
+
+NCS unit detail calls `catalog.live_ncs_unit_v1(text)` on the same restricted pool.
+`code` includes the selected live version; `level` and `definition` may be null.
+A DB `item: null` becomes `404 NOT_FOUND`, not a successful null detail. Missing
+function/grant, unavailable source, malformed payload or SQL failure returns 503.
+Unknown DB fields are dropped. The live version may differ from an analysis's
+approved product-role version; this endpoint does not change that approval.
 
 NCS demand items provide `competency_code`, `competency_name`,
 `ncs_occupation_code`, `ncs_occupation_name`, distinct posting count `postings`,
