@@ -60,7 +60,12 @@ def _reason(item: PlanStepInput, ordered: tuple[PlanStepInput, ...]) -> str:
     if meta.ncs_level <= 3 and item == first_basic:
         reason = f'{meta.ncs_level}수준 기초 역량이라 먼저 해요'
     elif not previous:
-        reason = f'{field} 분야의 첫 단계({meta.ncs_level}수준)예요'
+        peer = next((s for s in ordered[:ordered.index(item)] if s.metadata is not None
+                     and s.metadata.field_code == meta.field_code
+                     and s.metadata.ncs_level == meta.ncs_level), None)
+        reason = (f'{_identity(peer)[1]}에 이어지는 {field} {meta.ncs_level}수준 단계예요'
+                  if peer is not None and meta.field_code is not None
+                  else f'{field} 분야의 첫 단계({meta.ncs_level}수준)예요')
     else:
         lower = max(s.metadata.ncs_level for s in previous
                     if s.metadata is not None and s.metadata.ncs_level is not None)

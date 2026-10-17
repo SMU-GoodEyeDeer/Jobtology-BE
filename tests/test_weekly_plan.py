@@ -130,7 +130,7 @@ def test_reasons_use_immediately_lower_field_level_and_demand():
     result = weekly_plan.build_weekly_plan(context(), steps).steps
     # Then
     assert result[0].reason == '2수준 기초 역량이라 먼저 해요'
-    assert result[1].reason == '응용SW 분야의 첫 단계(2수준)예요'
+    assert result[1].reason == '개발자 환경 구축에 이어지는 응용SW 2수준 단계예요'
     assert result[2].reason == 'DB 분야의 첫 단계(2수준)예요'
     assert result[3].reason == 'SQL작성 다음 DB 4수준 단계예요 · 공고 40%가 요구해요'
     assert result[5].reason == '데이터베이스 구현·데이터 표준화 다음 DB 5수준 단계예요 · 공고 10%가 요구해요'
