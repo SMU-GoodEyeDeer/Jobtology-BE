@@ -38,6 +38,69 @@ analysis와 route planning은 아직 제공되지 않거나 의도적으로 지�
 - 프로세스 생존 확인은 `GET /api/v1/health/live`입니다. 데이터베이스 준비 여부를
   검사하지 않으므로 제품 기능 가용성 판단에 사용하지 마세요.
 
+## 주차 플랜
+
+로드맵의 학습 순서와 주차별 일정을 별도로 조회·저장합니다. 기존 로드맵 응답과 단계 상태는
+바뀌지 않으며, 완료한 단계도 일정에 포함됩니다.
+
+| 엔드포인트 | 동작 |
+|---|---|
+| `GET /api/v1/roadmaps/{roadmap_id}/plan` | 저장된 플랜 또는 추천 플랜을 반환합니다. |
+| `PUT /api/v1/roadmaps/{roadmap_id}/plan` | 사용자 설정을 저장하고 반영된 플랜을 반환합니다. |
+| `DELETE /api/v1/roadmaps/{roadmap_id}/plan` | 설정을 삭제하고 추천 플랜을 반환합니다. |
+
+모두 인증이 필요하며 PUT/DELETE에는 기존 세션의 `X-CSRF-Token`을 전송하세요.
+타인 소유·없는 로드맵은 `404 NOT_FOUND`입니다. PUT 본문은 아래 네 필드가 모두 필수이며,
+추가 필드나 문자열·불리언으로 대체한 정수는 `422 VALIDATION_ERROR`입니다.
+
+```json
+{
+  "weekly_hours": 12,
+  "rest_weeks": [10, 11],
+  "order": ["로드맵의 모든 step_id를 원하는 순서로 나열"],
+  "hours": {"시간을 바꿀 step_id": 24}
+}
+```
+
+- `weekly_hours`: 주당 1~60시간 정수. `rest_weeks`: 중복 없는 1~104주 정수 배열이며 서버가
+  오름차순 정렬합니다. `order`: 모든 단계 ID의 정확한 순열. 누락·중복·다른 ID는 422입니다.
+- `hours`: 단계 ID 일부에 대한 1~400시간 정수. 알 수 없는 ID는 422이며 추천 시간과 같은
+  항목은 저장하지 않습니다. 빈 객체도 허용합니다. `order`, `rest_weeks`, `hours`에는 null을 넣지 마세요.
+
+응답의 최상위 필드는 다음과 같습니다.
+
+| 필드 | 의미 및 null 규칙 |
+|---|---|
+| `roadmap_id`, `start_date` | 로드맵 ID와 생성 시각을 Asia/Seoul로 변환한 주의 월요일(1주차) |
+| `target_date` | 제안의 `constraints_snapshot.target_by`를 서울 날짜로 변환. 없으면 null |
+| `weekly_hours`, `recommended_weekly_hours` | 적용된 주당 시간과 제안의 추천 시간. 제안에 없으면 추천값 10 |
+| `rest_weeks` | 적용된 휴식 주 배열. 추천 플랜은 빈 배열 |
+| `is_customized`, `saved_at` | 저장 설정 존재 여부와 서울 시간대 저장 시각. 미저장·초기화 후 false/null |
+| `total_hours`, `total_weeks` | 적용 시간 합계와 마지막 단계의 종료 주차. 사이의 휴식 주도 포함 |
+| `completion_date` | 적용 플랜 마지막 종료 주차의 일요일 |
+| `recommended_completion_date` | 추천 순서·단계 시간·주당 시간, 휴식 주 없이 계산한 종료 일요일 |
+| `steps` | 적용 순서대로 나열한 단계 배열 |
+
+각 단계에는 `step_id`, 현재 순번 `number`, 추천 순번 `recommended_number`, `title`,
+`name`(첫 outcome의 raw_text, 없으면 title), `requirement_key`(없으면 null),
+`state`(`TODO`/`IN_PROGRESS`/`COMPLETED`)가 있습니다.
+`ncs_level`, `demand_pct`, `field_code`, `field_name`은 메타데이터가 없으면 null입니다.
+분야는 선택된 NCS 능력단위의 세분류 코드·이름(예: `20010204`/`DB엔지니어링`)입니다.
+
+- `phase`: 1~3수준 `BASIC`, 4~5수준 `CORE`, 6수준 이상 `ADVANCED`. 수준이 없으면 `CORE`.
+- `hours`, `recommended_hours`: 적용 시간과 메타데이터 추천 시간. 추천 정보가 없으면 20시간.
+  `hours_basis`는 `OFFICIAL`/`ESTIMATED`이며 추천 시간과 다른 사용자 시간만 `CUSTOM`입니다.
+- `start_week`, `end_week`: 첫·마지막 학습 시간이 속한 주차. `start_date`, `end_date`는
+  해당 주차의 월요일·일요일입니다. 주당 남은 시간을 다음 단계가 이어 쓰며 휴식 주는 건너뜁니다.
+- `reason`: 추천 위치 기준의 한국어 설명이며 사용자가 옮겨도 유지됩니다.
+  `moved`는 현재 순번과 추천 순번이 다른지 나타냅니다.
+- `prerequisite_step_ids`: 같은 분야의 엄격히 낮은 수준 단계 ID 배열.
+  `unmet_prerequisite_step_ids`: 그중 현재 단계보다 뒤에 배치된 ID 배열. 정보가 없으면 빈 배열입니다.
+
+추천 순서는 NCS 수준 오름차순(null은 마지막), 공고 수요 비율 내림차순(null은 0), NCS 기본 코드
+또는 action_id 오름차순입니다. 메타데이터를 읽을 수 없어도 폴백 플랜을 200으로 반환합니다.
+배포 시에는 이 릴리스의 테이블을 만들도록 **`uv run alembic upgrade head` 실행이 필수**입니다.
+
 ## Neo4j 원본 카탈로그 (v2)
 
 `JOBTOLOGY_CORPUS_SOURCE=neo4j_query_api`가 서버에 명시적으로 구성되고 원본 읽기가

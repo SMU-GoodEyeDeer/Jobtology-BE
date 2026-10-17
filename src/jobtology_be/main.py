@@ -44,6 +44,7 @@ from jobtology_be.infrastructure.persistence.preference_queries import PostgresR
 from jobtology_be.infrastructure.persistence.queries import PostgresProductQueries
 from jobtology_be.infrastructure.persistence.source_catalog import PostgresSourceCatalog
 from jobtology_be.infrastructure.persistence.store import PostgresApplicationStore
+from jobtology_be.infrastructure.persistence.weekly_plan import PostgresWeeklyPlanStore
 from jobtology_be.llm.factory import build_llm_client
 from jobtology_be.modules.auth.google_oidc import GoogleOidcProvider
 from jobtology_be.modules.auth.session_cookies import (
@@ -88,6 +89,7 @@ def create_app(
     m5_queries = dependencies.m5_queries
     neo4j_catalog = dependencies.neo4j_catalog
     product_queries = dependencies.product_queries
+    weekly_plan_store = dependencies.weekly_plan_store
     source_catalog = dependencies.source_catalog
     live_source_feed = dependencies.live_source_feed
     source_catalog_resource = None
@@ -145,6 +147,7 @@ def create_app(
             database, snapshot_reader=snapshot_reader,
         )
         product_queries = product_queries or PostgresProductQueries(database)
+        weekly_plan_store = weekly_plan_store or PostgresWeeklyPlanStore(database)
         preferences_service = preferences_service or PersistentPreferencesService(
             store, PostgresRoutePreferencesQuery(database)
         )
@@ -249,6 +252,7 @@ def create_app(
             preferences_service=preferences_service,
             goal_service=goal_service,
             product_queries=product_queries,
+            weekly_plan_store=weekly_plan_store,
             source_catalog=source_catalog,
             live_source_feed=live_source_feed,
             requirement_metadata=role_holder or dependencies.requirement_metadata,

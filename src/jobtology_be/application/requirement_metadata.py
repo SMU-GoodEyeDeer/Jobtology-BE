@@ -27,6 +27,8 @@ class RequirementMetadata:
     demand_base: int | None = None
     ncs_base_code: str | None = None
     qualifications: tuple[RequirementQualification, ...] = ()
+    field_code: str | None = None
+    field_name: str | None = None
 
 
 class RequirementMetadataLookup(Protocol):

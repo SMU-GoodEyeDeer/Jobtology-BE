@@ -279,6 +279,18 @@ Index(
     postgresql_where=roadmaps.c.state == "ACTIVE",
 )
 
+roadmap_plan_overrides = Table(
+    "roadmap_plan_overrides",
+    METADATA,
+    Column("roadmap_id", UUID(as_uuid=True), ForeignKey("roadmaps.id"), primary_key=True),
+    Column("weekly_hours", INTEGER, nullable=False),
+    Column("rest_weeks", JSONB, nullable=False),
+    Column("step_order", JSONB, nullable=False),
+    Column("step_hours", JSONB, nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False, server_default=UTC_NOW),
+    CheckConstraint("weekly_hours BETWEEN 1 AND 60", name="roadmap_plan_overrides_capacity_check"),
+)
+
 roadmap_steps = Table(
     "roadmap_steps",
     METADATA,

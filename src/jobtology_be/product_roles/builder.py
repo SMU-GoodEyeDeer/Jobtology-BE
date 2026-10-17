@@ -157,6 +157,8 @@ def _role_document(
             hours_basis="OFFICIAL" if hours else "ESTIMATED",
             demand_postings=demand_postings, demand_base=demand_base,
             ncs_base_code=base_code,
+            field_code=unit.occupation_code,
+            field_name=unit.occupation_name,
             qualifications=display_qualifications(
                 (item.qualification_code, item.qualification_name)
                 for item in sorted(inputs.qualifications, key=lambda item: item.qualification_code)

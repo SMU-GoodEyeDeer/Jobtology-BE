@@ -25,6 +25,7 @@ from jobtology_be.api.neo4j_catalog import Neo4jCatalogQueries, require_neo4j_ca
 from jobtology_be.api.preferences import require_preferences_service
 from jobtology_be.api.product_queries import require_product_queries
 from jobtology_be.api.profiles import require_profile_service
+from jobtology_be.api.roadmap_plan import require_weekly_plan_store
 from jobtology_be.api.roadmaps import require_roadmap_service
 from jobtology_be.api.role_evidence_graph import (
     RoleEvidenceGraphSource,
@@ -48,6 +49,7 @@ from jobtology_be.application.services.goals import GoalService
 from jobtology_be.application.services.preferences import PreferencesService
 from jobtology_be.application.services.profiles import ProfileService
 from jobtology_be.application.services.roadmaps import RoadmapService
+from jobtology_be.application.weekly_plan_store import WeeklyPlanStore
 from jobtology_be.chat.service import ChatCapabilityService
 from jobtology_be.corpus.local_snapshot import LocalJsonPublishedCorpusSnapshotReader
 from jobtology_be.corpus.source_factory import ConfiguredCorpusSource
@@ -158,6 +160,11 @@ def configured_analysis_context_factory(
 
 
 def register_api_dependencies(app: FastAPI, dependencies: ApiDependencies, settings: Settings) -> None:
+    if (weekly_plan_store := dependencies.weekly_plan_store) is not None:
+        def get_injected_weekly_plan_store() -> WeeklyPlanStore:
+            return weekly_plan_store
+
+        app.dependency_overrides[require_weekly_plan_store] = get_injected_weekly_plan_store
     session_store = dependencies.session_store
     if settings.guest_sessions_enabled:
         if not isinstance(session_store, PostgresAuthStore):

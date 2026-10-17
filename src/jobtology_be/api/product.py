@@ -9,6 +9,7 @@ from jobtology_be.api.m5_queries import router as m5_queries_router
 from jobtology_be.api.preferences import router as preferences_router
 from jobtology_be.api.profiles import router as profiles_router
 from jobtology_be.api.roadmap_diffs import router as roadmap_diffs_router
+from jobtology_be.api.roadmap_plan import router as roadmap_plan_router
 from jobtology_be.api.roadmaps import router as roadmaps_router
 
 router = APIRouter(tags=["product"])
@@ -22,3 +23,4 @@ router.include_router(preferences_router)
 router.include_router(profiles_router)
 router.include_router(roadmap_diffs_router)
 router.include_router(roadmaps_router)
+router.include_router(roadmap_plan_router)

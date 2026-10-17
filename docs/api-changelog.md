@@ -1,5 +1,18 @@
 # API changelog
 
+## 2026-10-18 — weekly roadmap plans
+
+- Added authenticated `GET`, `PUT`, and `DELETE /api/v1/roadmaps/{roadmap_id}/plan`.
+  PUT/DELETE use the existing session-bound CSRF protection. Foreign or missing roadmaps
+  return 404; invalid permutations, unknown hour keys, and invalid strict inputs return 422.
+- Plans recommend level/demand/base-code order and continuously pack hours around rest weeks.
+  Dates use Asia/Seoul; the start is the Monday containing the roadmap creation timestamp.
+  Missing metadata falls back to 20 hours, CORE phase, and nullable display fields, not 503.
+- User capacity, order, rest weeks, and differing step-hour overrides are stored separately;
+  existing roadmap responses, step states, and product-role draft digests are unchanged.
+- **Deployment required:** run `uv run alembic upgrade head` before serving this release
+  (`20261018_01` creates `roadmap_plan_overrides`). No new artifact approval is needed.
+
 ## 2026-10-17 — readable qualification labels
 
 - `result.skills[].qualifications[]` adds `display_name` (always present) and `kind`

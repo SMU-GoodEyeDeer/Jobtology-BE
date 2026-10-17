@@ -31,7 +31,7 @@ from jobtology_be.infrastructure.persistence.schema import user_state_events
 from jobtology_be.infrastructure.persistence.store import PostgresApplicationStore
 
 ACCEPTANCE_DATABASE_URL_ENV: Final = "JOBTOLOGY_ACCEPTANCE_DATABASE_URL"
-HEAD_REVISION: Final = "20261006_01"
+HEAD_REVISION: Final = "20261018_01"
 REQUIRED_TABLES: Final = frozenset(
     {
         "alembic_version",
@@ -46,6 +46,7 @@ REQUIRED_TABLES: Final = frozenset(
         "recompute_contexts",
         "recompute_requests",
         "roadmaps",
+        "roadmap_plan_overrides",
         "step_completion_inheritances",
         "user_state_events",
         "users",
