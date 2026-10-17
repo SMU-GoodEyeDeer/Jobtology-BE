@@ -32,8 +32,11 @@ census and must not be presented as today's demand.
 
 Skill-detail display fields `ncs_base_code` and `qualifications` are derived only
 from the already-hashed `input_units` and `input_qualifications`. Qualifications
-match the selected unit's exact versioned `code`, are deduplicated by qualification
-code and sorted by code, and retain nullable names. They travel through the existing
+match the selected unit's exact versioned `code` and retain nullable names. Work-learning
+names `<family>_L<level>_<version>` get `display_name` "<family> <level>수준" and
+`kind=WORK_LEARNING`; only the newest standard per family/level is kept (`NNVn` beats
+legacy `verX.Y`). Other names are `NATIONAL_TECHNICAL`; unnamed ones show their code.
+National qualifications sort first. They travel through the existing
 metadata lookup but are **not additional digest fields**: hashed `requirement_metadata`
 retains exactly `ncs_level`, `demand_pct`, `estimated_hours`, `hours_basis`,
 `demand_postings`, and `demand_base`. The canonical hashed document is unchanged for

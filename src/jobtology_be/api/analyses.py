@@ -76,6 +76,8 @@ class AnalysisQualificationResponse(BaseModel):
 
     code: str
     name: str | None
+    display_name: str
+    kind: Literal["NATIONAL_TECHNICAL", "WORK_LEARNING"] | None
 
 
 class AnalysisSkillResponse(BaseModel):

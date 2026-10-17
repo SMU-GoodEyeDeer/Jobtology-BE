@@ -6,10 +6,7 @@ from types import MappingProxyType
 
 from pydantic import JsonValue, TypeAdapter
 
-from jobtology_be.application.requirement_metadata import (
-    RequirementMetadata,
-    RequirementQualification,
-)
+from jobtology_be.application.requirement_metadata import RequirementMetadata
 from jobtology_be.corpus.local_snapshot import LocalJsonPublishedCorpusSnapshotReader
 from jobtology_be.product_roles.models import (
     ArtifactApproval,
@@ -18,6 +15,7 @@ from jobtology_be.product_roles.models import (
     ProductRolePolicy,
     RolePolicy,
 )
+from jobtology_be.product_roles.qualification_display import display_qualifications
 
 DEMAND_MIN_BASE_POSTINGS = 5
 
@@ -159,12 +157,10 @@ def _role_document(
             hours_basis="OFFICIAL" if hours else "ESTIMATED",
             demand_postings=demand_postings, demand_base=demand_base,
             ncs_base_code=base_code,
-            qualifications=tuple(
-                RequirementQualification(code=code, name=name)
-                for code, name in sorted({
-                    item.qualification_code: item.qualification_name
-                    for item in inputs.qualifications if item.competency_code == unit.code
-                }.items())
+            qualifications=display_qualifications(
+                (item.qualification_code, item.qualification_name)
+                for item in sorted(inputs.qualifications, key=lambda item: item.qualification_code)
+                if item.competency_code == unit.code
             ),
         )
         requirement: dict[str, JsonValue] = {

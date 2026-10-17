@@ -215,7 +215,7 @@ Idempotency-Key: <클라이언트 생성 UUID>
 | `ncs_level` | NCS 수준 정수, 알 수 없으면 null |
 | `estimated_hours` | 학습 시간 정수, 알 수 없으면 null |
 | `hours_basis` | `OFFICIAL`(공식 시간) / `ESTIMATED`(추정 시간), 알 수 없으면 null |
-| `qualifications` | 승인된 입력의 **선택된 NCS 버전**에 연결된 Q-Net 자격 `{code, name}` 배열. 코드순·코드 중복 제거, 이름은 null 가능 |
+| `qualifications` | 승인된 입력의 **선택된 NCS 버전**에 연결된 Q-Net 자격 `{code, name, display_name, kind}` 배열. `name`은 원본(null 가능), `display_name`은 화면용 이름(항상 제공), `kind`는 `NATIONAL_TECHNICAL`(국가기술자격) / `WORK_LEARNING`(일학습병행자격) / null. 일학습병행은 `SW개발_L5_25V2` → `SW개발 5수준`처럼 풀고, 같은 이름·수준은 최신 기준 하나만 남깁니다. 국가기술자격이 먼저 정렬됩니다 |
 
 자격 연결이 없거나 메타데이터를 사용할 수 없으면 `qualifications`는 `[]`입니다.
 메타데이터가 없을 때는 `ncs_base_code`, `ncs_level`, `estimated_hours`, `hours_basis`가

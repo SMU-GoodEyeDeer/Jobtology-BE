@@ -6,11 +6,15 @@ from pydantic import BaseModel
 
 from jobtology_be.application.queries import ProductJsonValue
 
+QualificationKind = Literal['NATIONAL_TECHNICAL', 'WORK_LEARNING']
+
 
 @dataclass(frozen=True, slots=True)
 class RequirementQualification:
     code: str
     name: str | None
+    display_name: str
+    kind: QualificationKind | None
 
 
 @dataclass(frozen=True, slots=True)

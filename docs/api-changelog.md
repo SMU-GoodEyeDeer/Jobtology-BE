@@ -1,5 +1,13 @@
 # API changelog
 
+## 2026-10-17 — readable qualification labels
+
+- `result.skills[].qualifications[]` adds `display_name` (always present) and `kind`
+  (`NATIONAL_TECHNICAL` | `WORK_LEARNING` | null). Work-learning standard names
+  (`SW개발_L5_25V2`) read as `SW개발 5수준`; older standards of the same family and
+  level are dropped, so the array can be shorter than before. National qualifications
+  sort first. `code`/`name` are unchanged; the product-role digest is unchanged.
+
 ## 2026-10-17 — skill-detail panel reads
 
 - `GET /api/v1/analyses/{analysis_id}` adds `requirement_key`, `ncs_base_code`,
