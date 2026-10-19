@@ -64,6 +64,7 @@ class WeeklyPlanStep(PlanModel):
     moved: bool
     prerequisite_step_ids: tuple[UUID, ...]
     unmet_prerequisite_step_ids: tuple[UUID, ...]
+    completion_criteria: tuple[str, ...] = ()
 
 
 class WeeklyPlanWarning(PlanModel):

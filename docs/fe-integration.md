@@ -85,6 +85,8 @@ Google 이름을 받기 위해 기존 Google Cloud 클라이언트를 교체할 
   `FALLBACK`은 원본 날짜가 없는 단계의 추정 일정입니다.
 - `steps[].start_date/end_date`: 솔버 모드에서는 저장된 정확한 날짜입니다. 주차 표시에 맞춰
   월요일·일요일로 덮어쓰지 마세요. 시간대는 목표의 IANA 시간대입니다.
+- `steps[].title`과 `completion_criteria`는 저장된 활동과 완료 기준입니다. 포트폴리오 활동의
+  프로젝트 결과물·README 기준을 상세 화면에 표시하세요. `name`은 관련 역량 이름입니다.
 - `steps[].prerequisite_step_ids`: 저장된 실제 선행 단계입니다. NCS 수준으로 선행 관계를 추측하지 않습니다.
   `unmet_prerequisite_step_ids`와 `has_dependency_violations`는 순서·원본 시간의 위반 여부입니다.
 - `warnings`: `TARGET_DATE_EXCEEDED`, `PREREQUISITE_VIOLATION`, `MISSING_SOLVER_SCHEDULE`과

@@ -184,6 +184,7 @@ def build_weekly_plan(
             reason=_reason(item, by_id), moved=number != recommended_positions[item.step.step_id],
             prerequisite_step_ids=item.step.prerequisite_step_ids,
             unmet_prerequisite_step_ids=unmet,
+            completion_criteria=tuple(value for value in item.step.criteria if isinstance(value, str)),
         ))
     completion = max((step.end_date for step in result), default=start)
     days_past_target = max(0, (completion - context.target_date).days) if context.target_date else 0

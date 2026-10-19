@@ -356,3 +356,16 @@ def test_no_op_overrides_do_not_rebuild_solver_schedule():
     )
     result = weekly_plan.build_weekly_plan(context(), inputs, overrides)
     assert result == weekly_plan.build_weekly_plan(context(), inputs)
+
+
+
+def test_weekly_plan_exposes_persisted_project_title_and_completion_criteria():
+    item = production_steps()[0]
+    criteria = ('실행 가능한 프로젝트를 만든다', 'README에 실행 예시를 정리한다')
+    project = replace(item, step=replace(
+        item.step, title='개발자 환경 구축 포트폴리오 프로젝트', criteria=criteria,
+    ))
+    step = weekly_plan.build_weekly_plan(context(), (project,)).steps[0]
+    assert step.title == project.step.title
+    assert step.completion_criteria == criteria
+    assert step.name == '개발자 환경 구축'
