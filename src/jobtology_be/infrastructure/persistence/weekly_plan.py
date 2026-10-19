@@ -1,5 +1,5 @@
 from collections.abc import Mapping
-from datetime import date, datetime
+from datetime import datetime
 from typing import ClassVar
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -24,7 +24,6 @@ from jobtology_be.infrastructure.persistence.schema import (
 class _Constraints(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
     available_hours_per_week: int | None = Field(default=None, ge=1, le=60)
-    target_by: datetime | date | None = None
 
 
 class _StoredOverride(BaseModel):
@@ -45,6 +44,7 @@ class _StoredContext(BaseModel):
     created_at: datetime
     constraints_snapshot: _Constraints
     timezone: str
+    goal_target_by: datetime
     proposal_steps: tuple[object, ...]
 
 
@@ -63,7 +63,8 @@ class PostgresWeeklyPlanStore:
         async with self._database.sessions() as session:
             row = (await session.execute(select(
                 roadmaps.c.created_at, route_proposals.c.constraints_snapshot,
-                goals.c.timezone, route_proposals.c.steps.label('proposal_steps'),
+                goals.c.timezone, goals.c.target_by.label('goal_target_by'),
+                route_proposals.c.steps.label('proposal_steps'),
             ).select_from(roadmaps.join(route_proposals, roadmaps.c.proposal_id == route_proposals.c.id)
                           .join(goals, roadmaps.c.goal_id == goals.c.id))
                 .where(roadmaps.c.id == roadmap_id, roadmaps.c.user_id == user_id,
@@ -74,9 +75,7 @@ class PostgresWeeklyPlanStore:
         stored = _StoredContext.model_validate(row)
         constraints = stored.constraints_snapshot
         timezone = ZoneInfo(stored.timezone)
-        target = constraints.target_by
-        target_date = ((target if target.tzinfo else target.replace(tzinfo=timezone))
-                       .astimezone(timezone).date()) if isinstance(target, datetime) else target
+        target_date = stored.goal_target_by.astimezone(timezone).date()
         step_hours: dict[str, int] = {}
         for step in stored.proposal_steps:
             if not isinstance(step, Mapping):

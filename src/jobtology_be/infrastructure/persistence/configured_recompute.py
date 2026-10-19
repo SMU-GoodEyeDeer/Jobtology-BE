@@ -1,5 +1,6 @@
-from datetime import UTC, datetime
+from datetime import datetime
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import ValidationError
 from sqlalchemy import select
@@ -69,7 +70,7 @@ class ConfiguredRecomputeRepository(OutboxRepository):
             await self._enqueue_recompute(session, user_id, profile_version, event_id)
             return
         goal = await session.execute(
-            select(goals.c.status, goals.c.occupation_id, goals.c.target_by).where(
+            select(goals.c.status, goals.c.occupation_id, goals.c.target_by, goals.c.timezone).where(
                 goals.c.id == goal_id,
                 goals.c.user_id == user_id,
             )
@@ -83,8 +84,10 @@ class ConfiguredRecomputeRepository(OutboxRepository):
             await self._enqueue_recompute(session, user_id, profile_version, event_id)
             return
         try:
+            timezone = ZoneInfo(goal_row.timezone)
+            target_by = goal_row.target_by.astimezone(timezone)
             capabilities, completeness = await self._active_capabilities(session, user_id)
-            constraints = await self._current_constraints(session, user_id, goal_row.target_by)
+            constraints = await self._current_constraints(session, user_id, target_by)
             carried_context = carry_forward_recompute_context(
                 context,
                 ContextCarryforwardInput(
@@ -92,14 +95,14 @@ class ConfiguredRecomputeRepository(OutboxRepository):
                     goal_id=goal_id,
                     goal_occupation_id=goal_row.occupation_id,
                     profile_version=profile_version,
-                    goal_target_by=goal_row.target_by,
+                    goal_target_by=target_by,
                     capabilities=capabilities,
                     completeness=completeness,
-                    now=datetime.now(UTC),
+                    now=datetime.now(timezone),
                     current_constraints=constraints,
                 ),
             )
-        except ContextCarryforwardError:
+        except (ContextCarryforwardError, ZoneInfoNotFoundError, ValueError):
             await self._enqueue_recompute(session, user_id, profile_version, event_id)
             return
         await self._persist_recompute_request(

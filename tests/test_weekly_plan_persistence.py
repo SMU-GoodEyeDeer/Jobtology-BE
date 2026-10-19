@@ -39,7 +39,7 @@ async def exercise_store(database_url):
             await session.execute(insert(users), [{'id': owner}, {'id': stranger}])
             await session.execute(insert(goals).values(
                 id=goal, user_id=owner, goal_mode='TARGETED', occupation_id='BACKEND_DEVELOPER',
-                target_by=created, timezone='Asia/Seoul', original_time_phrase='내년',
+                target_by=datetime(2027, 4, 14, 16, tzinfo=UTC), timezone='Asia/Seoul', original_time_phrase='내년',
             ))
             await session.execute(insert(analyses).values(
                 id=analysis, user_id=owner, goal_id=goal, profile_version=1,
@@ -112,8 +112,16 @@ async def exercise_store(database_url):
                                   .values(timezone='America/Los_Angeles'))
         fallback = await store.get_context(owner, roadmap)
         assert fallback.recommended_weekly_hours == 10
-        assert fallback.target_date is None
+        assert fallback.target_date.isoformat() == '2027-04-14'
         assert fallback.timezone == 'America/Los_Angeles'
+        # Editing the goal updates deadline warnings without changing the pinned
+        # activity effort or requiring the original proposal to be rewritten.
+        async with database.sessions.begin() as session:
+            await session.execute(update(goals).where(goals.c.id == goal)
+                                  .values(target_by=datetime(2027, 3, 2, 7, tzinfo=UTC)))
+        edited = await store.get_context(owner, roadmap)
+        assert edited.target_date.isoformat() == '2027-03-01'
+        assert edited.step_hours == context.step_hours
     finally:
         await database.dispose()
 
