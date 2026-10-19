@@ -59,6 +59,8 @@ class StepSelectionReason(StrEnum):
     SATISFIES_REQUIRED_REQUIREMENT = "SATISFIES_REQUIRED_REQUIREMENT"
     SATISFIES_PREFERRED_REQUIREMENT = "SATISFIES_PREFERRED_REQUIREMENT"
     PREREQUISITE = "PREREQUISITE"
+    PORTFOLIO_PREFERENCE = "PORTFOLIO_PREFERENCE"
+    FOUNDATIONAL_PREFERENCE = "FOUNDATIONAL_PREFERENCE"
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,6 +202,9 @@ class RoutePlanningTrace:
     optimization_status: OptimizationStatus
     rejections: tuple[RouteRejection, ...]
     partial_route_diagnostic: PartialRouteDiagnostic | None
+    planning_policy_version: str | None = None
+    planning_policy_decisions: tuple[str, ...] = ()
+    foundational_priority_action_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -227,6 +232,10 @@ class PlanningProblem:
     calendar: tuple[PlanningSlot, ...]
     candidate_availability: tuple[CandidateAvailability, ...] = ()
     settings: SolverSettings = field(default_factory=SolverSettings)
+    planning_policy_version: str | None = None
+    planning_policy_decisions: tuple[str, ...] = ()
+    foundational_priority_action_ids: frozenset[str] = frozenset()
+    portfolio_action_ids: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         if not self.analysis_id.strip() or not self.basis_version.strip():
@@ -271,7 +280,8 @@ def objective_snapshot(problem: PlanningProblem) -> ObjectiveSnapshot:
         time_weight += 15
         cost_weight -= 5
     return ObjectiveSnapshot(
-        version=OBJECTIVE_VERSION,
+        version=f'{OBJECTIVE_VERSION}_FOUNDATION_PRIORITY_V1'
+        if problem.foundational_priority_action_ids else OBJECTIVE_VERSION,
         method=ObjectiveMethod.NORMALIZED_WEIGHTED,
         unknown_cost_treatment=UnknownCostTreatment.NO_LOW_COST_CREDIT,
         coverage_weight=coverage_weight,

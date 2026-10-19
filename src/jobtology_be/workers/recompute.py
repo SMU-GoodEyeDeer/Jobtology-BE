@@ -37,6 +37,7 @@ from jobtology_be.planning.solver_models import (
     InvalidPlanningProblemError,
     SolverSettings,
 )
+from jobtology_be.product_roles.planning import product_planning_catalog
 from jobtology_be.settings import CorpusSource
 from jobtology_be.workers.context import (
     InvalidRecomputeContextError,
@@ -190,8 +191,9 @@ class RecomputeWorker:
             ),
             context.completeness,
         )
-        candidate_set = CandidateGenerator(snapshot.templates).build(analysis)
-        problem = build_planning_problem(context, analysis, candidate_set)
+        runtime_catalog = product_planning_catalog(snapshot, context.constraints)
+        candidate_set = CandidateGenerator(runtime_catalog.templates).build(analysis)
+        problem = build_planning_problem(context, analysis, candidate_set, runtime_catalog)
         if self.solver_time_limit_seconds is not None:
             problem = replace(
                 problem, settings=SolverSettings(time_limit_seconds=self.solver_time_limit_seconds)
@@ -208,7 +210,7 @@ class RecomputeWorker:
                 work_item=work_item,
                 analysis=analysis,
                 baseline=baseline,
-                templates=snapshot.templates,
+                templates=runtime_catalog.templates,
                 planning_result=planning_result,
             ),
         )

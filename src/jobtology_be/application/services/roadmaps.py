@@ -20,6 +20,8 @@ class RoadmapStore(Protocol):
 
     async def create_roadmap(self, request: RoadmapCreate) -> RoadmapSnapshot: ...
 
+    async def reconcile_automatic_roadmap(self, request_id: UUID, title: str) -> None: ...
+
     async def mutate_roadmap(self, request: RoadmapMutation) -> RoadmapSnapshot: ...
 
     async def mutate_step_state(self, request: StepStateMutation) -> RoadmapSnapshot: ...
@@ -59,6 +61,8 @@ class RoadmapResult:
 
 
 class RoadmapService(Protocol):
+    async def reconcile_automatic(self, request_id: UUID, title: str) -> None: ...
+
     async def create(self, user_id: UUID, command: RoadmapCreateCommand) -> RoadmapResult: ...
 
     async def mutate(self, user_id: UUID, command: RoadmapMutationCommand) -> RoadmapResult: ...
@@ -71,6 +75,9 @@ class PersistentRoadmapService:
 
     def __init__(self, store: RoadmapStore) -> None:
         self._store = store
+
+    async def reconcile_automatic(self, request_id: UUID, title: str) -> None:
+        await self._store.reconcile_automatic_roadmap(request_id, title)
 
     async def create(self, user_id: UUID, command: RoadmapCreateCommand) -> RoadmapResult:
         await self._store.create_user(UserCreate(user_id=user_id))

@@ -16,6 +16,7 @@ class AuthenticatedPrincipal(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
 
     user_id: UUID
+    display_name: str | None = None
 
 
 class IdentityProvider(Protocol):
@@ -49,7 +50,9 @@ class SessionIdentityProvider:
             if not await self.session_store.matches_session_csrf(hashes.token_hash, hashes.csrf_hash):
                 _unauthenticated()
         return AuthenticatedSession(
-            principal=AuthenticatedPrincipal(user_id=session_principal.user_id),
+            principal=AuthenticatedPrincipal(
+                user_id=session_principal.user_id, display_name=session_principal.display_name
+            ),
             session_token_hash=hashes.token_hash,
             csrf_token=credentials.csrf_token,
         )

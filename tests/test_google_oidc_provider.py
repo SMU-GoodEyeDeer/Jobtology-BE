@@ -122,3 +122,19 @@ def test_google_exchange_only_uses_fixed_provider_urls_and_pkce(keys) -> None:
         "https://oauth2.googleapis.com/token", "https://www.googleapis.com/oauth2/v3/certs",
     ]
     assert b"code_verifier=verifier" in requests[0].content
+
+
+@pytest.mark.parametrize("name,expected", [
+    ("  Google 사용자  ", "Google 사용자"),
+    ("Name\x00\u202e", "Name"),
+    ("\n\t", None),
+    (None, None),
+    ("a" * 256, "a" * 255),
+])
+def test_display_name_comes_from_verified_optional_profile_claim(keys, name, expected):
+    private, public = keys
+    identity = anyio.run(
+        _provider(_token(private, name=name), public).identity_for_code, "code", "verifier", NONCE
+    )
+    assert identity.subject == "google-subject"
+    assert identity.display_name == expected

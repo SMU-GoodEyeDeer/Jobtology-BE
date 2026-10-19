@@ -81,7 +81,7 @@ async def google_login(
     challenge = urlsafe_b64encode(sha256(verifier.encode()).digest()).rstrip(b"=").decode()
     query = urlencode({
         "response_type": "code", "client_id": config.client_id, "redirect_uri": config.redirect_uri,
-        "scope": "openid", "state": state, "nonce": nonce,
+        "scope": "openid profile", "state": state, "nonce": nonce,
         "code_challenge": challenge, "code_challenge_method": "S256",
     })
     response = RedirectResponse(f"{AUTHORIZE_URL}?{query}", headers={"Cache-Control": "no-store"})
@@ -117,7 +117,7 @@ async def google_callback(
     if attempt is None or error_values or not code or len(code) > 4096:
         return _error(400, clear_cookie=True)
     try:
-        subject = await provider.subject_for_code(
+        identity = await provider.identity_for_code(
             code, attempt.pkce_verifier.get_secret_value(), attempt.nonce.get_secret_value()
         )
     except GoogleProviderError:
@@ -125,7 +125,8 @@ async def google_callback(
     credentials = issue_session_credentials()
     try:
         issued = await store.create_google_session(
-            GoogleLogin(subject, credentials.session_issue(settings.session_lifetime))
+            GoogleLogin(identity.subject, credentials.session_issue(settings.session_lifetime),
+                        display_name=identity.display_name)
         )
     except SQLAlchemyError:
         return _error(503, clear_cookie=True)

@@ -101,6 +101,9 @@ class PostgresAuthStore:
                     user_id = await self._active_user_id(session, login.google_subject)
             if user_id is None:
                 return None
+            await session.execute(
+                update(users).where(users.c.id == user_id).values(display_name=login.display_name)
+            )
             expires_at = await session.scalar(
                 insert(auth_sessions)
                 .values(
@@ -124,7 +127,7 @@ class PostgresAuthStore:
     async def resolve_session(self, session_token_hash: bytes) -> SessionPrincipal | None:
         async with self._database.sessions() as session:
             result = await session.execute(
-                select(auth_sessions.c.user_id, auth_sessions.c.csrf_hash)
+                select(auth_sessions.c.user_id, auth_sessions.c.csrf_hash, users.c.display_name)
                 .join(users, users.c.id == auth_sessions.c.user_id)
                 .where(
                     auth_sessions.c.token_hash == session_token_hash,
@@ -140,7 +143,7 @@ class PostgresAuthStore:
             row = result.one_or_none()
         if row is None:
             return None
-        return SessionPrincipal(user_id=row.user_id, csrf_hash=row.csrf_hash)
+        return SessionPrincipal(user_id=row.user_id, csrf_hash=row.csrf_hash, display_name=row.display_name)
 
     async def matches_session_csrf(self, session_token_hash: bytes, csrf_hash: bytes) -> bool:
         async with self._database.sessions() as session:
@@ -181,5 +184,5 @@ class PostgresAuthStore:
                 google_identities.c.subject == google_subject,
                 users.c.status == "ACTIVE",
             )
-            .with_for_update()
+            .with_for_update(of=users)
         )

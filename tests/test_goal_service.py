@@ -69,3 +69,33 @@ async def test_goal_service_maps_a_command_to_the_atomic_persistence_mutation() 
             status="ACTIVE",
         )
     ]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("occupation_id", "timezone", "target_delta", "code"),
+    [
+        ("BACKEND_DEVELOPER", "Korea/Seoul", 30, "unknown_timezone"),
+        ("BACKEND_DEVELOPER", "UTC", -1, "deadline_not_future"),
+        ("BACKEND_DEVELOPER", "UTC", 367, "deadline_out_of_range"),
+        ("UNKNOWN_ROLE", "UTC", 30, "unsupported_occupation"),
+    ],
+)
+async def test_goal_service_rejects_unplannable_input_before_creating_any_state(
+    occupation_id: str, timezone: str, target_delta: int, code: str,
+) -> None:
+    from datetime import timedelta
+
+    from jobtology_be.modules.goals.write_validation import GoalWriteValidationError
+
+    store = RecordingGoalStore()
+    service = PersistentGoalService(store, occupation_supported=lambda value: value == "BACKEND_DEVELOPER")
+    with pytest.raises(GoalWriteValidationError) as error:
+        await service.update_goal(UUID("d0b3d8d1-7de4-4a62-8c58-e652431377b4"), GoalUpdateCommand(
+            expected_profile_version=1, goal_mode="TARGETED", occupation_id=occupation_id,
+            target_by=datetime.now(UTC) + timedelta(days=target_delta), timezone=timezone,
+            original_time_phrase="user deadline", status="ACTIVE",
+        ))
+    assert error.value.code == code
+    assert store.user_creates == []
+    assert store.goal_mutations == []

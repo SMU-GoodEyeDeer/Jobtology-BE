@@ -19,10 +19,9 @@ Jobtology는 사용자의 프로필·역량·목표 입력을 바탕으로 역�
 제안하는 API입니다. 핵심 흐름은 (1) 사용자 입력 수집, (2) 비동기 분석 재계산,
 (3) 로드맵 제안 확인, (4) 로드맵 확정·진행, (5) 대시보드 조회입니다.
 
-현재 worktree에는 local JSON 기반 M1–M5 제품 흐름과 읽기 전용 native `/api/v2` catalog가
-구현되어 있습니다. 원격 배포, Google 로그인, 원격 publication/revocation 연동, native editorial
-analysis와 route planning은 아직 제공되지 않거나 의도적으로 지원하지 않습니다. 아래 흐름의 실제
-필드·상태·응답 형식 최종 기준은 배포된 서버의 `/api/openapi.json`입니다.
+제품 인증은 Google OAuth로 제공하며 게스트 계정은 만들지 않습니다. 승인된 직무별
+스냅샷을 입력으로 분석 및 CP-SAT 경로 계획을 실행합니다. Neo4j 원본 카탈로그 읽기는
+별도 계약입니다. 필드·상태·응답 형식의 최종 기준은 배포 서버의 `/api/openapi.json`입니다.
 
 ## 기본 URL과 버전 정책
 
@@ -38,20 +37,37 @@ analysis와 route planning은 아직 제공되지 않거나 의도적으로 지�
 - 프로세스 생존 확인은 `GET /api/v1/health/live`입니다. 데이터베이스 준비 여부를
   검사하지 않으므로 제품 기능 가용성 판단에 사용하지 마세요.
 
+## Google 인증과 계정 관리
+
+로그인은 `GET /api/v1/auth/google/login`에서 시작합니다. `openid profile` 범위를 요청하고,
+검증한 Google ID 토큰의 `sub`로 계정을 식별합니다. 이름은 표시용이며 계정 연결에 쓰지 않습니다.
+
+- `GET /api/v1/auth/session`: `user_id`, `csrf_token`, 선택적인 `display_name`을 반환합니다.
+  이름이 없으면 일반적인 호칭을 표시하세요. UUID나 Google subject를 이름으로 표시하지 마세요.
+  이전 계정은 다시 로그인한 뒤 이름이 채워집니다.
+- `POST /api/v1/auth/logout`: 현재 세션을 폐기합니다.
+- `DELETE /api/v1/me/account`: 본인의 Jobtology 계정과 프로필·입력·분석·로드맵·작업·모든 세션을
+  한 트랜잭션으로 영구 삭제하고 쿠키를 지웁니다. Google 계정 자체는 삭제하지 않습니다.
+  UI에서 영구 삭제 확인을 받은 뒤 호출하세요. 성공은 204이며 로컬 세션을 즉시 비웁니다.
+  실패하면 세션을 유지하고 재시도할 수 있게 하세요.
+
+변경 요청은 세션 쿠키와 `X-CSRF-Token`이 필요합니다. 같은 origin의 `/api` 상대 경로를 사용하세요.
+Google 이름을 받기 위해 기존 Google Cloud 클라이언트를 교체할 필요는 없습니다.
+
 ## 주차 플랜
 
-로드맵의 학습 순서와 주차별 일정을 별도로 조회·저장합니다. 기존 로드맵 응답과 단계 상태는
-바뀌지 않으며, 완료한 단계도 일정에 포함됩니다.
+저장된 솔버 일정과 선행 단계가 추천 플랜의 기준입니다. 브라우저에서 별도 일정을 재계산하지 마세요.
+완료 상태는 일정 수정·초기화와 별개로 보존됩니다.
 
 | 엔드포인트 | 동작 |
 |---|---|
-| `GET /api/v1/roadmaps/{roadmap_id}/plan` | 저장된 플랜 또는 추천 플랜을 반환합니다. |
-| `PUT /api/v1/roadmaps/{roadmap_id}/plan` | 사용자 설정을 저장하고 반영된 플랜을 반환합니다. |
-| `DELETE /api/v1/roadmaps/{roadmap_id}/plan` | 설정을 삭제하고 추천 플랜을 반환합니다. |
+| `GET /api/v1/roadmaps/{roadmap_id}/plan` | 저장된 설정 또는 원본 솔버 일정을 반환합니다. |
+| `POST /api/v1/roadmaps/{roadmap_id}/plan/preview` | 설정을 저장하지 않고 미리 계산합니다. `null`은 원본 솔버 일정을 반환합니다. |
+| `PUT /api/v1/roadmaps/{roadmap_id}/plan` | 사용자 설정과 경고를 저장 후 반환합니다. |
+| `DELETE /api/v1/roadmaps/{roadmap_id}/plan` | 설정을 삭제하고 원본 솔버 일정을 반환합니다. |
 
-모두 인증이 필요하며 PUT/DELETE에는 기존 세션의 `X-CSRF-Token`을 전송하세요.
-타인 소유·없는 로드맵은 `404 NOT_FOUND`입니다. PUT 본문은 아래 네 필드가 모두 필수이며,
-추가 필드나 문자열·불리언으로 대체한 정수는 `422 VALIDATION_ERROR`입니다.
+모두 인증이 필요하며 POST/PUT/DELETE에는 `X-CSRF-Token`을 전송하세요.
+타인 소유·없는 로드맵은 `404 NOT_FOUND`입니다. 설정 본문은 아래 네 필드가 필수입니다.
 
 ```json
 {
@@ -62,44 +78,34 @@ analysis와 route planning은 아직 제공되지 않거나 의도적으로 지�
 }
 ```
 
-- `weekly_hours`: 주당 1~60시간 정수. `rest_weeks`: 중복 없는 1~104주 정수 배열이며 서버가
-  오름차순 정렬합니다. `order`: 모든 단계 ID의 정확한 순열. 누락·중복·다른 ID는 422입니다.
-- `hours`: 단계 ID 일부에 대한 1~400시간 정수. 알 수 없는 ID는 422이며 추천 시간과 같은
-  항목은 저장하지 않습니다. 빈 객체도 허용합니다. `order`, `rest_weeks`, `hours`에는 null을 넣지 마세요.
+- `weekly_hours`: 1~60 정수. `rest_weeks`: 중복 없는 1~104주 정수 배열.
+- `order`: 모든 단계 ID의 정확한 순열. `hours`: 단계 ID 일부와 1~400 정수 시간.
+  추천 시간과 같은 값은 별도 수정으로 보지 않습니다.
+- `schedule_source`: `SOLVER`는 저장된 원본 날짜, `CUSTOM`은 사용자 설정으로 계산한 주간 일정,
+  `FALLBACK`은 원본 날짜가 없는 단계의 추정 일정입니다.
+- `steps[].start_date/end_date`: 솔버 모드에서는 저장된 정확한 날짜입니다. 주차 표시에 맞춰
+  월요일·일요일로 덮어쓰지 마세요. 시간대는 목표의 IANA 시간대입니다.
+- `steps[].prerequisite_step_ids`: 저장된 실제 선행 단계입니다. NCS 수준으로 선행 관계를 추측하지 않습니다.
+  `unmet_prerequisite_step_ids`와 `has_dependency_violations`는 순서·원본 시간의 위반 여부입니다.
+- `warnings`: `TARGET_DATE_EXCEEDED`, `PREREQUISITE_VIOLATION`, `MISSING_SOLVER_SCHEDULE`과
+  표시용 메시지를 반환합니다. `deadline_exceeded`, `days_past_target`도 제공됩니다.
+  목표를 넘는 사용자 일정은 경고와 함께 저장할 수 있습니다.
+- `is_customized`, `saved_at`: 수정 여부와 저장 시각입니다. 저장 전 미리보기의 `saved_at`은 null입니다.
+- `recommended_completion_date`는 원본 일정의 완료일입니다. 단계 시간은 제안에 고정한 추정치를 우선하며,
+  현재 카탈로그의 변경으로 원본 일정이 달라지지 않습니다.
 
-응답의 최상위 필드는 다음과 같습니다.
+## 목표와 계획 선호
 
-| 필드 | 의미 및 null 규칙 |
-|---|---|
-| `roadmap_id`, `start_date` | 로드맵 ID와 생성 시각을 Asia/Seoul로 변환한 주의 월요일(1주차) |
-| `target_date` | 제안의 `constraints_snapshot.target_by`를 서울 날짜로 변환. 없으면 null |
-| `weekly_hours`, `recommended_weekly_hours` | 적용된 주당 시간과 제안의 추천 시간. 제안에 없으면 추천값 10 |
-| `rest_weeks` | 적용된 휴식 주 배열. 추천 플랜은 빈 배열 |
-| `is_customized`, `saved_at` | 저장 설정 존재 여부와 서울 시간대 저장 시각. 미저장·초기화 후 false/null |
-| `total_hours`, `total_weeks` | 적용 시간 합계와 마지막 단계의 종료 주차. 사이의 휴식 주도 포함 |
-| `completion_date` | 적용 플랜 마지막 종료 주차의 일요일 |
-| `recommended_completion_date` | 추천 순서·단계 시간·주당 시간, 휴식 주 없이 계산한 종료 일요일 |
-| `steps` | 적용 순서대로 나열한 단계 배열 |
+목표 저장 시 유효한 IANA 시간대, 시간대가 있는 미래 기한, 366일 이내 기한 및 지원하는 직무를
+검증합니다. 잘못된 값은 저장 전에 필드별 `422 VALIDATION_ERROR`를 반환합니다.
 
-각 단계에는 `step_id`, 현재 순번 `number`, 추천 순번 `recommended_number`, `title`,
-`name`(첫 outcome의 raw_text, 없으면 title), `requirement_key`(없으면 null),
-`state`(`TODO`/`IN_PROGRESS`/`COMPLETED`)가 있습니다.
-`ncs_level`, `demand_pct`, `field_code`, `field_name`은 메타데이터가 없으면 null입니다.
-분야는 선택된 NCS 능력단위의 세분류 코드·이름(예: `20010204`/`DB엔지니어링`)입니다.
+`needs_portfolio`는 “포트폴리오 프로젝트 선호”, `career_switch`는 “기초 학습 우선”입니다.
+기존 API 키는 호환성을 위해 유지하며 사용자의 현재 상태를 추측하지 않습니다.
+제품 경로의 가격 모델은 현재 0원 가정입니다. 이 가정에서 예산 제한만으로 활동을 제외하지 않으며,
+실제 유료 강좌의 가격을 검증했다는 의미는 아닙니다. 시간·기한·역량·선행 제약은 계속 적용됩니다.
 
-- `phase`: 1~3수준 `BASIC`, 4~5수준 `CORE`, 6수준 이상 `ADVANCED`. 수준이 없으면 `CORE`.
-- `hours`, `recommended_hours`: 적용 시간과 메타데이터 추천 시간. 추천 정보가 없으면 20시간.
-  `hours_basis`는 `OFFICIAL`/`ESTIMATED`이며 추천 시간과 다른 사용자 시간만 `CUSTOM`입니다.
-- `start_week`, `end_week`: 첫·마지막 학습 시간이 속한 주차. `start_date`, `end_date`는
-  해당 주차의 월요일·일요일입니다. 주당 남은 시간을 다음 단계가 이어 쓰며 휴식 주는 건너뜁니다.
-- `reason`: 추천 위치 기준의 한국어 설명이며 사용자가 옮겨도 유지됩니다.
-  `moved`는 현재 순번과 추천 순번이 다른지 나타냅니다.
-- `prerequisite_step_ids`: 같은 분야의 엄격히 낮은 수준 단계 ID 배열.
-  `unmet_prerequisite_step_ids`: 그중 현재 단계보다 뒤에 배치된 ID 배열. 정보가 없으면 빈 배열입니다.
-
-추천 순서는 NCS 수준 오름차순(null은 마지막), 공고 수요 비율 내림차순(null은 0), NCS 기본 코드
-또는 action_id 오름차순입니다. 메타데이터를 읽을 수 없어도 폴백 플랜을 200으로 반환합니다.
-배포 시에는 이 릴리스의 테이블을 만들도록 **`uv run alembic upgrade head` 실행이 필수**입니다.
+배포 전 마이그레이션 관리자 자격으로 **`uv run alembic upgrade head`**를 실행하세요.
+제한된 애플리케이션 DB 계정에는 스키마 변경 권한을 주지 않습니다.
 
 ## Neo4j 원본 카탈로그 (v2)
 

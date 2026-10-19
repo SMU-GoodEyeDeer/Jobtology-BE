@@ -1,18 +1,19 @@
 from datetime import date, datetime
 from typing import ClassVar
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from jobtology_be.application.weekly_plan import SEOUL
 from jobtology_be.application.weekly_plan_models import PlanContext, PlanOverrides
 from jobtology_be.infrastructure.persistence.contracts import MissingRecordError
 from jobtology_be.infrastructure.persistence.database import Database
 from jobtology_be.infrastructure.persistence.schema import (
     UTC_NOW,
+    goals,
     roadmap_plan_overrides,
     roadmaps,
     route_proposals,
@@ -38,10 +39,18 @@ class _StoredOverride(BaseModel):
                              order=self.step_order, hours=self.step_hours, saved_at=self.updated_at)
 
 
+class _ProposalStep(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
+    step_key: str
+    estimated_hours: int | None = Field(default=None, ge=1)
+
+
 class _StoredContext(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
     created_at: datetime
     constraints_snapshot: _Constraints
+    timezone: str
+    proposal_steps: tuple[_ProposalStep, ...]
 
 
 class PostgresWeeklyPlanStore:
@@ -59,19 +68,26 @@ class PostgresWeeklyPlanStore:
         async with self._database.sessions() as session:
             row = (await session.execute(select(
                 roadmaps.c.created_at, route_proposals.c.constraints_snapshot,
-            ).select_from(roadmaps.join(route_proposals, roadmaps.c.proposal_id == route_proposals.c.id))
+                goals.c.timezone, route_proposals.c.steps.label('proposal_steps'),
+            ).select_from(roadmaps.join(route_proposals, roadmaps.c.proposal_id == route_proposals.c.id)
+                          .join(goals, roadmaps.c.goal_id == goals.c.id))
                 .where(roadmaps.c.id == roadmap_id, roadmaps.c.user_id == user_id,
-                       route_proposals.c.user_id == user_id))).mappings().one_or_none()
+                       route_proposals.c.user_id == user_id,
+                       goals.c.user_id == user_id))).mappings().one_or_none()
         if row is None:
             raise MissingRecordError(resource='roadmap')
         stored = _StoredContext.model_validate(row)
         constraints = stored.constraints_snapshot
+        timezone = ZoneInfo(stored.timezone)
         target = constraints.target_by
-        target_date = ((target if target.tzinfo else target.replace(tzinfo=SEOUL))
-                       .astimezone(SEOUL).date()) if isinstance(target, datetime) else target
+        target_date = ((target if target.tzinfo else target.replace(tzinfo=timezone))
+                       .astimezone(timezone).date()) if isinstance(target, datetime) else target
         return PlanContext(roadmap_id=roadmap_id, created_at=stored.created_at,
                            recommended_weekly_hours=constraints.available_hours_per_week or 10,
-                           target_date=target_date)
+                           target_date=target_date, timezone=stored.timezone,
+                           step_hours={step.step_key: step.estimated_hours
+                                       for step in stored.proposal_steps
+                                       if step.estimated_hours is not None})
 
     async def get(self, user_id: UUID, roadmap_id: UUID) -> PlanOverrides | None:
         async with self._database.sessions.begin() as session:

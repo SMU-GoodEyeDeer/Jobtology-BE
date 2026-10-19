@@ -33,6 +33,7 @@ class SessionIssue:
 class GoogleLogin:
     google_subject: str
     session: SessionIssue
+    display_name: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,3 +46,4 @@ class IssuedSession:
 class SessionPrincipal:
     user_id: UUID
     csrf_hash: bytes
+    display_name: str | None = None

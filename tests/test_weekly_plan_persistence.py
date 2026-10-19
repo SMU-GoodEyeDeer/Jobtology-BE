@@ -53,7 +53,10 @@ async def exercise_store(database_url):
                 id=proposal, analysis_id=analysis, user_id=owner, proposal_hash='hash',
                 profile_version=1, constraints_snapshot={
                     'available_hours_per_week': 12, 'target_by': '2027-04-14T16:00:00Z',
-                }, feasibility='FEASIBLE', optimization_status='OPTIMAL', steps=[], decision_trace_id=trace,
+                }, feasibility='FEASIBLE', optimization_status='OPTIMAL', steps=[
+                    {'step_key': 'pinned-study', 'estimated_hours': 7},
+                    {'step_key': 'legacy-step'},
+                ], decision_trace_id=trace,
             ))
             await session.execute(insert(roadmaps).values(
                 id=roadmap, user_id=owner, goal_id=goal, proposal_id=proposal,
@@ -70,6 +73,8 @@ async def exercise_store(database_url):
         assert context.created_at == created
         assert context.recommended_weekly_hours == 12
         assert context.target_date.isoformat() == '2027-04-15'
+        assert context.timezone == 'Asia/Seoul'
+        assert context.step_hours == {'pinned-study': 7}
         assert missing is None
         assert first.weekly_hours == 12
         assert changed == persisted
@@ -91,9 +96,12 @@ async def exercise_store(database_url):
         async with database.sessions.begin() as session:
             await session.execute(update(route_proposals).where(route_proposals.c.id == proposal)
                                   .values(constraints_snapshot={}))
+            await session.execute(update(goals).where(goals.c.id == goal)
+                                  .values(timezone='America/Los_Angeles'))
         fallback = await store.get_context(owner, roadmap)
         assert fallback.recommended_weekly_hours == 10
         assert fallback.target_date is None
+        assert fallback.timezone == 'America/Los_Angeles'
     finally:
         await database.dispose()
 

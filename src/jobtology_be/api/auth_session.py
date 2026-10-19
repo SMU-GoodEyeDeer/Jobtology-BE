@@ -17,6 +17,7 @@ class SessionResponse(BaseModel):
     user_id: UUID
     csrf_token: str
     profile_version: int | None = None
+    display_name: str | None = None
 
 
 async def require_authenticated_session() -> AuthenticatedSession:
@@ -30,7 +31,10 @@ async def require_session_store() -> SessionStore:
 async def require_session_response(
     session: Annotated[AuthenticatedSession, Depends(require_authenticated_session)],
 ) -> SessionResponse:
-    return SessionResponse(user_id=session.principal.user_id, csrf_token=session.csrf_token)
+    return SessionResponse(
+        user_id=session.principal.user_id, csrf_token=session.csrf_token,
+        display_name=session.principal.display_name,
+    )
 
 
 @router.get(

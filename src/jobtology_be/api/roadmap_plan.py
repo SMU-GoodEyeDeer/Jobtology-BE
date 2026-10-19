@@ -90,6 +90,18 @@ async def get_weekly_plan(inputs: _Inputs) -> WeeklyPlanResponse:
 @router.put('/roadmaps/{roadmap_id}/plan', response_model=WeeklyPlanResponse,
             summary='Save weekly roadmap plan overrides', responses=_ERRORS)
 async def put_weekly_plan(request: WeeklyPlanRequest, inputs: _Inputs) -> WeeklyPlanResponse:
+    plan = _overrides(request, inputs, saved_at=datetime.now(UTC))
+    preview = build_weekly_plan(inputs.context, inputs.steps, plan)
+    if not preview.is_customized:
+        await inputs.store.delete(inputs.user_id, inputs.context.roadmap_id)
+        return preview
+    overrides = await inputs.store.upsert(inputs.user_id, inputs.context.roadmap_id, plan)
+    return build_weekly_plan(inputs.context, inputs.steps, overrides)
+
+
+def _overrides(
+    request: WeeklyPlanRequest, inputs: _PlanInputs, *, saved_at: datetime | None,
+) -> PlanOverrides:
     step_ids = {str(item.step.step_id) for item in inputs.steps}
     if len(request.order) != len(step_ids) or set(request.order) != step_ids:
         raise HTTPException(status_code=422, detail='order must be an exact permutation of step IDs')
@@ -99,10 +111,17 @@ async def put_weekly_plan(request: WeeklyPlanRequest, inputs: _Inputs) -> Weekly
     hours = {str(step.step_id): request.hours[str(step.step_id)]
              for step in recommended.steps if str(step.step_id) in request.hours
              and request.hours[str(step.step_id)] != step.recommended_hours}
-    overrides = await inputs.store.upsert(inputs.user_id, inputs.context.roadmap_id, PlanOverrides(
+    return PlanOverrides(
         weekly_hours=request.weekly_hours, rest_weeks=tuple(sorted(request.rest_weeks)),
-        order=tuple(request.order), hours=hours, saved_at=datetime.now(UTC),
-    ))
+        order=tuple(request.order), hours=hours, saved_at=saved_at,
+    )
+
+
+@router.post('/roadmaps/{roadmap_id}/plan/preview', response_model=WeeklyPlanResponse,
+             summary='Preview a weekly plan without saving; null previews the solver schedule',
+             responses=_ERRORS)
+async def preview_weekly_plan(inputs: _Inputs, request: WeeklyPlanRequest | None = None) -> WeeklyPlanResponse:
+    overrides = _overrides(request, inputs, saved_at=None) if request is not None else None
     return build_weekly_plan(inputs.context, inputs.steps, overrides)
 
 

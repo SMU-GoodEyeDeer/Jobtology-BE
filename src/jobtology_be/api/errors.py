@@ -20,6 +20,7 @@ from jobtology_be.infrastructure.persistence.contracts import (
     OwnershipError,
     PersistenceConflictError,
 )
+from jobtology_be.modules.goals.write_validation import GoalWriteValidationError
 
 
 class ValidationIssue(BaseModel):
@@ -140,8 +141,22 @@ async def analysis_context_inputs_unavailable_error_handler(
     return _product_error_response(503, "DATA_UNAVAILABLE", "Analysis inputs are unavailable")
 
 
+async def goal_write_validation_error_handler(
+    _request: Request, exc: GoalWriteValidationError,
+) -> Response:
+    body = ErrorResponse(error=ErrorBody(
+        code="VALIDATION_ERROR", message=exc.message,
+        details=(ValidationIssue(location=("body", exc.field), code=exc.code),),
+    ))
+    return Response(
+        content=body.model_dump_json(), status_code=422, media_type="application/json",
+        headers={"X-Request-ID": str(body.error.request_id)},
+    )
+
+
 def register_error_handlers(app: FastAPI) -> None:
     app.exception_handler(RequestValidationError)(validation_error_handler)
+    app.exception_handler(GoalWriteValidationError)(goal_write_validation_error_handler)
     app.exception_handler(HTTPException)(http_error_handler)
     app.exception_handler(PersistenceConflictError)(persistence_conflict_error_handler)
     app.exception_handler(IdempotencyConflictError)(idempotency_conflict_error_handler)

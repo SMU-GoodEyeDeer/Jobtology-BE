@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, Protocol
@@ -8,6 +9,10 @@ from jobtology_be.infrastructure.persistence.contracts import (
     GoalSnapshot,
     ProfileSnapshot,
     UserCreate,
+)
+from jobtology_be.modules.goals.write_validation import (
+    GoalWriteValidationError,
+    validate_goal_schedule,
 )
 
 type GoalMode = Literal["TARGETED", "DISCOVERY"]
@@ -45,10 +50,26 @@ class GoalService(Protocol):
 class PersistentGoalService:
     _store: GoalStore
 
-    def __init__(self, store: GoalStore) -> None:
+    def __init__(
+        self, store: GoalStore, *, occupation_supported: Callable[[str], bool] | None = None,
+    ) -> None:
         self._store = store
+        self._occupation_supported = occupation_supported
 
     async def update_goal(self, user_id: UUID, command: GoalUpdateCommand) -> GoalUpdateResult:
+        validate_goal_schedule(command.target_by, command.timezone)
+        if command.goal_mode == "TARGETED" and (
+            command.occupation_id is None
+            or not command.occupation_id.strip()
+            or (
+                self._occupation_supported is not None
+                and not self._occupation_supported(command.occupation_id)
+            )
+        ):
+            raise GoalWriteValidationError(
+                field="occupation_id", code="unsupported_occupation",
+                message="Choose a supported occupation from the occupation catalog.",
+            )
         await self._store.create_user(UserCreate(user_id=user_id))
         snapshot = await self._store.mutate_goal(
             GoalMutation(

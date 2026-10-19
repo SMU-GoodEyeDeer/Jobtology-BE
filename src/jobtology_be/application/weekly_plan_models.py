@@ -1,6 +1,7 @@
 """Typed weekly plan boundaries; independent of persistence and HTTP."""
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import ClassVar, Literal
 from uuid import UUID
@@ -17,6 +18,8 @@ class PlanContext:
     created_at: datetime
     recommended_weekly_hours: int = 10
     target_date: date | None = None
+    timezone: str = 'Asia/Seoul'
+    step_hours: Mapping[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,7 +37,7 @@ class PlanOverrides(PlanModel):
     rest_weeks: tuple[int, ...]
     order: tuple[str, ...]
     hours: dict[str, int]
-    saved_at: datetime
+    saved_at: datetime | None
 
 
 class WeeklyPlanStep(PlanModel):
@@ -63,6 +66,13 @@ class WeeklyPlanStep(PlanModel):
     unmet_prerequisite_step_ids: tuple[UUID, ...]
 
 
+class WeeklyPlanWarning(PlanModel):
+    code: Literal['TARGET_DATE_EXCEEDED', 'PREREQUISITE_VIOLATION', 'MISSING_SOLVER_SCHEDULE']
+    message: str
+    step_ids: tuple[UUID, ...] = ()
+    prerequisite_step_ids: tuple[UUID, ...] = ()
+
+
 class WeeklyPlanResponse(PlanModel):
     roadmap_id: UUID
     start_date: date
@@ -76,4 +86,9 @@ class WeeklyPlanResponse(PlanModel):
     total_weeks: int
     completion_date: date
     recommended_completion_date: date
+    schedule_source: Literal['SOLVER', 'CUSTOM', 'FALLBACK']
+    deadline_exceeded: bool
+    days_past_target: int
+    has_dependency_violations: bool
+    warnings: tuple[WeeklyPlanWarning, ...]
     steps: tuple[WeeklyPlanStep, ...]
