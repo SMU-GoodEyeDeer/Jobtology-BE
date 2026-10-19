@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import ClassVar, Literal, assert_never
 from urllib.parse import urlsplit
 
-from pydantic import Field, SecretStr, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
@@ -60,7 +60,7 @@ class Settings(BaseSettings):
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
     auth_enabled: bool = False
     # Reject stale guest deployments instead of silently issuing anonymous accounts.
-    guest_sessions_enabled: Literal[False] = False
+    guest_sessions_enabled: bool = False
     product_roles_enabled: bool = False
     product_role_artifact_approval_path: Path | None = None
     inprocess_worker_enabled: bool = False
@@ -79,6 +79,13 @@ class Settings(BaseSettings):
     google_redirect_uri: str | None = Field(default=None, min_length=1)
     frontend_url: str | None = Field(default=None, min_length=1)
     session_ttl_seconds: int = Field(default=60 * 60 * 24 * 7, gt=0)
+
+    @field_validator("guest_sessions_enabled")
+    @classmethod
+    def reject_guest_authentication(cls, value: bool) -> bool:
+        if value:
+            raise ValueError("Guest authentication has been removed; this setting must be false")
+        return False
 
     @property
     def google_oidc_settings(self) -> GoogleOidcSettings:

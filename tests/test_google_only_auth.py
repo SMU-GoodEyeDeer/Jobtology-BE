@@ -38,6 +38,19 @@ def test_legacy_guest_flag_is_rejected_even_without_google_credentials() -> None
         Settings(_env_file=None, guest_sessions_enabled=True)
 
 
+@pytest.mark.parametrize("value", ["false", "False", "0", "off", "no"])
+def test_disabled_guest_environment_flag_is_accepted(monkeypatch, value: str) -> None:
+    monkeypatch.setenv("JOBTOLOGY_GUEST_SESSIONS_ENABLED", value)
+    assert Settings(_env_file=None).guest_sessions_enabled is False
+
+
+@pytest.mark.parametrize("value", ["true", "True", "1", "on", "yes"])
+def test_enabled_guest_environment_flag_is_rejected(monkeypatch, value: str) -> None:
+    monkeypatch.setenv("JOBTOLOGY_GUEST_SESSIONS_ENABLED", value)
+    with pytest.raises(ValidationError, match="guest_sessions_enabled"):
+        Settings(_env_file=None)
+
+
 @pytest.mark.parametrize("cookie", [None, "malformed", "unknown.token", "a.b.c", ".token"])
 def test_session_requests_never_bootstrap_anonymous_accounts(cookie: str | None) -> None:
     with TestClient(create_app(Settings(_env_file=None, environment="test"))) as client:
