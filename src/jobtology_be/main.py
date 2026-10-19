@@ -49,6 +49,7 @@ from jobtology_be.infrastructure.persistence.source_catalog import PostgresSourc
 from jobtology_be.infrastructure.persistence.store import PostgresApplicationStore
 from jobtology_be.infrastructure.persistence.weekly_plan import PostgresWeeklyPlanStore
 from jobtology_be.llm.factory import build_llm_client
+from jobtology_be.modules.analyses.editorial_models import ReleaseState
 from jobtology_be.modules.auth.google_oidc import GoogleOidcProvider
 from jobtology_be.modules.auth.session_cookies import (
     OAuthCallbackQueryMiddleware,
@@ -206,11 +207,25 @@ def create_app(
         profile_service = PersistentProfileService(store)
     if goal_service is None and store is not None:
         def occupation_supported(occupation_id: str) -> bool:
-            if role_holder is None:
-                return True
-            if not role_holder.available:
+            if role_holder is not None:
+                if not role_holder.available:
+                    raise AnalysisContextInputsUnavailableError("occupation catalog unavailable")
+                return role_holder.display_name(occupation_id) is not None
+            local_reader = (
+                corpus_source.local_snapshot_reader
+                if corpus_source is not None and not settings.product_roles_enabled else None
+            )
+            if local_reader is None:
                 raise AnalysisContextInputsUnavailableError("occupation catalog unavailable")
-            return role_holder.display_name(occupation_id) is not None
+            published = tuple(
+                snapshot for snapshot in local_reader.snapshots
+                if snapshot.release.state is ReleaseState.PUBLISHED
+                and not snapshot.is_fixture
+                and snapshot.release.release_id is not None
+            )
+            if not published:
+                raise AnalysisContextInputsUnavailableError("occupation catalog unavailable")
+            return any(snapshot.occupation_id == occupation_id for snapshot in published)
 
         goal_service = PersistentGoalService(store, occupation_supported=occupation_supported)
     if roadmap_service is None and store is not None:

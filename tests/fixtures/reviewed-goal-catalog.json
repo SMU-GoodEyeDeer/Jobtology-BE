@@ -1,0 +1,16 @@
+{
+  "snapshots": [{
+    "occupation_id": "BACKEND_DEVELOPER",
+    "basis_version": "reviewed-v1",
+    "release": {
+      "release_id": "release-reviewed-v1",
+      "state": "PUBLISHED",
+      "reviewed_at": "2026-09-22T00:00:00+00:00"
+    },
+    "is_fixture": false,
+    "capability_entries": [],
+    "allowed_experience_codes": [],
+    "requirements": [],
+    "templates": []
+  }]
+}

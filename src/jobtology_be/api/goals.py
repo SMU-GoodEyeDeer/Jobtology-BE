@@ -24,7 +24,6 @@ from jobtology_be.api.identity import AuthenticatedPrincipal, require_authentica
 from jobtology_be.api.product_queries import require_product_queries
 from jobtology_be.application.queries import GoalView, ProductQueries
 from jobtology_be.application.services.goals import GoalService, GoalUpdateCommand, GoalUpdateResult
-from jobtology_be.modules.goals.write_validation import validate_goal_schedule
 
 router = APIRouter(tags=["goals"])
 
@@ -50,7 +49,6 @@ class GoalUpdateRequest(BaseModel):
                 pass
             case unreachable:
                 assert_never(unreachable)
-        validate_goal_schedule(self.target_by, self.timezone)
         return self
 
 

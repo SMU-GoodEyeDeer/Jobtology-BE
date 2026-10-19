@@ -295,7 +295,7 @@ async def _exercise_display_name_refresh(database_url: str) -> None:
     database = Database.create(database_url)
     store = PostgresAuthStore(database)
     try:
-        async def login(subject: str, label: str, name: str):
+        async def login(subject: str, label: str, name: str | None):
             return await store.create_google_session(GoogleLogin(
                 google_subject=subject,
                 session=SessionIssue(_digest(label), _digest(f"csrf-{label}"), timedelta(days=1)),
@@ -304,7 +304,9 @@ async def _exercise_display_name_refresh(database_url: str) -> None:
         first = await login("verified-one", "first", "Same Name")
         other = await login("verified-two", "other", "Same Name")
         refreshed = await login("verified-one", "refreshed", "Updated Name")
-        assert first.user_id == refreshed.user_id != other.user_id
+        without_name = await login("verified-one", "without-name", None)
+        assert first.user_id == refreshed.user_id == without_name.user_id != other.user_id
+        assert (await store.resolve_session(_digest("without-name"))).display_name == "Updated Name"
         assert (await store.resolve_session(_digest("first"))).display_name == "Updated Name"
         assert (await store.resolve_session(_digest("other"))).display_name == "Same Name"
     finally:

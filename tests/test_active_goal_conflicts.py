@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from pathlib import Path
 from uuid import UUID, uuid4
 
 import anyio
@@ -87,7 +88,10 @@ def test_goal_routes_return_conflict_without_rolling_back_existing_active_goal(
     user_id = uuid4()
     anyio.run(_create_user, database_url, user_id)
     app = create_app(
-        Settings(environment="test", database_url=database_url, enable_fixtures=False),
+        Settings(
+            environment="test", database_url=database_url, enable_fixtures=False,
+            corpus_snapshot_path=Path(__file__).parent / "fixtures/reviewed-goal-catalog.json",
+        ),
         dependencies=ApiDependencies(identity_provider=StaticIdentityProvider(user_id)),
     )
 

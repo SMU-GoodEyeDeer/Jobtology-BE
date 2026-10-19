@@ -101,9 +101,10 @@ class PostgresAuthStore:
                     user_id = await self._active_user_id(session, login.google_subject)
             if user_id is None:
                 return None
-            await session.execute(
-                update(users).where(users.c.id == user_id).values(display_name=login.display_name)
-            )
+            if login.display_name is not None:
+                await session.execute(
+                    update(users).where(users.c.id == user_id).values(display_name=login.display_name)
+                )
             expires_at = await session.scalar(
                 insert(auth_sessions)
                 .values(

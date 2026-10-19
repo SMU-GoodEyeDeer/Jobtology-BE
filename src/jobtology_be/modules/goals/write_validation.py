@@ -16,6 +16,7 @@ class GoalWriteValidationError(Exception):
 
 def validate_goal_schedule(
     target_by: datetime, timezone: str, *, now: datetime | None = None,
+    validate_deadline: bool = True,
 ) -> None:
     try:
         ZoneInfo(timezone)
@@ -29,6 +30,8 @@ def validate_goal_schedule(
             field="target_by", code="timezone_required",
             message="Include a timezone offset in the goal deadline.",
         )
+    if not validate_deadline:
+        return
     reference = datetime.now(UTC) if now is None else now.astimezone(UTC)
     elapsed = target_by.astimezone(UTC) - reference
     if elapsed.total_seconds() <= 0:

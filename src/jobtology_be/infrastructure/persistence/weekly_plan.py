@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from datetime import date, datetime
 from typing import ClassVar
 from uuid import UUID
@@ -39,18 +40,12 @@ class _StoredOverride(BaseModel):
                              order=self.step_order, hours=self.step_hours, saved_at=self.updated_at)
 
 
-class _ProposalStep(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
-    step_key: str
-    estimated_hours: int | None = Field(default=None, ge=1)
-
-
 class _StoredContext(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
     created_at: datetime
     constraints_snapshot: _Constraints
     timezone: str
-    proposal_steps: tuple[_ProposalStep, ...]
+    proposal_steps: tuple[object, ...]
 
 
 class PostgresWeeklyPlanStore:
@@ -82,12 +77,18 @@ class PostgresWeeklyPlanStore:
         target = constraints.target_by
         target_date = ((target if target.tzinfo else target.replace(tzinfo=timezone))
                        .astimezone(timezone).date()) if isinstance(target, datetime) else target
+        step_hours: dict[str, int] = {}
+        for step in stored.proposal_steps:
+            if not isinstance(step, Mapping):
+                continue
+            key, hours = step.get('step_key'), step.get('estimated_hours')
+            if (isinstance(key, str) and key.strip() and isinstance(hours, int)
+                    and not isinstance(hours, bool) and hours > 0):
+                step_hours[key] = hours
         return PlanContext(roadmap_id=roadmap_id, created_at=stored.created_at,
                            recommended_weekly_hours=constraints.available_hours_per_week or 10,
                            target_date=target_date, timezone=stored.timezone,
-                           step_hours={step.step_key: step.estimated_hours
-                                       for step in stored.proposal_steps
-                                       if step.estimated_hours is not None})
+                           step_hours=step_hours)
 
     async def get(self, user_id: UUID, roadmap_id: UUID) -> PlanOverrides | None:
         async with self._database.sessions.begin() as session:
