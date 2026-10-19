@@ -21,6 +21,7 @@ from jobtology_be.infrastructure.persistence.schema import (
     recompute_contexts,
     recompute_requests,
     route_proposals,
+    users,
 )
 
 
@@ -77,6 +78,17 @@ class WorkerRepository:
             raise PersistenceConflictError(resource="route proposal work item")
         now = datetime.now(UTC)
         async with self._database.sessions.begin() as session:
+            # Serialize with account erasure before taking job locks or inserting
+            # records whose ownership FK would otherwise acquire locks in reverse.
+            owner = await session.scalar(
+                select(users.c.id).where(users.c.id == work_item.user_id).with_for_update()
+            )
+            if owner is None:
+                raise PersistenceConflictError(resource="deleted account")
+            await session.scalar(
+                select(profiles.c.version)
+                .where(profiles.c.user_id == work_item.user_id).with_for_update()
+            )
             lease = await session.execute(
                 select(outbox_jobs.c.state, outbox_jobs.c.lease_token, outbox_jobs.c.lease_until)
                 .where(
@@ -178,6 +190,7 @@ class WorkerRepository:
                     state="READY",
                     resulting_analysis_id=analysis.analysis_id,
                     proposal_id=proposal_id,
+                    auto_roadmap_pending=proposal_id is not None,
                     updated_at=now,
                 )
             )
@@ -215,6 +228,17 @@ class WorkerRepository:
     async def fail_recompute(self, work_item: RecomputeWorkItem, error_code: str) -> None:
         now = datetime.now(UTC)
         async with self._database.sessions.begin() as session:
+            # Serialize with account erasure before taking job locks or inserting
+            # records whose ownership FK would otherwise acquire locks in reverse.
+            owner = await session.scalar(
+                select(users.c.id).where(users.c.id == work_item.user_id).with_for_update()
+            )
+            if owner is None:
+                return  # Account erasure already removed the job and request.
+            await session.scalar(
+                select(profiles.c.version)
+                .where(profiles.c.user_id == work_item.user_id).with_for_update()
+            )
             lease = await session.execute(
                 select(outbox_jobs.c.state, outbox_jobs.c.lease_token, outbox_jobs.c.lease_until)
                 .where(

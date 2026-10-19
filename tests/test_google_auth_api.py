@@ -19,6 +19,7 @@ from jobtology_be.infrastructure.persistence.auth_contracts import (
 )
 from jobtology_be.main import create_app
 from jobtology_be.modules.auth.google_oidc import (
+    GoogleIdentity,
     GoogleIdentityProvider,
     GoogleOidcProvider,
     GoogleProviderError,
@@ -52,7 +53,7 @@ class FakeStore:
 
     async def create_google_session(self, login: GoogleLogin) -> IssuedSession:
         self.subjects.append(login.google_subject)
-        self.sessions[login.session.token_hash] = SessionPrincipal(USER_ID, login.session.csrf_hash)
+        self.sessions[login.session.token_hash] = SessionPrincipal(USER_ID, login.session.csrf_hash, login.display_name)
         return IssuedSession(USER_ID, datetime.now(UTC))
 
     async def resolve_session(self, session_token_hash: bytes) -> SessionPrincipal | None:
@@ -70,9 +71,9 @@ class FakeProvider:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, str]] = []
 
-    async def subject_for_code(self, code: str, verifier: str, nonce: str) -> str:
+    async def identity_for_code(self, code: str, verifier: str, nonce: str) -> GoogleIdentity:
         self.calls.append((code, verifier, nonce))
-        return "verified-google-subject"
+        return GoogleIdentity("verified-google-subject", "Google 사용자")
 
 
 def _client(store: FakeStore, provider: GoogleIdentityProvider, *, enabled: bool = True) -> TestClient:
@@ -92,7 +93,7 @@ def test_google_login_callback_issues_session_from_verified_subject() -> None:
         assert login.status_code == 307
         query = parse_qs(urlsplit(login.headers["location"]).query)
         assert urlsplit(login.headers["location"]).hostname == "accounts.google.com"
-        assert query["scope"] == ["openid"]
+        assert query["scope"] == ["openid profile"]
         assert query["code_challenge_method"] == ["S256"]
         assert OAUTH_ATTEMPT_COOKIE_NAME in client.cookies
         attempt_cookie = login.headers["set-cookie"].lower()
@@ -116,6 +117,7 @@ def test_google_login_callback_issues_session_from_verified_subject() -> None:
     assert callback.headers["cache-control"] == "no-store"
     assert session.status_code == 200
     assert session.json()["user_id"] == str(USER_ID)
+    assert session.json()["display_name"] == "Google 사용자"
     assert session.json()["csrf_token"]
     assert rejected_logout.status_code == 403
     assert logout.status_code == 204
@@ -159,7 +161,7 @@ def test_google_denial_consumes_attempt_and_clears_cookie() -> None:
 
 def test_provider_failure_never_issues_session() -> None:
     class BrokenProvider:
-        async def subject_for_code(self, code: str, verifier: str, nonce: str) -> str:
+        async def identity_for_code(self, code: str, verifier: str, nonce: str) -> GoogleIdentity:
             raise GoogleProviderError
 
     store = FakeStore()

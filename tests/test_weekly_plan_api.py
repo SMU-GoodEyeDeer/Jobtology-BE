@@ -1,11 +1,11 @@
 from dataclasses import replace
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
 from test_auth_session_api import FRONTEND_ORIGIN, RecordingSessionStore
-from test_weekly_plan import context, production_steps
+from test_weekly_plan import context, production_steps, solver_steps
 
 from jobtology_be.api.dependencies import ApiDependencies
 from jobtology_be.api.identity import (
@@ -123,6 +123,87 @@ def test_put_stores_only_different_hours():
     assert store.saved.hours == {str(UUID(int=10)): 24}
 
 
+def test_preview_uses_same_schedule_as_save_without_persisting_overrides():
+    store = Store()
+    with TestClient(app_with_store(store)) as client:
+        preview = client.post(f'{PATH}/preview', json=payload())
+        assert store.saved is None
+        saved = client.put(PATH, json=payload())
+        original = client.post(f'{PATH}/preview', json=None)
+        fetched = client.get(PATH)
+    assert preview.status_code == saved.status_code == original.status_code == 200
+    assert preview.json() == saved.json() | {'saved_at': None}
+    assert fetched.json() == saved.json()
+    assert original.json()['is_customized'] is False
+    assert original.json()['saved_at'] is None
+
+
+def test_custom_deadline_overrun_is_saved_and_returned_with_warning():
+    class DeadlineStore(Store):
+        async def get_context(self, user_id, roadmap_id):
+            return replace(await super().get_context(user_id, roadmap_id),
+                           target_date=date(2026, 10, 20))
+
+    store = DeadlineStore()
+    with TestClient(app_with_store(store)) as client:
+        response = client.put(PATH, json=payload())
+    assert response.status_code == 200
+    assert store.saved is not None
+    assert response.json()['deadline_exceeded'] is True
+    assert response.json()['days_past_target'] > 0
+    assert any(w['code'] == 'TARGET_DATE_EXCEEDED' for w in response.json()['warnings'])
+
+
+def test_preview_null_and_reset_return_exact_original_solver_dates():
+    class SolverQueries(Queries):
+        async def get_roadmap(self, user_id, roadmap_id):
+            original = await super().get_roadmap(user_id, roadmap_id)
+            return replace(original, steps=tuple(item.step for item in solver_steps()))
+
+    store = Store()
+    app = app_with_store(store)
+    app.dependency_overrides[require_product_queries] = lambda: SolverQueries()
+    inputs = payload() | {'order': [str(item.step.step_id) for item in solver_steps()], 'hours': {}}
+    with TestClient(app) as client:
+        original = client.get(PATH)
+        customized = client.put(PATH, json=inputs)
+        preview = client.post(f'{PATH}/preview', json=None)
+        reset = client.delete(PATH)
+    assert original.status_code == customized.status_code == preview.status_code == reset.status_code == 200
+    assert original.json()['completion_date'] == '2026-10-20'
+    assert original.json()['schedule_source'] == 'SOLVER'
+    assert customized.json()['schedule_source'] == 'CUSTOM'
+    assert customized.json()['recommended_completion_date'] == '2026-10-20'
+    assert original.json() == preview.json() == reset.json()
+
+
+def test_preview_validates_request_without_saving():
+    store = Store()
+    with TestClient(app_with_store(store)) as client:
+        response = client.post(f'{PATH}/preview', json=payload() | {'order': []})
+    assert response.status_code == 422
+    assert store.saved is None
+
+
+def test_put_recommendation_values_removes_old_customization():
+    store = Store()
+    original_inputs = payload() | {'weekly_hours': 10, 'rest_weeks': [], 'hours': {}}
+    with TestClient(app_with_store(store)) as client:
+        original = client.get(PATH)
+        client.put(PATH, json=payload())
+        assert store.saved is not None
+        response = client.put(PATH, json=original_inputs)
+    assert response.status_code == 200
+    assert response.json() == original.json()
+    assert store.saved is None
+
+
+def test_preview_requires_authentication():
+    client = TestClient(create_app(Settings()))
+    response = client.post(f'{PATH}/preview', json=payload())
+    assert response.status_code == 401
+
+
 @pytest.mark.parametrize('patch', [
     {'order': []}, {'order': [str(UUID(int=1))] * 11},
     {'hours': {str(UUID(int=999)): 20}}, {'weekly_hours': True}, {'weekly_hours': '12'},
@@ -174,8 +255,8 @@ def test_plan_requires_authentication(method):
     assert response.status_code == 401
 
 
-@pytest.mark.parametrize('method', ['put', 'delete'])
-def test_mutations_require_session_csrf_and_trusted_origin(method):
+@pytest.mark.parametrize('method,path', [('put', PATH), ('delete', PATH), ('post', f'{PATH}/preview')])
+def test_mutations_require_session_csrf_and_trusted_origin(method, path):
     # Given
     credentials = issue_session_credentials()
     app = app_with_store(Store())
@@ -186,11 +267,11 @@ def test_mutations_require_session_csrf_and_trusted_origin(method):
     # When
     with TestClient(app) as client:
         client.cookies.set(SESSION_COOKIE_NAME, credentials.cookie_value)
-        missing = client.request(method, PATH, json=payload() if method == 'put' else None)
-        hostile = client.request(method, PATH, json=payload() if method == 'put' else None,
+        missing = client.request(method, path, json=payload() if method in ('put', 'post') else None)
+        hostile = client.request(method, path, json=payload() if method in ('put', 'post') else None,
                                  headers={'Origin': 'https://attacker.example',
                                           'X-CSRF-Token': credentials.csrf_token})
-        accepted = client.request(method, PATH, json=payload() if method == 'put' else None,
+        accepted = client.request(method, path, json=payload() if method in ('put', 'post') else None,
                                   headers={'Origin': FRONTEND_ORIGIN,
                                            'X-CSRF-Token': credentials.csrf_token})
     # Then

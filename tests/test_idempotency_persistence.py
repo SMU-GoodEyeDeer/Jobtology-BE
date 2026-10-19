@@ -1,5 +1,6 @@
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from uuid import UUID, uuid4
 
 import anyio
@@ -187,7 +188,10 @@ def test_postgres_goal_endpoint_replays_same_key_and_rejects_a_changed_request(
     user_id = uuid4()
     anyio.run(_create_user, database_url, user_id)
     app = create_app(
-        Settings(environment="test", database_url=database_url, enable_fixtures=False),
+        Settings(
+            environment="test", database_url=database_url, enable_fixtures=False,
+            corpus_snapshot_path=Path(__file__).parent / "fixtures/reviewed-goal-catalog.json",
+        ),
         dependencies=ApiDependencies(identity_provider=StaticIdentityProvider(user_id)),
     )
     payload = {

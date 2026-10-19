@@ -116,6 +116,9 @@ def planning_result(
         optimization_status=status,
         rejections=rejections,
         partial_route_diagnostic=diagnostic,
+        planning_policy_version=problem.planning_policy_version,
+        planning_policy_decisions=problem.planning_policy_decisions,
+        foundational_priority_action_ids=tuple(sorted(problem.foundational_priority_action_ids)),
     )
     return PlanningResult(
         feasibility=feasibility,
@@ -135,6 +138,10 @@ def _selection_reasons(
         reasons.add(StepSelectionReason.SATISFIES_PREFERRED_REQUIREMENT)
     if any(candidate.action_id in selected.prerequisite_action_ids for selected in selected_candidates):
         reasons.add(StepSelectionReason.PREREQUISITE)
+    if candidate.action_id in problem.portfolio_action_ids:
+        reasons.add(StepSelectionReason.PORTFOLIO_PREFERENCE)
+    if candidate.action_id in problem.foundational_priority_action_ids:
+        reasons.add(StepSelectionReason.FOUNDATIONAL_PREFERENCE)
     return tuple(sorted(reasons))
 
 

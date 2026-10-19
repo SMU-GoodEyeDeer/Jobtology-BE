@@ -58,7 +58,7 @@ class ConfiguredRecomputeRepository(OutboxRepository):
             )
             .where(
                 recompute_requests.c.user_id == user_id,
-                recompute_requests.c.state.in_(("PENDING", "READY")),
+                recompute_requests.c.state.in_(("PENDING", "RUNNING", "READY")),
                 recompute_requests.c.profile_version < profile_version,
                 recompute_contexts.c.payload["goal_id"].astext == str(goal_id),
             )

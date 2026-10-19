@@ -4,6 +4,7 @@ from contextlib import AbstractAsyncContextManager
 from fastapi import APIRouter, FastAPI
 from pydantic import BaseModel
 
+from jobtology_be.api.accounts import router as accounts_router
 from jobtology_be.api.auth_session import router as auth_session_router
 from jobtology_be.api.composition import OPENAPI_TAGS
 from jobtology_be.api.errors import ErrorResponse
@@ -11,6 +12,7 @@ from jobtology_be.api.product import router as product_router
 
 router = APIRouter()
 router.include_router(auth_session_router)
+router.include_router(accounts_router)
 router.include_router(product_router)
 
 

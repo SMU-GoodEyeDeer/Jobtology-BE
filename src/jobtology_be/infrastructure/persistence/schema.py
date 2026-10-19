@@ -30,6 +30,7 @@ users = Table(
     METADATA,
     Column("id", UUID(as_uuid=True), primary_key=True),
     Column("status", String(32), nullable=False, server_default=text("'ACTIVE'")),
+    Column("display_name", String(255)),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=UTC_NOW),
     CheckConstraint("status IN ('ACTIVE', 'DEACTIVATED')", name="users_status_check"),
 )
@@ -370,12 +371,20 @@ recompute_requests = Table(
     Column("state", String(16), nullable=False, server_default=text("'PENDING'")),
     Column("resulting_analysis_id", UUID(as_uuid=True), ForeignKey("analyses.id")),
     Column("proposal_id", UUID(as_uuid=True), ForeignKey("route_proposals.id")),
+    Column("auto_roadmap_pending", BOOLEAN, nullable=False, server_default=text("false")),
     Column("error_code", String(128)),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=UTC_NOW),
     Column("updated_at", DateTime(timezone=True), nullable=False, server_default=UTC_NOW),
     UniqueConstraint(
         "user_id", "profile_version", "trigger_event_id", name="recompute_requests_trigger_key"
     ),
+)
+
+Index(
+    "recompute_requests_auto_roadmap_pending_index",
+    recompute_requests.c.created_at,
+    recompute_requests.c.id,
+    postgresql_where=recompute_requests.c.auto_roadmap_pending.is_(True),
 )
 
 recompute_contexts = Table(

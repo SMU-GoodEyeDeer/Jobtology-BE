@@ -27,6 +27,7 @@ from jobtology_be.api.role_evidence_graph import router as role_evidence_graph_r
 from jobtology_be.api.router import create_api_shell, router
 from jobtology_be.api.source_catalog import router as source_catalog_router
 from jobtology_be.application.services.analyses import PersistentAnalysisService
+from jobtology_be.application.services.analysis_inputs import AnalysisContextInputsUnavailableError
 from jobtology_be.application.services.capabilities import PersistentCapabilityService
 from jobtology_be.application.services.goals import PersistentGoalService
 from jobtology_be.application.services.preferences import PersistentPreferencesService
@@ -36,6 +37,7 @@ from jobtology_be.chat.service import ChatCapabilityService
 from jobtology_be.corpus.role_evidence_graph import Neo4jRoleEvidenceGraph
 from jobtology_be.corpus.source_factory import build_configured_corpus_source
 from jobtology_be.editorial.reader import DraftReadService, load_drafts
+from jobtology_be.infrastructure.persistence.accounts import PostgresAccountService
 from jobtology_be.infrastructure.persistence.auth_store import PostgresAuthStore
 from jobtology_be.infrastructure.persistence.database import Database
 from jobtology_be.infrastructure.persistence.live_source_feed import PostgresLiveSourceFeed
@@ -47,6 +49,7 @@ from jobtology_be.infrastructure.persistence.source_catalog import PostgresSourc
 from jobtology_be.infrastructure.persistence.store import PostgresApplicationStore
 from jobtology_be.infrastructure.persistence.weekly_plan import PostgresWeeklyPlanStore
 from jobtology_be.llm.factory import build_llm_client
+from jobtology_be.modules.analyses.editorial_models import ReleaseState
 from jobtology_be.modules.auth.google_oidc import GoogleOidcProvider
 from jobtology_be.modules.auth.session_cookies import (
     OAuthCallbackQueryMiddleware,
@@ -86,6 +89,7 @@ def create_app(
     database = None
     corpus_source = None
     store = None
+    account_service = dependencies.account_service
     session_store = dependencies.session_store
     chat_rate_limiter = dependencies.chat_rate_limiter
     m5_queries = dependencies.m5_queries
@@ -138,9 +142,11 @@ def create_app(
         corpus_source = build_configured_corpus_source(settings)
     if settings.database_url is not None:
         database = Database.create(settings.database_url)
+        account_service = account_service or PostgresAccountService(database)
         chat_rate_limiter = chat_rate_limiter or PostgresAccountRateLimiter(database.sessions)
         store = PostgresApplicationStore(
-            database, capability_list_authoritative=settings.capability_list_authoritative
+            database, capability_list_authoritative=settings.capability_list_authoritative,
+            google_accounts_only=settings.auth_enabled,
         )
         idempotency_store = idempotency_store or store
         corpus_source = corpus_source or build_configured_corpus_source(settings)
@@ -200,7 +206,28 @@ def create_app(
     if profile_service is None and store is not None:
         profile_service = PersistentProfileService(store)
     if goal_service is None and store is not None:
-        goal_service = PersistentGoalService(store)
+        def occupation_supported(occupation_id: str) -> bool:
+            if role_holder is not None:
+                if not role_holder.available:
+                    raise AnalysisContextInputsUnavailableError("occupation catalog unavailable")
+                return role_holder.display_name(occupation_id) is not None
+            local_reader = (
+                corpus_source.local_snapshot_reader
+                if corpus_source is not None and not settings.product_roles_enabled else None
+            )
+            if local_reader is None:
+                raise AnalysisContextInputsUnavailableError("occupation catalog unavailable")
+            published = tuple(
+                snapshot for snapshot in local_reader.snapshots
+                if snapshot.release.state is ReleaseState.PUBLISHED
+                and not snapshot.is_fixture
+                and snapshot.release.release_id is not None
+            )
+            if not published:
+                raise AnalysisContextInputsUnavailableError("occupation catalog unavailable")
+            return any(snapshot.occupation_id == occupation_id for snapshot in published)
+
+        goal_service = PersistentGoalService(store, occupation_supported=occupation_supported)
     if roadmap_service is None and store is not None:
         roadmap_service = PersistentRoadmapService(store)
     if capability_service is None and store is not None:
@@ -272,6 +299,7 @@ def create_app(
             chat_rate_limiter=chat_rate_limiter,
             idempotency_store=idempotency_store,
             session_store=session_store,
+            account_service=account_service,
         ),
         settings,
     )

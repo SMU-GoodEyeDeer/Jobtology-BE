@@ -91,8 +91,13 @@ def acceptance_database_url() -> Iterator[str]:
 
 
 def _application(database_url: str, user_id: UUID) -> FastAPI:
+    settings = Settings(_env_file=None, database_url=database_url, enable_fixtures=False)
+    if settings.corpus_snapshot_path is None:
+        settings = settings.model_copy(update={
+            "corpus_snapshot_path": Path(__file__).parent / "fixtures/reviewed-goal-catalog.json",
+        })
     return create_app(
-        Settings(_env_file=None, database_url=database_url, enable_fixtures=False),
+        settings,
         dependencies=ApiDependencies(identity_provider=StaticIdentityProvider(user_id=user_id)),
     )
 

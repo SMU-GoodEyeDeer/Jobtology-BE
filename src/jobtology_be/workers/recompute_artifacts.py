@@ -66,6 +66,8 @@ def build_recompute_artifacts(
     planning_result: PlanningResult,
 ) -> RecomputeArtifacts:
     input_snapshot = _input_snapshot(context)
+    if planning_result.trace.planning_policy_version is not None:
+        input_snapshot = {**input_snapshot, 'planning_policy': _planning_policy(planning_result)}
     analysis_id = UUID(analysis.analysis_id)
     proposal = _proposal(
         user_id=work_item.user_id,
@@ -209,6 +211,10 @@ def _proposal(
         ),
         "optimization_status": planning_result.optimization_status,
     }
+    if planning_result.trace.planning_policy_version is not None:
+        trace_versions = {**trace_versions,
+                          'planning_policy_version': planning_result.trace.planning_policy_version}
+        trace_outputs = {**trace_outputs, 'planning_policy': _planning_policy(planning_result)}
     if planning_result.feasibility is RouteFeasibility.PARTIAL:
         diagnostic = planning_result.trace.partial_route_diagnostic
         trace_outputs = {
@@ -234,6 +240,14 @@ def _proposal(
         trace_outputs=trace_outputs,
         release_id=planning_result.trace.corpus_release_id,
     )
+
+
+def _planning_policy(result: PlanningResult) -> Mapping[str, JsonValue]:
+    return {
+        'version': result.trace.planning_policy_version,
+        'decisions': result.trace.planning_policy_decisions,
+        'foundational_priority_action_ids': result.trace.foundational_priority_action_ids,
+    }
 
 
 def _constraints_snapshot(snapshot: PlanningConstraintSnapshot) -> Mapping[str, JsonValue]:

@@ -238,7 +238,13 @@ def test_enabled_product_roles_fail_closed_without_ready_source(monkeypatch: pyt
         response = client.post("/api/v1/analyses", json={
             "goal_id": str(uuid4()), "expected_profile_version": 1, "basis_type": "EDITORIAL",
         })
+        goal_response = client.post("/api/v1/me/goals", json={
+            "expected_profile_version": 1, "goal_mode": "TARGETED",
+            "occupation_id": "BACKEND_DEVELOPER", "target_by": "2027-01-01T00:00:00+00:00",
+            "timezone": "UTC", "original_time_phrase": "by next year",
+        })
     assert response.status_code == 503
+    assert goal_response.status_code == 503
 
 
 def test_lifespan_starts_worker_only_after_successful_role_load() -> None:

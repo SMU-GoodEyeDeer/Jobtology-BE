@@ -117,6 +117,7 @@ def build_route_model(
         selected_by_action,
         covered_by_requirement,
         completion_by_action,
+        assignments_by_action,
         reward_required_coverage=not require_required_coverage,
     )
     return RouteModelArtifacts(
@@ -191,6 +192,7 @@ def _add_objective(
     selected_by_action: dict[str, cp_model.IntVar],
     covered_by_requirement: dict[str, cp_model.IntVar],
     completion_by_action: dict[str, cp_model.IntVar],
+    assignments_by_action: dict[str, tuple[cp_model.IntVar, ...]],
     *,
     reward_required_coverage: bool,
 ) -> None:
@@ -215,15 +217,31 @@ def _add_objective(
         + objective.time_weight * time_points
         + objective.cost_weight * cost_points
     )
-    if not reward_required_coverage:
-        model.maximize(weighted_points)
+    primary_score = weighted_points
+    if reward_required_coverage:
+        # One more required requirement outweighs the entire normalized weighted score.
+        required_covered = sum(
+            covered_by_requirement[key] for key in sorted(problem.required_requirement_keys)
+        )
+        primary_score = PARTIAL_REQUIRED_COVERAGE_WEIGHT * required_covered + primary_score
+    foundations = tuple(candidate for candidate in candidates
+                        if candidate.action_id in problem.foundational_priority_action_ids)
+    if not foundations:
+        model.maximize(primary_score)
         return
-    # Partial routes cover as many unmet required requirements as possible first; one more
-    # required requirement always outweighs the whole normalized weighted score.
-    required_covered = sum(
-        covered_by_requirement[key] for key in sorted(problem.required_requirement_keys)
+    # A bounded tie-break prefers earlier foundational hours only after coverage, completion,
+    # and cost. This is a preference, so real prerequisites and availability still take precedence.
+    slot_count = len(problem.calendar)
+    maximum = slot_count * sum(candidate.estimated_hours for candidate in foundations)
+    early_foundation_hours = sum(
+        (slot_count - slot_index) * assignment for candidate in foundations
+        for slot_index, assignment in enumerate(assignments_by_action[candidate.action_id])
     )
-    model.maximize(PARTIAL_REQUIRED_COVERAGE_WEIGHT * required_covered + weighted_points)
+    foundation_points = model.new_int_var(0, NORMALIZED_SCORE_MAXIMUM, 'foundation_priority_points')
+    model.add_division_equality(
+        foundation_points, early_foundation_hours * NORMALIZED_SCORE_MAXIMUM, maximum,
+    )
+    model.maximize(primary_score * (NORMALIZED_SCORE_MAXIMUM + 1) + foundation_points)
 
 
 def _coverage_points(

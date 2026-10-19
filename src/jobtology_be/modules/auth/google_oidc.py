@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import ClassVar, Final, Protocol
+from unicodedata import category
 
 import anyio
 import httpx
@@ -23,8 +24,16 @@ class GoogleProviderError(Exception):
     pass
 
 
+@dataclass(frozen=True, slots=True)
+class GoogleIdentity:
+    subject: str
+    display_name: str | None = None
+
+
 class GoogleIdentityProvider(Protocol):
-    async def subject_for_code(self, code: str, verifier: str, nonce: str) -> str: ...
+    async def identity_for_code(
+        self, code: str, verifier: str, nonce: str
+    ) -> GoogleIdentity: ...
 
 
 class _TokenResponse(BaseModel):
@@ -46,6 +55,7 @@ class _IdClaims(BaseModel):
     exp: int
     iat: int
     azp: str | None = None
+    name: str | None = None
 
 
 class GoogleOidcProvider:
@@ -71,6 +81,11 @@ class GoogleOidcProvider:
             raise GoogleProviderError from error
 
     async def subject_for_code(self, code: str, verifier: str, nonce: str) -> str:
+        return (await self.identity_for_code(code, verifier, nonce)).subject
+
+    async def identity_for_code(
+        self, code: str, verifier: str, nonce: str
+    ) -> GoogleIdentity:
         settings = self._settings
         if not settings.is_configured:
             raise GoogleProviderError
@@ -118,4 +133,9 @@ class GoogleOidcProvider:
             or (identity.azp is not None and identity.azp != settings.client_id)
         ):
             raise GoogleProviderError
-        return identity.sub
+        # Display text is optional, taken only from the verified ID token. It never
+        # participates in account lookup or identity linking.
+        name = identity.name
+        if name is not None:
+            name = " ".join("".join(c for c in name if not category(c).startswith("C")).split())[:255]
+        return GoogleIdentity(identity.sub, name or None)

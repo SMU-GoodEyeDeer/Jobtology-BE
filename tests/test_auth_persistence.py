@@ -289,3 +289,29 @@ def test_google_identity_schema_is_canonical_and_never_stores_email() -> None:
     assert "state" not in oauth_login_attempts.c
     assert "browser_binding" not in oauth_login_attempts.c
     assert "token" not in auth_sessions.c
+
+
+async def _exercise_display_name_refresh(database_url: str) -> None:
+    database = Database.create(database_url)
+    store = PostgresAuthStore(database)
+    try:
+        async def login(subject: str, label: str, name: str | None):
+            return await store.create_google_session(GoogleLogin(
+                google_subject=subject,
+                session=SessionIssue(_digest(label), _digest(f"csrf-{label}"), timedelta(days=1)),
+                display_name=name,
+            ))
+        first = await login("verified-one", "first", "Same Name")
+        other = await login("verified-two", "other", "Same Name")
+        refreshed = await login("verified-one", "refreshed", "Updated Name")
+        without_name = await login("verified-one", "without-name", None)
+        assert first.user_id == refreshed.user_id == without_name.user_id != other.user_id
+        assert (await store.resolve_session(_digest("without-name"))).display_name == "Updated Name"
+        assert (await store.resolve_session(_digest("first"))).display_name == "Updated Name"
+        assert (await store.resolve_session(_digest("other"))).display_name == "Same Name"
+    finally:
+        await database.dispose()
+
+
+def test_verified_google_name_refreshes_existing_sessions_without_linking_names(acceptance_database_url):
+    anyio.run(_exercise_display_name_refresh, acceptance_database_url)

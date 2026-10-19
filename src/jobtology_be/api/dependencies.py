@@ -11,6 +11,7 @@ from jobtology_be.application.requirement_metadata import (
     OccupationDisplayNames,
     RequirementMetadataLookup,
 )
+from jobtology_be.application.services.accounts import AccountService
 from jobtology_be.application.services.analyses import (
     AnalysisContextFactory,
     AnalysisRecomputeSubmitter,
@@ -36,6 +37,7 @@ from jobtology_be.product_roles.checklist import OnboardingChecklistCatalog
 class ApiDependencies:
     identity_provider: IdentityProvider | None = None
     session_store: SessionStore | None = None
+    account_service: AccountService | None = None
     google_login_store: GoogleLoginStore | None = None
     google_identity_provider: GoogleIdentityProvider | None = None
     profile_service: ProfileService | None = None

@@ -118,7 +118,10 @@ def test_ready_feasible_recompute_creates_one_active_roadmap(
     # Given a real disposable product DB, active goal, and finalized feasible proposal
     user_id = uuid4()
     app = create_app(
-        Settings(_env_file=None, database_url=acceptance_database_url),
+        Settings(
+            _env_file=None, database_url=acceptance_database_url,
+            corpus_snapshot_path=Path(__file__).parent / "fixtures/reviewed-goal-catalog.json",
+        ),
         dependencies=ApiDependencies(identity_provider=Identity(user_id)),
     )
     with TestClient(app) as client:
@@ -190,7 +193,10 @@ def test_authoritative_empty_capabilities_are_complete(acceptance_database_url: 
     # Given a real profile, goal and preferences without any stored capabilities
     user_id = uuid4()
     app = create_app(
-        Settings(_env_file=None, database_url=acceptance_database_url),
+        Settings(
+            _env_file=None, database_url=acceptance_database_url,
+            corpus_snapshot_path=Path(__file__).parent / "fixtures/reviewed-goal-catalog.json",
+        ),
         dependencies=ApiDependencies(identity_provider=Identity(user_id)),
     )
     with TestClient(app) as client:
@@ -238,7 +244,10 @@ def test_later_profile_recompute_keeps_the_existing_active_roadmap(
     # Given an ACTIVE auto roadmap created at profile version 2
     user_id = uuid4()
     app = create_app(
-        Settings(_env_file=None, database_url=acceptance_database_url),
+        Settings(
+            _env_file=None, database_url=acceptance_database_url,
+            corpus_snapshot_path=Path(__file__).parent / "fixtures/reviewed-goal-catalog.json",
+        ),
         dependencies=ApiDependencies(identity_provider=Identity(user_id)),
     )
     with TestClient(app) as client:

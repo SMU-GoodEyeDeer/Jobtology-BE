@@ -59,7 +59,9 @@ from jobtology_be.infrastructure.persistence.schema import (
     analyses,
     calculation_traces,
     goals,
+    google_identities,
     profiles,
+    recompute_requests,
     roadmap_steps,
     roadmaps,
     route_preferences,
@@ -76,8 +78,12 @@ ONBOARDING_CAPABILITY_CATEGORY = "onboarding"
 
 
 class PostgresApplicationStore(OutboxRepository, WorkerRepository):
-    def __init__(self, database: Database, *, capability_list_authoritative: bool = False) -> None:
+    def __init__(
+        self, database: Database, *, capability_list_authoritative: bool = False,
+        google_accounts_only: bool = False,
+    ) -> None:
         super().__init__(database)
+        self._google_accounts_only = google_accounts_only
         self._active_session: ContextVar[AsyncSession | None] = ContextVar(
             "postgres_application_store_active_session", default=None
         )
@@ -89,6 +95,9 @@ class PostgresApplicationStore(OutboxRepository, WorkerRepository):
 
     async def create_user(self, request: UserCreate) -> ProfileSnapshot:
         async with self._transaction() as session:
+            if self._google_accounts_only:
+                version = await self._lock_google_account(session, request.user_id)
+                return ProfileSnapshot(user_id=request.user_id, version=version)
             await session.execute(
                 postgres_insert(users).values(id=request.user_id).on_conflict_do_nothing()
             )
@@ -526,6 +535,7 @@ class PostgresApplicationStore(OutboxRepository, WorkerRepository):
                 step_id = uuid4()
                 step_key = proposal_step["step_key"]
                 step_ids[step_key] = step_id
+                planned_start, planned_end = _proposal_step_dates(proposal_step)
                 await session.execute(
                     insert(roadmap_steps).values(
                         id=step_id,
@@ -534,6 +544,8 @@ class PostgresApplicationStore(OutboxRepository, WorkerRepository):
                         position=position,
                         action_id=proposal_step["action_id"],
                         template_revision=proposal_step["template_revision"],
+                        planned_start=planned_start,
+                        planned_end=planned_end,
                         outcomes=proposal_step["outcomes"],
                         criteria=proposal_step.get("completion_criteria", []),
                     )
@@ -603,8 +615,108 @@ class PostgresApplicationStore(OutboxRepository, WorkerRepository):
                     )
         return RoadmapSnapshot(roadmap_id=request.roadmap_id, version=1, state="DRAFT")
 
+    async def reconcile_automatic_roadmap(self, request_id: UUID, title: str) -> None:
+        """Settle durable follow-up work atomically, preserving an existing active roadmap.
+
+        Lock user then profile to serialize with account deletion, and hold the
+        profile lock across creation, activation and clearing the pending flag.
+        Concurrent workers or user mutations cannot leave a partial automatic roadmap.
+        """
+        async with self._transaction() as session:
+            user_id = await session.scalar(
+                select(recompute_requests.c.user_id).where(recompute_requests.c.id == request_id)
+            )
+            if user_id is None:
+                return  # Account deletion may have removed the request since it was listed.
+            # Match account deletion's user -> profile lock order. A deleted
+            # account must never be recreated by delayed background work.
+            owner = await session.scalar(select(users.c.id).where(users.c.id == user_id).with_for_update())
+            if owner is None:
+                return
+            profile_version = await session.scalar(
+                select(profiles.c.version).where(profiles.c.user_id == user_id).with_for_update()
+            )
+            result = await session.execute(
+                select(
+                    recompute_requests.c.profile_version,
+                    recompute_requests.c.state,
+                    recompute_requests.c.auto_roadmap_pending,
+                    recompute_requests.c.proposal_id,
+                    analyses.c.goal_id,
+                    goals.c.status.label("goal_status"),
+                    goals.c.goal_mode,
+                    route_proposals.c.feasibility,
+                )
+                .join(analyses, analyses.c.id == recompute_requests.c.resulting_analysis_id)
+                .join(route_proposals, route_proposals.c.id == recompute_requests.c.proposal_id)
+                .join(goals, goals.c.id == analyses.c.goal_id)
+                .where(recompute_requests.c.id == request_id)
+                .with_for_update(of=recompute_requests)
+            )
+            row = result.one_or_none()
+            if row is None or not row.auto_roadmap_pending:
+                return
+            eligible = (
+                row.state == "READY"
+                and profile_version == row.profile_version
+                and row.goal_status == "ACTIVE"
+                and row.goal_mode == "TARGETED"
+                and row.feasibility in {"FEASIBLE", "RISKY", "PARTIAL"}
+            )
+            active = await session.scalar(
+                select(roadmaps.c.id).where(
+                    roadmaps.c.user_id == user_id,
+                    roadmaps.c.goal_id == row.goal_id,
+                    roadmaps.c.state == "ACTIVE",
+                ).limit(1)
+            )
+            if eligible and active is None:
+                # Recover a draft left by the old non-atomic implementation instead
+                # of duplicating its roadmap/steps. An archived roadmap is a user choice.
+                existing = (await session.execute(
+                    select(roadmaps.c.id, roadmaps.c.version, roadmaps.c.state, roadmaps.c.validity)
+                    .where(roadmaps.c.user_id == user_id, roadmaps.c.proposal_id == row.proposal_id)
+                    .order_by(roadmaps.c.created_at, roadmaps.c.id)
+                    .limit(1)
+                )).one_or_none()
+                recoverable = existing is None or (
+                    existing.state == "DRAFT"
+                    and source_is_current(parse_source_validity(existing.validity), datetime.now(UTC))
+                )
+                if recoverable:
+                    token = self._active_session.set(session)
+                    try:
+                        # Roll back every partial write before settling a permanent
+                        # domain conflict (e.g. a source expiring during activation).
+                        async with session.begin_nested():
+                            if existing is None:
+                                created = await self.create_roadmap(RoadmapCreate(
+                                    user_id=user_id, roadmap_id=uuid4(), goal_id=row.goal_id,
+                                    proposal_id=row.proposal_id, title=title,
+                                    profile_version=row.profile_version,
+                                ))
+                                roadmap_id, version = created.roadmap_id, created.version
+                            else:
+                                roadmap_id, version = existing.id, existing.version
+                            await self.mutate_roadmap(RoadmapMutation(
+                                user_id=user_id, roadmap_id=roadmap_id,
+                                expected_roadmap_version=version,
+                                expected_profile_version=row.profile_version,
+                                state="ACTIVE", title=None,
+                            ))
+                    except (PersistenceConflictError, MissingRecordError):
+                        # Ownership/version/source conflicts cannot be repaired by
+                        # retrying this old proposal. A fresh analysis queues new work.
+                        pass
+                    finally:
+                        self._active_session.reset(token)
+            await session.execute(
+                update(recompute_requests).where(recompute_requests.c.id == request_id)
+                .values(auto_roadmap_pending=False)
+            )
+
     async def mutate_roadmap(self, request: RoadmapMutation) -> RoadmapSnapshot:
-        async with self._database.sessions.begin() as session:
+        async with self._transaction() as session:
             profile_version = await session.scalar(
                 select(profiles.c.version)
                 .where(profiles.c.user_id == request.user_id)
@@ -676,6 +788,8 @@ class PostgresApplicationStore(OutboxRepository, WorkerRepository):
 
     async def acquire_idempotency(self, request: IdempotencyAcquire) -> IdempotencySnapshot:
         async with self._database.sessions.begin() as session:
+            if self._google_accounts_only:
+                await self._lock_google_account(session, request.user_id)
             return await acquire_idempotency_record(session, request)
 
     async def complete_idempotency(self, request: IdempotencyComplete) -> None:
@@ -689,6 +803,8 @@ class PostgresApplicationStore(OutboxRepository, WorkerRepository):
         operation: Callable[[], Awaitable[Mapping[str, JsonValue]]],
     ) -> IdempotencySnapshot:
         async with self._database.sessions.begin() as session:
+            if self._google_accounts_only:
+                await self._lock_google_account(session, request.user_id)
             snapshot = await acquire_idempotency_record(session, request)
             if snapshot.response_status is not None:
                 return snapshot
@@ -706,6 +822,27 @@ class PostgresApplicationStore(OutboxRepository, WorkerRepository):
                 ),
             )
             return IdempotencySnapshot(response_status=response_status, response=response)
+
+    async def _lock_google_account(self, session: AsyncSession, user_id: UUID) -> int:
+        # OAuth provisions accounts. Writes verify/lock existing ownership before
+        # any descendant row lock, and never resurrect a concurrently erased user.
+        owner = await session.scalar(
+            select(users.c.id).where(
+                users.c.id == user_id, users.c.status == "ACTIVE",
+                select(google_identities.c.user_id).where(
+                    google_identities.c.user_id == users.c.id,
+                    google_identities.c.issuer == "https://accounts.google.com",
+                ).exists(),
+            ).with_for_update()
+        )
+        if owner is None:
+            raise MissingRecordError(resource="account")
+        version = await session.scalar(select(profiles.c.version).where(
+            profiles.c.user_id == user_id,
+        ).with_for_update())
+        if version is None:
+            raise MissingRecordError(resource="profile")
+        return version
 
     @asynccontextmanager
     async def _transaction(self) -> AsyncIterator[AsyncSession]:
@@ -765,3 +902,25 @@ def _outcome_semantics(
         )
         for outcome in _roadmap_outcomes(raw_outcomes)
     )
+
+
+def _proposal_step_dates(step: Mapping[str, JsonValue]) -> tuple[datetime | None, datetime | None]:
+    dates: list[datetime | None] = []
+    for key in ("planned_start_at", "planned_end_at"):
+        value = step.get(key)
+        if value is None:
+            dates.append(None)  # Legacy proposals can lack schedule metadata.
+            continue
+        try:
+            if not isinstance(value, str):
+                raise TypeError("invalid timestamp")
+            parsed = datetime.fromisoformat(value)
+            if parsed.tzinfo is None or parsed.utcoffset() is None:
+                raise ValueError("timezone required")
+        except (TypeError, ValueError) as error:
+            raise PersistenceConflictError(resource="proposal schedule") from error
+        dates.append(parsed)
+    start, end = dates
+    if start is not None and end is not None and end < start:
+        raise PersistenceConflictError(resource="proposal schedule")
+    return start, end

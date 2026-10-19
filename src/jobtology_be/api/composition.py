@@ -4,6 +4,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 import anyio
 from fastapi import FastAPI
 
+from jobtology_be.api.accounts import require_account_service
 from jobtology_be.api.analyses import require_analysis_service, require_requirement_metadata
 from jobtology_be.api.auth_session import (
     require_authenticated_session,
@@ -36,6 +37,7 @@ from jobtology_be.application.requirement_metadata import (
     OccupationDisplayNames,
     RequirementMetadataLookup,
 )
+from jobtology_be.application.services.accounts import AccountService
 from jobtology_be.application.services.analyses import AnalysisService
 from jobtology_be.application.services.analysis_context import (
     ContextSnapshotConfiguration,
@@ -158,6 +160,11 @@ def configured_analysis_context_factory(
 
 
 def register_api_dependencies(app: FastAPI, dependencies: ApiDependencies, settings: Settings) -> None:
+    if (account_service := dependencies.account_service) is not None:
+        def get_injected_account_service() -> AccountService:
+            return account_service
+
+        app.dependency_overrides[require_account_service] = get_injected_account_service
     if (weekly_plan_store := dependencies.weekly_plan_store) is not None:
         def get_injected_weekly_plan_store() -> WeeklyPlanStore:
             return weekly_plan_store

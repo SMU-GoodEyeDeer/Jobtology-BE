@@ -5,7 +5,12 @@ from fastapi.testclient import TestClient
 
 from jobtology_be.api.dependencies import ApiDependencies
 from jobtology_be.api.identity import AuthenticatedPrincipal
-from jobtology_be.application.services.goals import GoalService, GoalUpdateCommand, GoalUpdateResult
+from jobtology_be.application.services.goals import (
+    GoalService,
+    GoalUpdateCommand,
+    GoalUpdateResult,
+    PersistentGoalService,
+)
 from jobtology_be.infrastructure.persistence.contracts import (
     IdempotencyAcquire,
     IdempotencyComplete,
@@ -85,3 +90,28 @@ def test_goal_create_replays_an_idempotent_response_without_running_the_service(
     assert response.status_code == 201
     assert response.json() == {"goal_id": str(GOAL_ID), "status": "ACTIVE"}
     assert service.command is None
+
+
+def test_goal_api_rejects_invalid_timezone_with_actionable_redacted_error() -> None:
+    from test_goal_service import RecordingGoalStore
+
+    store = RecordingGoalStore()
+    service = PersistentGoalService(store, occupation_supported=lambda _occupation_id: True)
+    app = create_app(
+        Settings(enable_fixtures=False),
+        dependencies=ApiDependencies(identity_provider=StaticIdentityProvider(), goal_service=service),
+    )
+    with TestClient(app) as client:
+        response = client.post("/api/v1/me/goals", json={
+            "expected_profile_version": 1, "goal_mode": "TARGETED",
+            "occupation_id": "BACKEND_DEVELOPER", "target_by": "2027-01-01T00:00:00+00:00",
+            "timezone": "private-invalid-zone", "original_time_phrase": "private phrase",
+        })
+    assert response.status_code == 422
+    assert response.json()["error"]["details"] == [
+        {"location": ["body", "timezone"], "code": "unknown_timezone"},
+    ]
+    assert "IANA timezone" in response.json()["error"]["message"]
+    assert "private-invalid-zone" not in response.text
+    assert "private phrase" not in response.text
+    assert store.goal_mutations == []

@@ -1,6 +1,7 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
 from uuid import UUID, uuid4
 
 from fastapi import FastAPI
@@ -43,7 +44,11 @@ class StaticIdentityProvider:
 
 def application(database_url: str, user_id: UUID) -> FastAPI:
     return create_app(
-        Settings(database_url=database_url, enable_fixtures=False),
+        Settings(
+            database_url=database_url, enable_fixtures=False,
+            corpus_snapshot_path=Path(__file__).resolve().parents[2]
+            / "tests/fixtures/reviewed-goal-catalog.json",
+        ),
         dependencies=ApiDependencies(identity_provider=StaticIdentityProvider(user_id=user_id)),
     )
 
