@@ -1,9 +1,11 @@
 # Goldship 배포 및 환경 가이드
 
-> **문서 상태 (2026-09-25 배포 기준)**
+> **문서 상태 (2026-10-19 Google 인증 전환 기준)**
 >
 > Jobtology BE는 Goldship의 Coolify에 배포되어 `https://jobtology.yeongmin.net/api`로 공개되어 있다.
-> Google 로그인은 아직 구현되지 않았으므로 모든 product API는 `401 UNAUTHENTICATED`를 반환한다.
+> Google OAuth 로그인과 사용자 관리는 구현되어 있다. 클라이언트 ID·시크릿을 설정하기 전까지
+> `JOBTOLOGY_AUTH_ENABLED=false`로 두므로 인증이 필요한 product API는 `401 UNAUTHENTICATED`를 반환한다.
+> 게스트 인증과 게스트 계정 자동 생성은 제거되었으며, Google identity가 없는 기존 쿠키는 거부된다.
 > 이 문서에는 자격 증명 값이 없으며, 값은 Coolify 환경 변수와 GitHub Secret에만 있다.
 
 ## 1. 공개 주소
@@ -73,10 +75,22 @@ redeploy해야 실행 중인 컨테이너에 반영된다.
 | `JOBTOLOGY_CORPUS_SOURCE` | `neo4j_query_api` |
 | `JOBTOLOGY_DB_LINK` | `https://neo4j-1.yeongmin.net` (base URL만) |
 | `JOBTOLOGY_DB_PASSWORD` | `<secret>` — Neo4j `neo4j` 계정 |
-| `JOBTOLOGY_AUTH_ENABLED` | `false` |
+| `JOBTOLOGY_AUTH_ENABLED` | `false` — Google 클라이언트 설정이 끝난 뒤 `true`로 변경 |
+| `JOBTOLOGY_GUEST_SESSIONS_ENABLED` | `false` — `true`는 지원하지 않음 |
+| `JOBTOLOGY_GOOGLE_CLIENT_ID` | Google Cloud의 **Web application** OAuth 클라이언트 ID 입력 필요 |
+| `JOBTOLOGY_GOOGLE_CLIENT_SECRET` | 위 클라이언트의 시크릿 입력 필요 — BE 전용 secret |
+| `JOBTOLOGY_GOOGLE_REDIRECT_URI` | `https://jobtology.yeongmin.net/api/v1/auth/google/callback` |
+| `JOBTOLOGY_FRONTEND_URL` | `https://jobtology.yeongmin.net` |
 | `JOBTOLOGY_ENABLE_FIXTURES` | `false` |
 | `JOBTOLOGY_ENABLE_FE_MOCK_SAMPLES` | `false` |
 | `JOBTOLOGY_CORS_ORIGINS` | `["https://jobtology.yeongmin.net"]` |
+
+Google Cloud의 해당 OAuth 클라이언트에 위 callback을 **Authorized redirect URI**로 정확히 등록한다.
+동의 화면이 Testing 상태라면 사용할 Google 계정을 test user로 등록한다. URL만 먼저 설정하고
+인증을 꺼 둔 상태로 배포할 수 있다. ID·시크릿과 DB migration이 준비되면 인증을 켜고 redeploy한 뒤
+실제 브라우저에서 로그인, `/api/v1/auth/session`, CSRF 거부, 로그아웃을 확인한다.
+인증을 꺼 둔 동안 login/callback은 `503`을 반환하며 익명 사용자를 생성하지 않는다.
+자세한 절차는 [Google 인증 가이드](google-auth.md)를 따른다.
 
 Neo4j는 Coolify가 관리하지 않는다. `maxjo@goldship:/home/maxjo/jobtology/docker-compose.yaml`로 따로 운영되는
 **Community 에디션**이라 읽기 전용 역할을 만들 수 없다. 그래서 BE는 관리자 계정 `neo4j`를 쓰며, 코드 수준에서
@@ -130,7 +144,9 @@ Coolify의 push 자동배포는 꺼져 있으므로, CI가 실패한 커밋은 �
 ## 5. 마이그레이션
 
 Alembic은 이미지 안의 `/app/.venv/bin/alembic`에 있다(이미지에는 `uv`, `curl`, `wget`도 있다). 현재 적용된
-revision은 `20261006_01 (head)`이다.
+revision은 운영 컨테이너의 `alembic current`로 확인한다. 이번 변경의 최신 revision은
+`20261019_01 (head)`이며, Google 계정별 공유 chat 한도 테이블과 identity 조회 index를 추가한다.
+인증된 chat 트래픽을 받기 전에 이 revision까지 적용해야 한다.
 
 새 migration이 들어간 커밋을 배포할 때는 새 컨테이너에서 **한 번만** 실행한다.
 
@@ -159,6 +175,9 @@ Coolify는 이 앱의 이미지를 최근 2개 보관한다(`docker_images_to_ke
 | `GET /api/v1/health/live` | `200` |
 | `GET /api/docs`, `/api/redoc`, `/api/openapi.json`, `/api/guide` | `200` |
 | 인증 없는 product 요청 (예: `GET /api/v1/me/profile`, `GET /api/v2/occupations`) | `401` + `UNAUTHENTICATED` envelope |
+| `GET /api/v1/auth/session` (쿠키 없음/이전 게스트 쿠키) | `401`, 새 계정이나 쿠키를 발급하지 않음 |
+| `GET /api/v1/auth/google/login` (`AUTH_ENABLED=false` 동안) | `503` |
+| `GET /api/v1/auth/google/login` (인증 설정 후) | Google 동의 화면으로 redirect |
 | `GET /` | FE 페이지 `200` (BE가 FE 라우팅을 가로채지 않음) |
 
 `/api/v1/health/live`는 프로세스 생존만 증명한다. DB·Neo4j 준비 상태는 보장하지 않는다. `401`은 fail-closed
@@ -166,9 +185,10 @@ Coolify는 이 앱의 이미지를 최근 2개 보관한다(`docker_images_to_ke
 
 ## 8. 남은 작업
 
-- **Google 로그인**: login/callback HTTP 라우트가 아직 없다. 구현한 뒤 Google OAuth 클라이언트의 redirect URI를
-  `https://jobtology.yeongmin.net/api/v1/auth/google/callback` 형태로 등록하고, `JOBTOLOGY_GOOGLE_*`,
-  `JOBTOLOGY_FRONTEND_URL=https://jobtology.yeongmin.net`, `JOBTOLOGY_AUTH_ENABLED=true`를 설정한다.
+- **Google 로그인 활성화**: 구현은 완료되었다. Google Web application 클라이언트 ID·시크릿을 Coolify에
+  입력하고 callback 등록 및 DB migration을 확인한 뒤 `JOBTOLOGY_AUTH_ENABLED=true`로 redeploy한다.
+  기존 게스트 데이터를 Google 계정으로 전환하거나 병합하지 않는다. `users`, `profiles`, `auth_sessions`는
+  Google 계정도 사용하는 공통 테이블이므로 유지한다.
 - **local_json 분석·worker**: `neo4j_query_api` 설정에서는 분석 서비스가 비활성이다. 분석 흐름을 쓰려면
   스냅샷 볼륨과 one-shot worker(Coolify Scheduled Task, `python -m jobtology_be.workers.main`)가 필요하다.
 - **오프사이트 백업**: 현재 백업은 goldship 로컬 디스크에만 있다. S3 저장소 연결과 복구 리허설이 필요하다.

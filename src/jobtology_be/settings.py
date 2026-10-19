@@ -59,7 +59,8 @@ class Settings(BaseSettings):
     enable_fe_mock_samples: bool = False
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
     auth_enabled: bool = False
-    guest_sessions_enabled: bool = False
+    # Reject stale guest deployments instead of silently issuing anonymous accounts.
+    guest_sessions_enabled: Literal[False] = False
     product_roles_enabled: bool = False
     product_role_artifact_approval_path: Path | None = None
     inprocess_worker_enabled: bool = False
@@ -73,7 +74,6 @@ class Settings(BaseSettings):
     openai_oauth_auth_path: Path | None = None
     openai_oauth_refresh: bool = False
     credential_encryption_key: SecretStr | None = None
-    guest_session_max_new_per_minute: int = Field(default=30, ge=1, le=1000)
     google_client_id: str | None = Field(default=None, min_length=1)
     google_client_secret: SecretStr | None = Field(default=None, min_length=1)
     google_redirect_uri: str | None = Field(default=None, min_length=1)
@@ -102,8 +102,7 @@ class Settings(BaseSettings):
                 return False
             case "development":
                 return (
-                    not self.guest_sessions_enabled
-                    and self.google_redirect_uri is not None
+                    self.google_redirect_uri is not None
                     and not _is_insecure_localhost_url(self.google_redirect_uri)
                 )
             case unreachable:
@@ -143,19 +142,7 @@ class Settings(BaseSettings):
             case unreachable:
                 assert_never(unreachable)
         _validate_cors_origins(self.cors_origins)
-        google_values = (
-            self.google_client_id,
-            self.google_client_secret,
-            self.google_redirect_uri,
-        )
-        provided_google_values = sum(value is not None for value in google_values)
-        if self.auth_enabled and self.guest_sessions_enabled:
-            raise ValueError("Google authentication and guest sessions cannot both be enabled")
-        if not self.guest_sessions_enabled and 0 < provided_google_values < len(google_values):
-            raise ValueError(
-                "Google OIDC configuration must provide client ID, client secret, and redirect URI together"
-            )
-        if self.frontend_url is not None and not self.guest_sessions_enabled:
+        if self.frontend_url is not None:
             _validate_origin(self.frontend_url, "Frontend URL")
         if self.auth_enabled:
             if (

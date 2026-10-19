@@ -12,6 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 from test_acceptance_m5_worker import CAPABILITY_ENTITY_ID, CAPABILITY_LABEL, _snapshot
 
+from jobtology_be.api.chat import require_chat_rate_limiter
 from jobtology_be.api.dependencies import ApiDependencies
 from jobtology_be.api.identity import AuthenticatedPrincipal
 from jobtology_be.application.queries import CapabilityView, GoalView
@@ -23,6 +24,7 @@ from jobtology_be.chat.service import (
     select_suggestions,
 )
 from jobtology_be.infrastructure.persistence.contracts import JsonValue
+from jobtology_be.infrastructure.persistence.rate_limit import RateLimitDecision
 from jobtology_be.llm.client import ChatGptOAuthClient, LlmMessage, LlmUnavailableError
 from jobtology_be.llm.credentials import (
     CredentialStoreError,
@@ -141,6 +143,11 @@ class StaticIdentityProvider:
         return AuthenticatedPrincipal(user_id=USER_ID)
 
 
+class AllowChatLimiter:
+    async def consume(self, user_id: UUID) -> RateLimitDecision:
+        return RateLimitDecision(allowed=True, retry_after_seconds=60)
+
+
 def test_chat_api_reports_unavailable_and_returns_503_without_a_configured_llm() -> None:
     app = create_app(Settings(enable_fixtures=False), dependencies=ApiDependencies(identity_provider=StaticIdentityProvider()))
     with TestClient(app) as client:
@@ -161,6 +168,7 @@ def test_chat_api_returns_reply_and_candidates_and_validates_the_conversation() 
         Settings(enable_fixtures=False),
         dependencies=ApiDependencies(identity_provider=StaticIdentityProvider(), chat_service=_service(llm)),
     )
+    app.dependency_overrides[require_chat_rate_limiter] = lambda: AllowChatLimiter()
     with TestClient(app) as client:
         ok = client.post("/api/v1/chat/messages", json={"messages": [
             {"role": "assistant", "text": "무엇을 해봤나요?"}, {"role": "user", "text": "API를 배포했어요"},

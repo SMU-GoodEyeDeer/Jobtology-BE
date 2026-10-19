@@ -241,6 +241,43 @@ def test_opaque_session_rejects_revoked_and_database_clock_expired_sessions(
     assert anyio.run(_exercise_expiry_and_revocation, acceptance_database_url)
 
 
+
+def test_new_oauth_attempt_purges_expired_attempts_and_preserves_pending_logins(
+    acceptance_database_url: str,
+) -> None:
+    async def scenario() -> None:
+        database = Database.create(acceptance_database_url)
+        store = PostgresAuthStore(database)
+        try:
+            for label in ("expired", "pending"):
+                await store.create_oauth_login_attempt(OAuthLoginAttempt(
+                    state_hash=_digest(label), browser_binding_hash=_digest(f"{label}-browser"),
+                    nonce=SecretStr(f"{label}-nonce"), pkce_verifier=SecretStr(f"{label}-verifier"),
+                ))
+            async with database.sessions.begin() as session:
+                await session.execute(update(oauth_login_attempts).where(
+                    oauth_login_attempts.c.state_hash == _digest("expired")
+                ).values(expires_at=func.current_timestamp() - text("INTERVAL '1 second'")))
+            await store.create_oauth_login_attempt(OAuthLoginAttempt(
+                state_hash=_digest("new"), browser_binding_hash=_digest("new-browser"),
+                nonce=SecretStr("new-nonce"), pkce_verifier=SecretStr("new-verifier"),
+            ))
+            async with database.sessions() as session:
+                remaining = set((await session.execute(
+                    select(oauth_login_attempts.c.state_hash)
+                )).scalars())
+            assert remaining == {_digest("pending"), _digest("new")}
+            pending = await store.consume_oauth_login_attempt(
+                _digest("pending"), _digest("pending-browser"),
+            )
+            assert pending is not None
+            assert pending.nonce.get_secret_value() == "pending-nonce"
+            assert pending.pkce_verifier.get_secret_value() == "pending-verifier"
+        finally:
+            await database.dispose()
+
+    anyio.run(scenario)
+
 def test_google_identity_schema_is_canonical_and_never_stores_email() -> None:
     # Given / When
     identity_columns: Sequence[str] = tuple(google_identities.c.keys())

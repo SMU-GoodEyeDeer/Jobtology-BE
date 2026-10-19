@@ -61,6 +61,7 @@ google_identities = Table(
     ),
     CheckConstraint("char_length(subject) > 0", name="google_identities_subject_check"),
 )
+Index("google_identities_user_id_index", google_identities.c.user_id)
 
 oauth_login_attempts = Table(
     "oauth_login_attempts",
@@ -102,6 +103,16 @@ auth_sessions = Table(
     CheckConstraint("octet_length(csrf_hash) = 32", name="auth_sessions_csrf_hash_check"),
 )
 Index("auth_sessions_active_lookup_index", auth_sessions.c.token_hash, auth_sessions.c.expires_at)
+
+account_rate_limits = Table(
+    "account_rate_limits",
+    METADATA,
+    Column("user_id", UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
+    Column("scope", String(32), primary_key=True),
+    Column("window_started_at", DateTime(timezone=True), nullable=False),
+    Column("request_count", INTEGER, nullable=False),
+    CheckConstraint("request_count >= 1", name="account_rate_limits_count_check"),
+)
 
 user_state_events = Table(
     "user_state_events",

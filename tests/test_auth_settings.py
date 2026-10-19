@@ -4,13 +4,14 @@ from pydantic import ValidationError
 from jobtology_be.settings import Settings
 
 
-def test_auth_settings_reject_partial_google_configuration() -> None:
-    # Given / When / Then
-    with pytest.raises(ValidationError, match="Google OIDC"):
-        Settings(
-            _env_file=None,
-            google_client_id="client-id",
-        )
+def test_disabled_auth_can_stage_partial_google_configuration() -> None:
+    settings = Settings(
+        _env_file=None,
+        google_redirect_uri="https://jobtology.example/api/v1/auth/google/callback",
+        frontend_url="https://jobtology.example",
+    )
+    assert not settings.auth_enabled
+    assert not settings.google_oidc_settings.is_configured
 
 
 def test_enabled_auth_requires_fixed_google_and_frontend_configuration() -> None:

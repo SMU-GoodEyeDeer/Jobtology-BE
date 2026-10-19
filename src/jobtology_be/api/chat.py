@@ -1,20 +1,17 @@
-import time
-from collections import defaultdict, deque
-from typing import Annotated, ClassVar, Final, Literal
-from uuid import UUID
+from typing import Annotated, ClassVar, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator
 
 from jobtology_be.api.identity import AuthenticatedPrincipal, require_authenticated_principal
 from jobtology_be.chat.service import ChatCapabilityService
+from jobtology_be.infrastructure.persistence.rate_limit import (
+    AccountRateLimiter,
+    RateLimitUnavailableError,
+)
 from jobtology_be.llm.client import LlmMessage, LlmUnavailableError
 
 router = APIRouter(tags=["chat"])
-
-_RATE_LIMIT_PER_MINUTE: Final = 20
-_recent_requests: defaultdict[UUID, deque[float]] = defaultdict(deque)
-
 
 class ChatMessageIn(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
@@ -64,14 +61,8 @@ def require_chat_service() -> ChatCapabilityService | None:
     return None
 
 
-def _check_rate(user_id: UUID) -> None:
-    now = time.monotonic()
-    recent = _recent_requests[user_id]
-    while recent and now - recent[0] > 60:
-        recent.popleft()
-    if len(recent) >= _RATE_LIMIT_PER_MINUTE:
-        raise HTTPException(status_code=429)
-    recent.append(now)
+def require_chat_rate_limiter() -> AccountRateLimiter | None:
+    return None
 
 
 @router.get(
@@ -103,10 +94,18 @@ async def send_chat_messages(
     request: ChatRequest,
     principal: Annotated[AuthenticatedPrincipal, Depends(require_authenticated_principal)],
     service: Annotated[ChatCapabilityService | None, Depends(require_chat_service)],
+    rate_limiter: Annotated[AccountRateLimiter | None, Depends(require_chat_rate_limiter)],
 ) -> ChatResponse:
-    if service is None:
+    if service is None or rate_limiter is None:
         raise HTTPException(status_code=503)
-    _check_rate(principal.user_id)
+    try:
+        decision = await rate_limiter.consume(principal.user_id)
+    except RateLimitUnavailableError as error:
+        raise HTTPException(status_code=503) from error
+    if not decision.allowed:
+        raise HTTPException(
+            status_code=429, headers={"Retry-After": str(decision.retry_after_seconds)}
+        )
     try:
         result = await service.respond(
             principal.user_id,

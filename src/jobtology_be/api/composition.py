@@ -7,16 +7,14 @@ from fastapi import FastAPI
 from jobtology_be.api.analyses import require_analysis_service, require_requirement_metadata
 from jobtology_be.api.auth_session import (
     require_authenticated_session,
-    require_session_response,
     require_session_store,
 )
 from jobtology_be.api.capabilities import require_capability_service
 from jobtology_be.api.capability_checklist import require_onboarding_checklist
-from jobtology_be.api.chat import require_chat_service
+from jobtology_be.api.chat import require_chat_rate_limiter, require_chat_service
 from jobtology_be.api.dependencies import ApiDependencies
 from jobtology_be.api.editorial_drafts import require_editorial_drafts
 from jobtology_be.api.goals import require_goal_service
-from jobtology_be.api.guest_session import GuestSessionBootstrap
 from jobtology_be.api.idempotency import IdempotencyStore, require_idempotency_store
 from jobtology_be.api.identity import SessionIdentityProvider, require_authenticated_principal
 from jobtology_be.api.live_source import require_live_source_feed
@@ -54,9 +52,9 @@ from jobtology_be.chat.service import ChatCapabilityService
 from jobtology_be.corpus.local_snapshot import LocalJsonPublishedCorpusSnapshotReader
 from jobtology_be.corpus.source_factory import ConfiguredCorpusSource
 from jobtology_be.editorial.reader import DraftReadService
-from jobtology_be.infrastructure.persistence.auth_store import PostgresAuthStore
 from jobtology_be.infrastructure.persistence.database import Database
 from jobtology_be.infrastructure.persistence.live_source_feed import LiveSourceFeed
+from jobtology_be.infrastructure.persistence.rate_limit import AccountRateLimiter
 from jobtology_be.infrastructure.persistence.source_catalog import (
     CatalogQueries,
     PostgresSourceCatalog,
@@ -166,12 +164,6 @@ def register_api_dependencies(app: FastAPI, dependencies: ApiDependencies, setti
 
         app.dependency_overrides[require_weekly_plan_store] = get_injected_weekly_plan_store
     session_store = dependencies.session_store
-    if settings.guest_sessions_enabled:
-        if not isinstance(session_store, PostgresAuthStore):
-            raise ValueError("Guest sessions require a PostgreSQL authentication store")
-        app.dependency_overrides[require_session_response] = GuestSessionBootstrap(
-            session_store, settings
-        ).current_session
     if session_store is not None:
         session_identity_provider = SessionIdentityProvider(
             session_store=session_store,
@@ -278,6 +270,11 @@ def register_api_dependencies(app: FastAPI, dependencies: ApiDependencies, setti
             return chat_service
 
         app.dependency_overrides[require_chat_service] = get_injected_chat_service
+    if (chat_rate_limiter := dependencies.chat_rate_limiter) is not None:
+        def get_injected_chat_rate_limiter() -> AccountRateLimiter:
+            return chat_rate_limiter
+
+        app.dependency_overrides[require_chat_rate_limiter] = get_injected_chat_rate_limiter
     if (idempotency_store := dependencies.idempotency_store) is not None:
         def get_injected_idempotency_store() -> IdempotencyStore:
             return idempotency_store

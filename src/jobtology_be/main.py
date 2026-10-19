@@ -42,6 +42,7 @@ from jobtology_be.infrastructure.persistence.live_source_feed import PostgresLiv
 from jobtology_be.infrastructure.persistence.m5_queries import PostgresM5Queries
 from jobtology_be.infrastructure.persistence.preference_queries import PostgresRoutePreferencesQuery
 from jobtology_be.infrastructure.persistence.queries import PostgresProductQueries
+from jobtology_be.infrastructure.persistence.rate_limit import PostgresAccountRateLimiter
 from jobtology_be.infrastructure.persistence.source_catalog import PostgresSourceCatalog
 from jobtology_be.infrastructure.persistence.store import PostgresApplicationStore
 from jobtology_be.infrastructure.persistence.weekly_plan import PostgresWeeklyPlanStore
@@ -86,6 +87,7 @@ def create_app(
     corpus_source = None
     store = None
     session_store = dependencies.session_store
+    chat_rate_limiter = dependencies.chat_rate_limiter
     m5_queries = dependencies.m5_queries
     neo4j_catalog = dependencies.neo4j_catalog
     product_queries = dependencies.product_queries
@@ -136,6 +138,7 @@ def create_app(
         corpus_source = build_configured_corpus_source(settings)
     if settings.database_url is not None:
         database = Database.create(settings.database_url)
+        chat_rate_limiter = chat_rate_limiter or PostgresAccountRateLimiter(database.sessions)
         store = PostgresApplicationStore(
             database, capability_list_authoritative=settings.capability_list_authoritative
         )
@@ -184,7 +187,7 @@ def create_app(
             policy=ProductRolePolicy.model_validate_json(policy_path.read_text()),
             client=neo4j_client,
         )
-    if (settings.auth_enabled or settings.guest_sessions_enabled) and session_store is None:
+    if settings.auth_enabled and session_store is None:
         if database is None:
             raise ValueError("Enabled authentication requires a database URL or injected session store")
         session_store = PostgresAuthStore(database)
@@ -266,6 +269,7 @@ def create_app(
             capability_service=capability_service,
             onboarding_checklist=onboarding_checklist,
             chat_service=chat_service,
+            chat_rate_limiter=chat_rate_limiter,
             idempotency_store=idempotency_store,
             session_store=session_store,
         ),

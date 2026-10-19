@@ -6,8 +6,9 @@ Python/FastAPI backend for personalized capability analysis and roadmaps.
 
 The current worktree implements the local-JSON M1–M5 product flow and the additive, read-only
 native `/api/v2` catalog. It is deployed on Goldship at `https://jobtology.yeongmin.net/api`
-(Swagger UI: `/api/docs`). Google sign-in, remote publication/revocation integration, and native
-editorial analysis or route planning remain pending or intentionally unsupported.
+(Swagger UI: `/api/docs`). Google sign-in is implemented but requires deployment credentials. Guest authentication
+has been removed. Remote publication/revocation integration and native editorial
+analysis or route planning remain intentionally unsupported.
 
 - [Current v2 architecture and product requirements](docs/plan.md)
 - [Korean frontend integration guide](docs/fe-integration.md), packaged in the wheel and served
@@ -20,10 +21,12 @@ editorial analysis or route planning remain pending or intentionally unsupported
 - [Historical Neo4j/local PostgreSQL verification record](docs/neo4j-verification.md)
 - [Goldship deployment and environment guide (Korean)](docs/goldship-deployment.md)
 
-Google login is currently disabled (`JOBTOLOGY_AUTH_ENABLED=false`). Product routes, including
-the native catalog routes, remain fail-closed and return `401 UNAUTHENTICATED` without an
-authenticated session. There is no development login endpoint, trusted identity header, or
-fixture mode that authenticates product requests.
+Google login stays disabled (`JOBTOLOGY_AUTH_ENABLED=false`) until its client credentials
+are configured; see [Google sign-in setup](docs/google-auth.md). Product routes requiring
+authentication return `401 UNAUTHENTICATED` without a Google-backed session. There is no
+anonymous user issuance, development login endpoint, trusted identity header, or fixture
+mode that authenticates product requests. Deferred audit work is tracked in
+[the functionality backlog](docs/plans/functionality-backlog.md).
 
 ## Development
 
