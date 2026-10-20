@@ -1,0 +1,5 @@
+# Keep the legacy-DOC runtime inside /mise/installs, which Railpack copies into
+# the final Python image. This avoids a dangling link to mise's shared .NET root.
+[settings]
+dotnet.isolated = true
+dotnet.cli_telemetry_optout = true

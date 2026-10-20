@@ -1,12 +1,13 @@
 """Local feasibility probe. Synthetic documents only; no API, DB, or LLM calls.
 
-Run in a separate Python 3.13+ environment with the local document-processor
-installed. This is not an upload handler or a production HTML sanitizer.
+Run with the backend's locked Python 3.12 environment. The processor source is
+part of BE. This is not an upload handler or a production HTML sanitizer.
 """
 
 import argparse
 import hashlib
 import json
+import subprocess
 from html import escape
 from html.parser import HTMLParser
 from importlib.metadata import version
@@ -14,7 +15,16 @@ from pathlib import Path
 from xml.sax.saxutils import escape as xml_escape
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from document_processor import (
+from docx import Document
+from pypdf import PdfWriter
+from pypdf.generic import (
+    DecodedStreamObject,
+    DictionaryObject,
+    NameObject,
+    NumberObject,
+)
+
+from jobtology_be.document_processor import (
     DocIR,
     DocumentInput,
     ParagraphIR,
@@ -24,14 +34,8 @@ from document_processor import (
     read_document,
     render_review_html,
 )
-from docx import Document
-from pypdf import PdfWriter
-from pypdf.generic import (
-    DecodedStreamObject,
-    DictionaryObject,
-    NameObject,
-    NumberObject,
-)
+from jobtology_be.document_processor.core.doc_converter import _converter_command
+from jobtology_be.document_processor.core.hwp_converter import _ensure_jvm
 
 EVIDENCE = "Python과 FastAPI로 로그인 API를 직접 구현하고 PostgreSQL을 연동했습니다."
 TABLE_EVIDENCE = "프로젝트에서 REST API 테스트를 작성하고 인증 오류를 수정했습니다."
@@ -142,6 +146,7 @@ class AttributeProbe(HTMLParser):
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--native-smoke", action="store_true", help="Also load HWP classes and boot the legacy DOC CLI.")
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     source = args.out / "synthetic-resume.docx"
@@ -222,10 +227,25 @@ def main() -> None:
     native_probe = AttributeProbe()
     native_probe.feed(DocIR.from_file(native_style_path).to_html())
 
+    native_smoke = None
+    if args.native_smoke:
+        import jpype
+
+        _ensure_jvm()
+        for name in ("kr.dogfoot.hwplib.reader.HWPReader", "kr.dogfoot.hwp2hwpx.Hwp2Hwpx",
+                     "kr.dogfoot.hwpxlib.writer.HWPXWriter"):
+            jpype.JClass(name)
+        boot = subprocess.run(_converter_command(), capture_output=True, text=True,
+                              timeout=10, check=False)
+        assert boot.returncode == 64 and "Usage: doc2docx" in boot.stderr + boot.stdout
+        native_smoke = {"hwp_converter_classes_loaded": True, "doc_cli_booted": True}
+
     report = {
         "synthetic_only": True, "llm_calls": 0, "database_writes": 0,
+        "processor_upstream_revision": "7541e87",
+        "native_smoke": native_smoke,
         "dependencies": {name: version(name) for name in (
-            "document-processor", "pydantic", "python-docx", "pypdf", "pypdfium2", "jpype1",
+            "jobtology-be", "pydantic", "python-docx", "pypdf", "pypdfium2", "jpype1",
         )},
         "docx_nested_table_and_cross_run_quotes": True,
         "docx_reparse_node_ids_stable": True,

@@ -1,6 +1,6 @@
 # Résumé import feasibility
 
-Assessed 2026-10-20 on `feat/functionality-improvements`. **Feasible, with a separate parser worker and a review-before-save flow.** This change contains a local, reproducible probe and an integration design. A public upload API, OCR integration, LLM résumé extraction, and production import UI are not implemented by this probe.
+Assessed 2026-10-20 on `feat/functionality-improvements`. **Feasible as an internal BE module with a review-before-save flow.** Following the monolith decision, the processor source is copied into `jobtology_be.document_processor`, dependencies/native bundles ship with BE, and Python 3.12 is retained. See [the implemented library integration](../document-processing.md). A public upload API, OCR integration, LLM résumé extraction, and production import UI remain separate work.
 
 ## Evidence from the supplied processor
 
@@ -11,7 +11,7 @@ Inspected `/home/maxjo/Work/fedora-migration-backup-20260918-185620/Work/documen
 - `TextAnnotation` and `render_review_html(...)` for source highlights, including exact substrings, occurrence selection, labels, and notes.
 - PDF page parsing status, scan-like page detection, page geometry, and PDF annotation APIs.
 
-The probe at [`experiments/resume_import/verify_processor.py`](../../experiments/resume_import/verify_processor.py) generated synthetic documents only. No real résumé, remote LLM, production API, or database was used. Verified with Python 3.14.8 and local Java 25; the report records installed library versions.
+The probe at [`experiments/resume_import/verify_processor.py`](../../experiments/resume_import/verify_processor.py) generated synthetic documents only. No real résumé, remote LLM, production API, or database was used. Initially verified with Python 3.14.8 and local Java 25, then verified against the copied module in an isolated BE wheel install on Python 3.12 with BE's locked dependencies. The 269 imported parser tests also pass on 3.12. The report records installed library versions. Optional `--native-smoke` loads bundled HWP converter classes and boots the legacy DOC CLI with .NET 8; it does not establish HWP/DOC file accuracy.
 
 | Check | Measured result |
 | --- | --- |
@@ -29,15 +29,14 @@ The probe at [`experiments/resume_import/verify_processor.py`](../../experiments
 
 HWP and legacy DOC runtime parsing were inspected but not exercised by this synthetic probe. The HWPX sample is a minimal container, not evidence of fidelity for every real Korean résumé template. Layout quality, OCR accuracy, multilingual field extraction, and LLM precision remain unevaluated on representative résumés.
 
-Reproduce in an isolated environment; replace the processor path with the intended checkout:
+Reproduce using the monolithic backend environment:
 
 ```sh
-python3.13 -m venv /tmp/jobtology-resume-env
-/tmp/jobtology-resume-env/bin/python -m pip install -e /path/to/document-processor
-timeout 60s /tmp/jobtology-resume-env/bin/python experiments/resume_import/verify_processor.py --out /tmp/jobtology-resume-probe
+uv sync --locked --dev
+timeout 60s uv run python experiments/resume_import/verify_processor.py --out /tmp/jobtology-resume-probe
 ```
 
-Outputs are synthetic DOCX/HWPX/PDF inputs, `report.json` with source spans and hashes, and `review.html`. The script is an engineering probe, not an upload handler, skill matcher, or safe renderer for arbitrary user documents. It does not import the package into the BE runtime or change its dependency lock.
+Outputs are synthetic DOCX/HWPX/PDF inputs, `report.json` with source spans and hashes, and `review.html`. The script is an engineering probe, not an upload handler, skill matcher, or safe renderer for arbitrary user documents. It now imports the internal BE source; no separate `document-processor` distribution is installed.
 
 ## Recommended extraction policy: rules first, optional LLM interpretation
 
@@ -88,15 +87,15 @@ Review can save confirmed items through existing sequential versioned mutations 
 
 ## Deployment and trust boundaries
 
-- BE is pinned to Python **3.12** in `.python-version`; the supplied package requires **3.13+**. PDF runs a vendored Java CLI, HWP uses Java/JPype, and legacy DOC needs .NET 8. Use a private parser worker/container with its own pinned package revision and runtimes, leaving the API image light. Do not bind-mount a workstation backup path into production.
-- The PDF subprocess runner has no timeout, and HWP runs a JVM in-process. Put parsing outside API workers with CPU, memory, output, decompression, and wall-time limits; terminate the whole process group/container on timeout, including Java children. Give it a read-only root, a per-job scratch directory, no application credentials, and no network egress. Preserve the normal authenticated, CSRF-protected API boundary.
+- BE remains pinned to Python **3.12** in `.python-version`. Although the original package metadata required **3.13+**, its source and imported tests work on 3.12, so no interpreter upgrade is needed. The source is copied into BE and Python dependencies are locked there. PDF/HWP Java tools and legacy DOC .NET assemblies are bundled; Railpack requests Java 17 and .NET 8 in the same image. No workstation backup mount or separate parser package/service is needed.
+- The PDF subprocess runner has no timeout, and HWP runs a JVM in-process. Run future upload parsing in bounded child processes from the same BE image, outside API request threads, with CPU, memory, output, decompression, and wall-time limits; terminate the whole process group on timeout, including Java children. Give each process a per-job scratch directory and restrict credentials/network access. This is a process boundary inside the monolith, not a separate deployment. Preserve the normal authenticated, CSRF-protected API boundary.
 - Start the rollout with DOCX and text-layer PDF. HWPX is technically usable and worth adding after Korean template fixtures and archive limits are covered. Add HWP/DOC converters later. Scan-only PDF/image input needs an explicit Korean/English OCR component; local page rendering is available but is not OCR. Benchmark that component separately before promising support.
 - Validate extension, signature/container structure, and size; never trust the MIME header or original filename. Reject encryption/password protection with a clear message. Enforce archive entry/uncompressed-byte and embedded-image limits before heavy parsing. Do not fetch URLs or linked assets found in résumés.
 - Treat both ordinary and review HTML as untrusted. Prefer a controlled React text/annotation renderer first. A rich preview needs tag/attribute/CSS/URL sanitization plus an opaque-origin sandbox iframe without scripts or `allow-same-origin`; strip active elements, links/forms, external resources, and unsafe SVG/CSS. Use restrictive CSP and no-referrer/no-store headers. A plain CSP alone does not replace sanitization. If the parent needs to select highlights, use its own verified JSON spans in the controlled renderer; do not relax the iframe sandbox for direct DOM access.
 - Detect/exclude hidden text where available and expose extraction uncertainty. The current DOCX probe shows that this needs parser/adaptor work. Keep aspirations, negated claims, team work, job requirements, and instruction-like text out of automatic acceptance. User review remains necessary even after these filters.
 - Use Google-account-owned job IDs and enforce ownership on every status/preview/interpret/delete route. Initial product limits to benchmark: 10 MiB uploads, 20 PDF pages, 60 seconds parsing, 50k extracted characters, 30 suggestions, and one active parser job per account. Add separate per-account import/LLM quotas; the existing short-chat quota is not a document-work budget.
 - Proposed retention: private original/IR/preview artifacts expire within 24 hours or are erased immediately when the user finishes/cancels; persist only confirmed short quotes/fields. Enforce expiry with an independent sweeper, read-time checks, crash cleanup, and account-deletion cleanup. Do not log raw documents, source text, parser stderr, or model payloads. An account deletion must also cancel pending jobs and erase their artifacts. State these rules accurately in the UI only after implemented.
-- The checkout has third-party notices but no top-level license file was found. Record the intended package ownership/reuse terms and bundled Java/.NET notices when packaging the worker. No source from the processor was copied into the application by this probe.
+- The original checkout has third-party notices but no top-level license file was found. The copied module records its source revision and local changes in `UPSTREAM.md`; existing bundled notices are preserved in the wheel/sdist. The initial probe copied no application source, and the subsequent user-authorized monolith integration copied the library into BE.
 
 These upload and LLM boundaries follow [OWASP file-upload guidance](https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html) and [OWASP prompt-injection guidance](https://cheatsheetseries.owasp.org/cheatsheets/LLM_Prompt_Injection_Prevention_Cheat_Sheet.html). Product limits and retention durations above are proposed defaults, not measured capacity or implemented controls.
 

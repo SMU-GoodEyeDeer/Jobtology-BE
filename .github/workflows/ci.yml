@@ -27,11 +27,26 @@ jobs:
           enable-cache: true
           python-version: "3.12"
           cache-dependency-glob: Jobtology-BE/uv.lock
+      - uses: actions/setup-java@v6.1.0
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: actions/setup-dotnet@v6.0.0
+        with:
+          dotnet-version: "8.0.x"
       - run: uv sync --locked --dev
       - run: uv run ruff check .
       - run: uv run pytest
       - run: uv lock --check
       - run: uv build
+      - name: Verify installed monolith wheel and native parser assets
+        run: |
+          uv export --locked --no-dev --no-emit-project --no-hashes --output-file /tmp/jobtology-wheel-constraints.txt
+          uv venv /tmp/jobtology-wheel-check --python 3.12
+          uv pip install --python /tmp/jobtology-wheel-check/bin/python --constraint /tmp/jobtology-wheel-constraints.txt dist/*.whl
+          cd /tmp
+          /tmp/jobtology-wheel-check/bin/python -m jobtology_be.document_processor.runtime_check --require-all
+          /tmp/jobtology-wheel-check/bin/python "$GITHUB_WORKSPACE/Jobtology-BE/experiments/resume_import/verify_processor.py" --out /tmp/jobtology-wheel-probe --native-smoke
 
   deploy:
     needs: checks

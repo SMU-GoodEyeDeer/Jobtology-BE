@@ -1,0 +1,85 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v8.0",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v8.0": {
+      "DocToDocx.Cli/1.0.0": {
+        "dependencies": {
+          "DocSharp.Binary.Doc": "0.20.0"
+        },
+        "runtime": {
+          "DocToDocx.Cli.dll": {}
+        }
+      },
+      "DocSharp.Binary.Common/0.20.0": {
+        "dependencies": {
+          "System.Text.Encoding.CodePages": "10.0.8"
+        },
+        "runtime": {
+          "lib/net8.0/DocSharp.Binary.Common.dll": {
+            "assemblyVersion": "0.20.0.0",
+            "fileVersion": "0.20.0.0"
+          }
+        }
+      },
+      "DocSharp.Binary.Doc/0.20.0": {
+        "dependencies": {
+          "DocSharp.Binary.Common": "0.20.0"
+        },
+        "runtime": {
+          "lib/net8.0/DocSharp.Binary.Doc.dll": {
+            "assemblyVersion": "0.20.0.0",
+            "fileVersion": "0.20.0.0"
+          }
+        }
+      },
+      "System.Text.Encoding.CodePages/10.0.8": {
+        "runtime": {
+          "lib/net8.0/System.Text.Encoding.CodePages.dll": {
+            "assemblyVersion": "10.0.0.0",
+            "fileVersion": "10.0.826.23019"
+          }
+        },
+        "runtimeTargets": {
+          "runtimes/win/lib/net8.0/System.Text.Encoding.CodePages.dll": {
+            "rid": "win",
+            "assetType": "runtime",
+            "assemblyVersion": "10.0.0.0",
+            "fileVersion": "10.0.826.23019"
+          }
+        }
+      }
+    }
+  },
+  "libraries": {
+    "DocToDocx.Cli/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "DocSharp.Binary.Common/0.20.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-wHZ9lOq3s/0kaPkwxwtc0NQu0vQbefbHNoGUlcVRpSPzcSZZd7MZg7Xt68R9ecZtPX2oD4TkFq43AzBahsAfSQ==",
+      "path": "docsharp.binary.common/0.20.0",
+      "hashPath": "docsharp.binary.common.0.20.0.nupkg.sha512"
+    },
+    "DocSharp.Binary.Doc/0.20.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-UOqEQ0Op6L5+HHu/plW9ie0r92Te8yp7ojnjxTimnCjgwnI8n3wQAVc3hHPJdGsMVfo1uqFWIlZV3sX3Lr009Q==",
+      "path": "docsharp.binary.doc/0.20.0",
+      "hashPath": "docsharp.binary.doc.0.20.0.nupkg.sha512"
+    },
+    "System.Text.Encoding.CodePages/10.0.8": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-WU6i/0KsH43ZeNCXVpm8JGwaj5Chs4Sup2Mwj9JSq62jzSyJQFqoarTpUhXQ+tXCXsUoVTHhxw+1ZhFm20rrmg==",
+      "path": "system.text.encoding.codepages/10.0.8",
+      "hashPath": "system.text.encoding.codepages.10.0.8.nupkg.sha512"
+    }
+  }
+}
