@@ -11,6 +11,7 @@ from starlette.exceptions import HTTPException
 from starlette.responses import Response
 
 from jobtology_be.application.services.analysis_inputs import (
+    ActiveTargetedGoalRequiredError,
     AnalysisContextInputsUnavailableError,
 )
 from jobtology_be.infrastructure.persistence.contracts import (
@@ -141,6 +142,14 @@ async def analysis_context_inputs_unavailable_error_handler(
     return _product_error_response(503, "DATA_UNAVAILABLE", "Analysis inputs are unavailable")
 
 
+async def active_targeted_goal_required_error_handler(
+    _request: Request, _exc: ActiveTargetedGoalRequiredError,
+) -> Response:
+    return _product_error_response(
+        409, "ACTIVE_TARGETED_GOAL_REQUIRED", "Choose an active career goal before requesting analysis",
+    )
+
+
 async def goal_write_validation_error_handler(
     _request: Request, exc: GoalWriteValidationError,
 ) -> Response:
@@ -163,6 +172,7 @@ def register_error_handlers(app: FastAPI) -> None:
     app.exception_handler(IdempotencyInProgressError)(idempotency_in_progress_error_handler)
     app.exception_handler(OwnershipError)(ownership_error_handler)
     app.exception_handler(MissingRecordError)(missing_record_error_handler)
+    app.exception_handler(ActiveTargetedGoalRequiredError)(active_targeted_goal_required_error_handler)
     app.exception_handler(AnalysisContextInputsUnavailableError)(
         analysis_context_inputs_unavailable_error_handler
     )

@@ -181,6 +181,7 @@ def _analysis_command(request: AnalysisRequest, idempotency_key: str | None) -> 
     description=(
         "Creates an asynchronous recomputation request. Poll the returned `status_url` until the "
         "recompute reaches a terminal state, then use the resulting analysis or proposal identifier. "
+        "Requires an active targeted goal with a selected occupation. "
         "An `Idempotency-Key` replays the first accepted response for the same payload for 24 hours."
     ),
     responses={
@@ -198,7 +199,11 @@ def _analysis_command(request: AnalysisRequest, idempotency_key: str | None) -> 
         },
         401: {"model": ErrorResponse, "description": "Authentication is required."},
         403: {"model": ErrorResponse, "description": "The request is not permitted."},
-        409: {"model": ErrorResponse, "description": "Version or idempotency conflict."},
+        404: {"model": ErrorResponse, "description": "The goal was not found."},
+        409: {
+            "model": ErrorResponse,
+            "description": "Version/idempotency conflict, or ACTIVE_TARGETED_GOAL_REQUIRED.",
+        },
         503: {"model": ErrorResponse, "description": "Analysis inputs are unavailable."},
     },
 )

@@ -6,6 +6,7 @@ from uuid import UUID
 
 from jobtology_be.application.services.analysis_inputs import AnalysisContextInputsUnavailableError
 from jobtology_be.infrastructure.persistence.contracts import (
+    GoalDelete,
     GoalMutation,
     GoalSnapshot,
     ProfileSnapshot,
@@ -24,6 +25,8 @@ class GoalStore(Protocol):
     async def create_user(self, request: UserCreate) -> ProfileSnapshot: ...
 
     async def mutate_goal(self, request: GoalMutation) -> GoalSnapshot: ...
+
+    async def delete_goal(self, request: GoalDelete) -> ProfileSnapshot: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +48,8 @@ class GoalUpdateResult:
 
 
 class GoalService(Protocol):
+    async def delete_goal(self, user_id: UUID, goal_id: UUID, expected_profile_version: int) -> int: ...
+
     async def update_goal(self, user_id: UUID, command: GoalUpdateCommand) -> GoalUpdateResult: ...
 
 
@@ -56,6 +61,12 @@ class PersistentGoalService:
     ) -> None:
         self._store = store
         self._occupation_supported = occupation_supported
+
+    async def delete_goal(self, user_id: UUID, goal_id: UUID, expected_profile_version: int) -> int:
+        snapshot = await self._store.delete_goal(GoalDelete(
+            user_id=user_id, goal_id=goal_id, expected_profile_version=expected_profile_version,
+        ))
+        return snapshot.version
 
     async def update_goal(self, user_id: UUID, command: GoalUpdateCommand) -> GoalUpdateResult:
         validate_goal_schedule(

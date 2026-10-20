@@ -19,6 +19,7 @@ from jobtology_be.infrastructure.persistence.contracts import (
     CapabilityDelete,
     CapabilityMutation,
     CapabilitySnapshot,
+    GoalDelete,
     GoalMutation,
     GoalSnapshot,
     IdempotencyAcquire,
@@ -42,6 +43,7 @@ from jobtology_be.infrastructure.persistence.contracts import (
     UserCreate,
 )
 from jobtology_be.infrastructure.persistence.database import Database
+from jobtology_be.infrastructure.persistence.goal_deletion import GoalDeletionRepository
 from jobtology_be.infrastructure.persistence.idempotency import (
     acquire_idempotency as acquire_idempotency_record,
 )
@@ -89,6 +91,9 @@ class PostgresApplicationStore(OutboxRepository, WorkerRepository):
         )
         self._configured_recomputes = ConfiguredRecomputeRepository(
             database, capability_list_authoritative=capability_list_authoritative
+        )
+        self._goal_deletion = GoalDeletionRepository(
+            database, capability_list_authoritative=capability_list_authoritative,
         )
         self._roadmap_steps = RoadmapStepRepository(database)
         self._recompute_requests = RecomputeRequestRepository(database)
@@ -143,6 +148,9 @@ class PostgresApplicationStore(OutboxRepository, WorkerRepository):
                 session, request.user_id, request.expected_version + 1, event_id
             )
         return ProfileSnapshot(user_id=request.user_id, version=request.expected_version + 1)
+
+    async def delete_goal(self, request: GoalDelete) -> ProfileSnapshot:
+        return await self._goal_deletion.delete_goal(request)
 
     async def mutate_goal(self, request: GoalMutation) -> GoalSnapshot:
         goal_id = request.goal_id or uuid4()

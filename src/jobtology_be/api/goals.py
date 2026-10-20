@@ -52,6 +52,19 @@ class GoalUpdateRequest(BaseModel):
         return self
 
 
+class GoalDeleteRequest(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
+
+    expected_profile_version: StrictInt = Field(ge=1)
+
+
+class GoalDeleteResponse(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
+
+    goal_id: UUID
+    profile_version: int
+
+
 class GoalResponse(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
 
@@ -206,3 +219,25 @@ async def update_goal(
     goal_service: Annotated[GoalService, Depends(require_goal_service)],
 ) -> GoalResponse:
     return _goal_response(await goal_service.update_goal(principal.user_id, _goal_command(request, goal_id)))
+
+
+@router.delete(
+    "/me/goals/{goal_id}",
+    response_model=GoalDeleteResponse,
+    summary="Delete goal and its planning data",
+    description=(
+        "Permanently deletes one owned goal and its analyses, roadmaps, and queued work. "
+        "Preserves account capabilities and other goals. Requires expected_profile_version; "
+        "does not activate another goal."
+    ),
+)
+async def delete_goal(
+    goal_id: UUID,
+    request: GoalDeleteRequest,
+    principal: Annotated[AuthenticatedPrincipal, Depends(require_authenticated_principal)],
+    goal_service: Annotated[GoalService, Depends(require_goal_service)],
+) -> GoalDeleteResponse:
+    profile_version = await goal_service.delete_goal(
+        principal.user_id, goal_id, request.expected_profile_version,
+    )
+    return GoalDeleteResponse(goal_id=goal_id, profile_version=profile_version)

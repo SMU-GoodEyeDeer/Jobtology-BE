@@ -82,6 +82,13 @@ class CapabilityDelete:
 
 
 @dataclass(frozen=True, slots=True)
+class GoalDelete:
+    user_id: UUID
+    goal_id: UUID
+    expected_profile_version: int
+
+
+@dataclass(frozen=True, slots=True)
 class GoalMutation:
     user_id: UUID
     expected_profile_version: int

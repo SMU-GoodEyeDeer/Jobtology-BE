@@ -53,6 +53,11 @@ class AnalysisContextInputsUnavailableError(Exception):
         super().__init__(reason)
         self.reason = reason
 
+
+class ActiveTargetedGoalRequiredError(Exception):
+    pass
+
+
 @dataclass(frozen=True, slots=True)
 class PostgresAnalysisContextInputSource:
     database: Database
@@ -77,7 +82,10 @@ class PostgresAnalysisContextInputSource:
                 raise PersistenceConflictError(resource="profile")
 
             goal = await session.execute(
-                select(goals.c.occupation_id, goals.c.target_by, goals.c.timezone).where(
+                select(
+                    goals.c.goal_mode, goals.c.status, goals.c.occupation_id,
+                    goals.c.target_by, goals.c.timezone,
+                ).where(
                     goals.c.id == command.goal_id,
                     goals.c.user_id == user_id,
                 )
@@ -85,8 +93,11 @@ class PostgresAnalysisContextInputSource:
             goal_row = goal.one_or_none()
             if goal_row is None:
                 raise MissingRecordError(resource="goal")
-            if goal_row.occupation_id is None:
-                raise AnalysisContextInputsUnavailableError("goal occupation is unavailable")
+            if (
+                goal_row.status != "ACTIVE" or goal_row.goal_mode != "TARGETED"
+                or not goal_row.occupation_id
+            ):
+                raise ActiveTargetedGoalRequiredError()
 
             preference = await session.execute(
                 select(
