@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 import anyio
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 
 from jobtology_be.api.dependencies import ApiDependencies
 from jobtology_be.api.identity import AuthenticatedPrincipal
@@ -144,6 +144,59 @@ def _initial_roadmap(
     })
     assert plan.status_code == 200, plan.text
     return goal_id, _active_roadmap(client)
+
+
+@pytest.mark.parametrize("scenario,status_code,error_code", [
+    ("no_goal", 404, "NOT_FOUND"),
+    ("foreign_goal", 404, "NOT_FOUND"),
+    ("discovery", 409, "ACTIVE_TARGETED_GOAL_REQUIRED"),
+    ("draft", 409, "ACTIVE_TARGETED_GOAL_REQUIRED"),
+    ("archived", 409, "ACTIVE_TARGETED_GOAL_REQUIRED"),
+])
+def test_analysis_without_owned_active_targeted_goal_returns_actionable_error_without_queueing(
+    acceptance_database_url: str, catalog_path: Path,
+    scenario: str, status_code: int, error_code: str,
+) -> None:
+    app = _app(acceptance_database_url, catalog_path)
+    goal_id = str(uuid4())
+    with TestClient(app) as client:
+        if scenario != "no_goal":
+            payload = _goal_payload(
+                1,
+                mode="DISCOVERY" if scenario == "discovery" else "TARGETED",
+                occupation=None if scenario == "discovery" else BACKEND,
+                status={"draft": "DRAFT", "archived": "ARCHIVED"}.get(scenario, "ACTIVE"),
+            )
+            created = client.post("/api/v1/me/goals", json=payload)
+            assert created.status_code == 201
+            goal_id = created.json()["goal_id"]
+
+    async def queue_counts() -> tuple[int, ...]:
+        database = Database.create(acceptance_database_url)
+        try:
+            async with database.sessions() as session:
+                return tuple([await session.scalar(select(func.count()).select_from(table))
+                              for table in (s.user_state_events, s.recompute_requests, s.outbox_jobs)])
+        finally:
+            await database.dispose()
+
+    requester = _app(acceptance_database_url, catalog_path) if scenario == "foreign_goal" else app
+    with TestClient(requester) as client:
+        if scenario in {"no_goal", "foreign_goal"}:
+            saved = client.put("/api/v1/me/profile", json={
+                "expected_profile_version": 1, "major_raw": "Computer science",
+            })
+            assert saved.status_code == 200
+        version = _version(client)
+        before = anyio.run(queue_counts)
+        response = client.post("/api/v1/analyses", json={
+            "goal_id": goal_id, "expected_profile_version": version, "basis_type": "EDITORIAL",
+        })
+        assert response.status_code == status_code, response.text
+        error = response.json()["error"]
+        assert error["code"] == error_code
+        assert response.headers["x-request-id"] == error["request_id"]
+        assert anyio.run(queue_counts) == before
 
 
 @pytest.mark.parametrize("initial_discovery", [False, True])
