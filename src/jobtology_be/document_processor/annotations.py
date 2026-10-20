@@ -17,6 +17,7 @@ from .models import (
     TableIR,
     paragraph_page_number,
 )
+from .pdf.meta import sanitize_css_color
 from .render_prep import iter_page_aware_paragraphs
 from .style_types import (
     CellStyleInfo,
@@ -252,13 +253,13 @@ def _resolve_annotations(
 
 def _run_css(style: RunStyleInfo) -> str:
     parts: list[str] = []
-    if style.color:
-        parts.append(f"color:{style.color}")
+    if (color := sanitize_css_color(style.color)) is not None:
+        parts.append(f"color:{color}")
     size_pt = _non_negative_pt(style.size_pt)
     if size_pt:
         parts.append(f"font-size:{size_pt:.1f}pt")
-    if style.highlight:
-        parts.append(f"background-color:{style.highlight}")
+    if (color := sanitize_css_color(style.highlight)) is not None:
+        parts.append(f"background-color:{color}")
 
     decorations = []
     if style.underline:
@@ -286,7 +287,7 @@ def _style_wrap(html: str, style: RunStyleInfo | None) -> str:
 
     css = _run_css(style)
     if css:
-        html = f'<span style="{css}">{html}</span>'
+        html = f'<span style="{escape(css, quote=True)}">{html}</span>'
 
     return html
 
@@ -326,11 +327,11 @@ def _apply_annotations(
             fragments.append(escaped_segment)
             continue
 
-        color = active[0].color
+        color = sanitize_css_color(active[0].color) or "#FFFF00"
         label = " | ".join(item.label for item in active if item.label)
         note = " | ".join(item.note for item in active if item.note)
         attrs = [
-            f'style="background-color:{escape(color)};padding:1px 2px;border-radius:2px"'
+            f'style="background-color:{escape(color, quote=True)};padding:1px 2px;border-radius:2px"'
         ]
         if label:
             attrs.append(f'data-label="{escape(label)}"')
@@ -373,7 +374,7 @@ def _render_image(doc_ir: DocIR, image: ImageIR) -> str:
     attrs = [
         f'src="{escape(asset.as_data_url(), quote=True)}"',
         f'alt="{escape(image.alt_text or asset.filename or "")}"',
-        f'style="{";".join(style_parts)}"',
+        f'style="{escape(";".join(style_parts), quote=True)}"',
     ]
     return f"<img {' '.join(attrs)} />"
 
@@ -453,7 +454,7 @@ def _flush_paragraph(
         content = f"{list_marker}{content}"
     return (
         f'<p data-node-id="{escape(paragraph_id)}" '
-        f'style="{_paragraph_css(para_style)}">'
+        f'style="{escape(_paragraph_css(para_style), quote=True)}">'
         f"{content}</p>"
     )
 
@@ -565,8 +566,8 @@ def _cell_css(
     if horizontal_align:
         parts.append(f"text-align:{horizontal_align}")
     if style is not None:
-        if style.background:
-            parts.append(f"background-color:{style.background}")
+        if (color := sanitize_css_color(style.background)) is not None:
+            parts.append(f"background-color:{color}")
         width_pt = _non_negative_pt(style.width_pt)
         height_pt = _non_negative_pt(style.height_pt)
         if width_pt is not None:
@@ -839,7 +840,7 @@ def _render_cell(
     )
     attrs = [
         f'data-node-id="{escape(cell.node_id or "")}"',
-        f'style="{cell_css}"',
+        f'style="{escape(cell_css, quote=True)}"',
     ]
     if cell.cell_style is not None:
         if cell.cell_style.colspan > 1:
@@ -874,7 +875,7 @@ def _render_table(
 ) -> str:
     paragraph_annotations_by_id = paragraph_annotations_by_id or {}
     if not table.cells:
-        return f'<table data-node-id="{escape(table.node_id or "")}" style="{_table_css(table, para_style)}"></table>'
+        return f'<table data-node-id="{escape(table.node_id or "")}" style="{escape(_table_css(table, para_style), quote=True)}"></table>'
 
     positioned_cells = list(table.iter_cell_positions())
     covered: set[tuple[int, int]] = set()
@@ -892,7 +893,7 @@ def _render_table(
         max_col = max(max_col, col_index + colspan - 1)
 
     lines = [
-        f'<table data-node-id="{escape(table.node_id or "")}" style="{_table_css(table, para_style)}">'
+        f'<table data-node-id="{escape(table.node_id or "")}" style="{escape(_table_css(table, para_style), quote=True)}">'
     ]
     lines.extend(_render_colgroup(table))
     for row in range(1, max_row + 1):
@@ -909,7 +910,7 @@ def _render_table(
                     default_horizontal_align="left" if use_native_defaults else None,
                     default_vertical_align="center" if use_native_defaults else None,
                 )
-                lines.append(f'    <td style="{cell_css}">&nbsp;</td>')
+                lines.append(f'    <td style="{escape(cell_css, quote=True)}">&nbsp;</td>')
                 continue
 
             rowspan = (
@@ -1019,7 +1020,7 @@ def _render_column_group(
     attrs = [
         'class="document-column-group"',
         f'data-column-count="{max(column_style.count or 1, 1)}"',
-        f'style="{_column_group_css(column_style)}"',
+        f'style="{escape(_column_group_css(column_style), quote=True)}"',
     ]
     return f"<div {' '.join(attrs)}>{content_html or '&nbsp;'}</div>"
 
@@ -1097,8 +1098,8 @@ def _render_paged_body(
             run_annotations_by_id,
         )
         parts.append(
-            f'<section class="document-page" data-page-number="{page.page_number}" style="{_page_style(page)}">'
-            f'<div class="document-page__content" style="{_page_content_style(page)}">{content_html or "&nbsp;"}</div>'
+            f'<section class="document-page" data-page-number="{page.page_number}" style="{escape(_page_style(page), quote=True)}">'
+            f'<div class="document-page__content" style="{escape(_page_content_style(page), quote=True)}">{content_html or "&nbsp;"}</div>'
             "</section>"
         )
 

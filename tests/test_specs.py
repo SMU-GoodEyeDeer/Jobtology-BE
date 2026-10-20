@@ -145,3 +145,20 @@ def test_explicit_ai_fallback_suggests_valid_category_without_a_goal_or_saving()
     assert result.candidates[0].category == 'project'
     assert result.candidates[0].evidence_quote == user_text
     assert result.occupation_id is None
+
+
+def test_capability_writes_return_503_when_ncs_catalog_is_unavailable():
+    service = RecordingCapabilityService()
+    app = create_app(Settings(_env_file=None, environment='test'), dependencies=ApiDependencies(
+        identity_provider=StaticIdentityProvider(), capability_service=service,
+        skill_catalog=SkillCatalog(lambda: ()),
+    ))
+    payload = {'expected_profile_version': 3, 'category': 'project', 'raw_text': '로그인 프로젝트',
+               'proficiency': 'GUIDED', 'details': {'competency_ids': [NCS], 'evidence': EVIDENCE}}
+    with TestClient(app) as client:
+        for method, path in [('POST', '/api/v1/me/capabilities'),
+                             ('PATCH', '/api/v1/me/capabilities/00000000-0000-0000-0000-000000000001')]:
+            response = client.request(method, path, json=payload)
+            assert response.status_code == 503
+            assert response.json()['error']['code'] == 'DATA_UNAVAILABLE'
+    assert service.upsert_count == 0

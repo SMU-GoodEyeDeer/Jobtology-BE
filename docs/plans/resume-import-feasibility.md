@@ -26,7 +26,7 @@ The probe at [`experiments/resume_import/verify_processor.py`](../../experiments
 | Synthetic English PDF with a text layer | Text extraction, page 1, and annotation passed |
 | Image-only PDF | Page marked `pdf_scan_like`; no text extracted |
 | Hidden DOCX run | Text appeared in extraction, regular HTML, and review HTML |
-| Untrusted IR style string containing a quote and event attribute | Both renderers emitted the event attribute; **raw HTML is not a sanitization boundary** |
+| Untrusted IR style string containing a quote and event attribute | The initial probe emitted event attributes. The copied renderers now escape style attributes and validate color values; the regression probe asserts no event attributes. **Raw HTML still needs a full sanitization boundary**. |
 | Same test through a native DOCX font name | No event attribute emitted in this case; the IR result is not proof of a native-file exploit |
 
 HWP and legacy DOC runtime parsing were inspected but not exercised by this synthetic probe. The HWPX sample is a minimal container, not evidence of fidelity for every real Korean résumé template. Layout quality, OCR accuracy, multilingual field extraction, and LLM precision remain unevaluated on representative résumés.

@@ -26,6 +26,7 @@ from jobtology_be.api.idempotency import (
 from jobtology_be.api.identity import AuthenticatedPrincipal, require_authenticated_principal
 from jobtology_be.api.product_queries import require_product_queries
 from jobtology_be.api.skills import require_skill_catalog
+from jobtology_be.application.m5_queries import M5DataUnavailableError
 from jobtology_be.application.queries import CapabilityView, ProductQueries
 from jobtology_be.application.services.capabilities import (
     CapabilityMutationCommand,
@@ -113,6 +114,8 @@ def _command(request: CapabilityMutationRequest, capability_id: UUID | None,
              catalog: SkillCatalog) -> CapabilityMutationCommand:
     try:
         catalog.validate(request.details)
+    except M5DataUnavailableError as error:
+        raise HTTPException(status_code=503) from error
     except ValueError as error:
         raise HTTPException(status_code=422) from error
     return CapabilityMutationCommand(

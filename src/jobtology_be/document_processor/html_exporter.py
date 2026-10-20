@@ -18,6 +18,7 @@ from .models import (
     _node_debug_path,
     paragraph_page_number,
 )
+from .pdf.meta import sanitize_css_color
 from .render_prep import iter_page_aware_paragraphs
 from .style_types import (
     CellStyleInfo,
@@ -116,7 +117,7 @@ def _html_attrs(
 ) -> str:
     attrs: list[str] = []
     if style:
-        attrs.append(f'style="{style}"')
+        attrs.append(f'style="{escape(style, quote=True)}"')
     if extra_attrs:
         attrs.extend(extra_attrs)
     return " ".join(attrs)
@@ -126,13 +127,13 @@ def _run_css(style: RunStyleInfo) -> str:
     parts: list[str] = []
     if style.font_family:
         parts.append(f"font-family:{style.font_family}")
-    if style.color:
-        parts.append(f"color:{style.color}")
+    if (color := sanitize_css_color(style.color)) is not None:
+        parts.append(f"color:{color}")
     size_pt = _non_negative_pt(style.size_pt)
     if size_pt:
         parts.append(f"font-size:{size_pt:.1f}pt")
-    if style.highlight:
-        parts.append(f"background-color:{style.highlight}")
+    if (color := sanitize_css_color(style.highlight)) is not None:
+        parts.append(f"background-color:{color}")
 
     decorations = []
     if style.underline:
@@ -160,7 +161,7 @@ def _style_wrap(html: str, style: RunStyleInfo | None) -> str:
 
     css = _run_css(style)
     if css:
-        html = f'<span style="{css}">{html}</span>'
+        html = f'<span style="{escape(css, quote=True)}">{html}</span>'
 
     return html
 
@@ -281,7 +282,7 @@ def _flush_paragraph(
         if para_style is not None and para_style.render_tag
         else "p"
     )
-    attrs = [f'style="{_paragraph_css(para_style)}"']
+    attrs = [f'style="{escape(_paragraph_css(para_style), quote=True)}"']
     if debug_layout and node_id:
         attrs.append(f'data-node-id="{escape(node_id, quote=True)}"')
         attrs.append(
@@ -362,8 +363,8 @@ def _cell_css(
         parts.append(f"text-align:{horizontal_align}")
 
     if style is not None:
-        if style.background:
-            parts.append(f"background-color:{style.background}")
+        if (color := sanitize_css_color(style.background)) is not None:
+            parts.append(f"background-color:{color}")
 
         width_pt = _non_negative_pt(style.width_pt)
         height_pt = _non_negative_pt(style.height_pt)
@@ -688,7 +689,7 @@ def _render_cell(
         default_horizontal_align="left" if use_native_defaults else None,
         default_vertical_align="center" if use_native_defaults else None,
     )
-    attrs = [f'style="{cell_css}"']
+    attrs = [f'style="{escape(cell_css, quote=True)}"']
     if debug_layout:
         attrs.append(f'data-node-id="{escape(cell.node_id or "", quote=True)}"')
         attrs.append(
@@ -726,7 +727,7 @@ def _render_table(
     debug_layout: bool = False,
 ) -> str:
     render_table_grid = bool(table.table_style and table.table_style.render_grid)
-    attrs = [f'style="{_table_css(table, para_style)}"']
+    attrs = [f'style="{escape(_table_css(table, para_style), quote=True)}"']
     if debug_layout:
         attrs.append(f'data-node-id="{escape(table.node_id or "", quote=True)}"')
         attrs.append(
@@ -767,7 +768,7 @@ def _render_table(
                     default_horizontal_align="left" if use_native_defaults else None,
                     default_vertical_align="center" if use_native_defaults else None,
                 )
-                lines.append(f'    <td style="{cell_css}">&nbsp;</td>')
+                lines.append(f'    <td style="{escape(cell_css, quote=True)}">&nbsp;</td>')
                 continue
 
             if cell.cell_style is not None:
@@ -827,7 +828,7 @@ def _render_column_group(
             'class="document-column-group document-column-group--indexed"',
             'data-column-mode="indexed"',
             f'data-column-count="{max(column_style.count or 1, 1)}"',
-            f'style="{_column_grid_css(column_style)}"',
+            f'style="{escape(_column_grid_css(column_style), quote=True)}"',
         ]
         if debug_layout:
             attrs.append(
@@ -852,7 +853,7 @@ def _render_column_group(
     attrs = [
         'class="document-column-group"',
         f'data-column-count="{max(column_style.count or 1, 1)}"',
-        f'style="{_column_group_css(column_style)}"',
+        f'style="{escape(_column_group_css(column_style), quote=True)}"',
     ]
     if debug_layout:
         attrs.append(
@@ -981,11 +982,11 @@ def _render_paged_body(doc_ir: DocIR, *, debug_layout: bool = False) -> str:
         page_attrs = [
             'class="document-page"',
             f'data-page-number="{page.page_number}"',
-            f'style="{_page_style(page)}"',
+            f'style="{escape(_page_style(page), quote=True)}"',
         ]
         content_attrs = [
             'class="document-page__content"',
-            f'style="{_page_content_style(page)}"',
+            f'style="{escape(_page_content_style(page), quote=True)}"',
         ]
         if debug_layout:
             page_attrs.append(

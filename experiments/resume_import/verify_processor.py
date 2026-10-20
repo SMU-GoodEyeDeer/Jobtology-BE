@@ -218,6 +218,7 @@ def main() -> None:
     styled_review = render_review_html(document=DocumentInput(doc_ir=unsafe), annotations=[])
     review_probe = AttributeProbe()
     review_probe.feed(styled_review.html or "")
+    assert not probe.event_attributes and not review_probe.event_attributes
 
     # Check a native font name separately; do not assume the IR probe is reachable.
     native_style_path = args.out / "synthetic-native-style.docx"

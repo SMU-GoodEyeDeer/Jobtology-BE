@@ -34,3 +34,5 @@ See `docs/document-processing.md` in the BE repository for usage, runtime needs,
 packaging validation, and the remaining résumé-import work.
 
 The résumé integration also preserves existing paragraph source text during PDF anchor canonicalization when ODL spans omit characters, and retains page-layout metadata when page-count/child hints are absent. Regression tests cover punctuation preservation and layout-only page records.
+
+HTML and annotation exporters also escape interpolated style attributes with `quote=True` and validate foreground/background/highlight colors through the existing PDF color normalizer. This prevents attribute breakout; it is not a complete CSS/HTML sanitizer.
