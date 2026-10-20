@@ -1,6 +1,7 @@
 from dataclasses import replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -51,7 +52,7 @@ def test_production_recommended_order_and_weeks():
     plan = weekly_plan.build_weekly_plan(context(), tuple(reversed(steps)))
     # Then
     assert [step.step_id.int for step in plan.steps] == list(range(1, 12))
-    assert sum(step.start_week == 1 for step in plan.steps) == 10
+    assert sum(step.start_week == 1 for step in plan.steps) == 2
     assert all(sum(a.hours for a in step.week_allocations) == step.hours for step in plan.steps)
     assert all(sum(a.hours for step in plan.steps for a in step.week_allocations if a.week == week)
                <= 10 for week in range(1, 27))
@@ -199,7 +200,7 @@ def test_step_boundaries_reuse_capacity_without_rounding_each_step():
     # When
     result = weekly_plan.build_weekly_plan(context(), tuple(inputs))
     # Then
-    assert [(s.start_week, s.end_week) for s in result.steps] == [(1, 1), (1, 3), (1, 1), (1, 3)]
+    assert [(s.start_week, s.end_week) for s in result.steps] == [(1, 1), (1, 2), (1, 1), (1, 3)]
     assert result.total_weeks == 3
     assert result.completion_date == result.recommended_completion_date == date(2026, 11, 2)
     assert [sum(a.hours for step in result.steps for a in step.week_allocations if a.week == week)
@@ -413,6 +414,117 @@ def test_dependency_cycles_are_reported_without_losing_steps_or_hanging():
     assert result.has_dependency_violations
     assert len(result.steps) == 2
     assert all(sum(a.hours for a in step.week_allocations) == step.hours for step in result.steps)
+
+
+def test_ten_independent_activities_start_in_a_rolling_window_instead_of_all_at_once():
+    inputs = production_steps()[:10]
+    start = context().created_at
+    schedules = weekly_plan._pack(context(), inputs, None, start, date(2026, 10, 19),
+                                  ZoneInfo('Asia/Seoul'))
+    events = sorted((timestamp, delta) for schedule in schedules.values() for timestamp, delta in (
+        (schedule.starts_at, 1), (schedule.ends_at, -1),
+    ))
+    active = peak = 0
+    for _, delta in events:
+        active += delta
+        peak = max(peak, active)
+    assert peak == 2
+    result = weekly_plan.build_weekly_plan(context(), inputs)
+    assert len({step.start_week for step in result.steps}) >= 5
+    assert max(step.end_week - step.start_week for step in result.steps) <= 8
+    assert result.total_weeks == (sum(step.hours for step in result.steps) + 9) // 10
+    assert all(sum(a.hours for a in step.week_allocations) == step.hours for step in result.steps)
+
+
+def test_editing_a_widely_interleaved_solver_schedule_staggers_activities_but_reset_keeps_source():
+    start = context().created_at
+    inputs = tuple(replace(item, step=replace(
+        item.step, planned_start=start + timedelta(hours=index),
+        planned_end=start + timedelta(weeks=20 + index % 3),
+    )) for index, item in enumerate(production_steps()[:10]))
+    overrides = weekly_plan.PlanOverrides(
+        weekly_hours=11, rest_weeks=(), order=tuple(str(item.step.step_id) for item in inputs),
+        hours={}, saved_at=None,
+    )
+    result = weekly_plan.build_weekly_plan(context(), inputs, overrides)
+    assert sum(step.start_week == 1 for step in result.steps) == 2
+    assert len({step.start_week for step in result.steps}) >= 5
+    assert max(step.end_week - step.start_week for step in result.steps) < 10
+    original = weekly_plan.build_weekly_plan(context(), inputs)
+    assert sum(step.start_week == 1 for step in original.steps) == 10
+    assert all(step.end_week >= 21 for step in original.steps)
+    assert original.schedule_source == 'SOLVER'
+    assert original.steps[0].end_date == inputs[0].step.planned_end.astimezone(ZoneInfo('Asia/Seoul')).date()
+
+
+def _spaced_solver_inputs(start_hours, *, weekly_hours=4):
+    start = context().created_at
+    inputs = production_steps()[:len(start_hours)]
+    result = []
+    for item, offset in zip(inputs, start_hours, strict=True):
+        week, hours = divmod(offset, weekly_hours)
+        begins = start + timedelta(weeks=week, hours=hours)
+        result.append(replace(item, step=replace(item.step, planned_start=begins,
+                                                planned_end=begins + timedelta(hours=4)),
+                              metadata=replace(item.metadata, estimated_hours=4)))
+    return tuple(result)
+
+
+def test_unchanged_priority_preserves_natural_source_spacing_on_a_rescaled_working_hour_axis():
+    inputs = _spaced_solver_inputs((0, 4, 8))
+    plan_context = replace(context(), recommended_weekly_hours=4)
+    overrides = weekly_plan.PlanOverrides(
+        weekly_hours=8, rest_weeks=(), order=tuple(str(item.step.step_id) for item in inputs),
+        hours={}, saved_at=None,
+    )
+    schedules = weekly_plan._pack(plan_context, inputs, overrides, context().created_at,
+                                  date(2026, 10, 19), ZoneInfo('Asia/Seoul'))
+    assert schedules[inputs[1].step.step_id].starts_at == schedules[inputs[0].step.step_id].ends_at
+    assert schedules[inputs[2].step.step_id].starts_at > schedules[inputs[1].step.step_id].ends_at
+    plan = weekly_plan.build_weekly_plan(plan_context, inputs, overrides)
+    assert [step.start_week for step in plan.steps] == [1, 1, 2]
+    assert plan.total_weeks == 2
+
+
+def test_source_overlap_is_preserved_as_a_soft_start_preference_within_the_rolling_window():
+    inputs = _spaced_solver_inputs((0, 2), weekly_hours=8)
+    plan_context = replace(context(), recommended_weekly_hours=8)
+    overrides = weekly_plan.PlanOverrides(
+        weekly_hours=9, rest_weeks=(), order=tuple(str(item.step.step_id) for item in inputs),
+        hours={}, saved_at=None,
+    )
+    schedules = weekly_plan._pack(plan_context, inputs, overrides, context().created_at,
+                                  date(2026, 10, 19), ZoneInfo('Asia/Seoul'))
+    first, second = (schedules[item.step.step_id] for item in inputs)
+    assert second.starts_at == first.starts_at + timedelta(hours=2)
+    assert second.starts_at < first.ends_at
+
+
+def test_explicit_reorder_overrides_source_start_preferences():
+    inputs = _spaced_solver_inputs((0, 40))
+    reordered = tuple(reversed(inputs))
+    plan_context = replace(context(), recommended_weekly_hours=4)
+    overrides = weekly_plan.PlanOverrides(
+        weekly_hours=8, rest_weeks=(), order=tuple(str(item.step.step_id) for item in reordered),
+        hours={}, saved_at=None,
+    )
+    schedules = weekly_plan._pack(plan_context, reordered, overrides, context().created_at,
+                                  date(2026, 10, 19), ZoneInfo('Asia/Seoul'))
+    assert schedules[reordered[0].step.step_id].starts_at == context().created_at
+    assert schedules[reordered[1].step.step_id].starts_at == context().created_at + timedelta(hours=1)
+
+
+def test_soft_source_spacing_never_leaves_an_empty_active_window_idle():
+    inputs = _spaced_solver_inputs((0, 40))
+    plan_context = replace(context(), recommended_weekly_hours=4)
+    overrides = weekly_plan.PlanOverrides(
+        weekly_hours=8, rest_weeks=(), order=tuple(str(item.step.step_id) for item in inputs),
+        hours={}, saved_at=None,
+    )
+    schedules = weekly_plan._pack(plan_context, inputs, overrides, context().created_at,
+                                  date(2026, 10, 19), ZoneInfo('Asia/Seoul'))
+    assert schedules[inputs[1].step.step_id].starts_at == schedules[inputs[0].step.step_id].ends_at
+    assert weekly_plan.build_weekly_plan(plan_context, inputs, overrides).total_weeks == 1
 
 
 
