@@ -1467,6 +1467,7 @@ def _page_infos_from_odl(raw_document: dict[str, Any]) -> list[PageInfo]:
     if page_count is not None and page_count > 0:
         page_numbers.update(range(1, page_count + 1))
     _collect_page_numbers(raw_document.get("kids", []), page_numbers)
+    page_numbers.update(page_layouts)
 
     return [
         PageInfo(page_number=page_number, **page_layouts.get(page_number, {}))
@@ -1606,7 +1607,10 @@ def _canonicalize_paragraph_unit_ids(
                 else f"{unit_id}.tbl{table_index}"
             )
             _canonicalize_table_unit_ids(node, unit_id=table_unit_id)
-    paragraph.recompute_text()
+    # Renaming anchors is not a text edit. Incomplete ODL spans can omit
+    # punctuation that _reconstructed_text_for_node kept in paragraph.text.
+    if paragraph.tables or not paragraph.text:
+        paragraph.recompute_text()
 
 
 def _canonicalize_table_unit_ids(table: TableIR, *, unit_id: str) -> None:
