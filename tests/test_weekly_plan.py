@@ -663,3 +663,21 @@ def test_custom_calendar_limit_returns_explicit_failure_without_ignoring_windows
     custom = weekly_plan.PlanOverrides(weekly_hours=4, rest_weeks=(), order=(), hours={}, saved_at=None)
     with pytest.raises(weekly_plan.WeeklyPlanSchedulingError):
         weekly_plan.build_weekly_plan(source, (item,), custom)
+
+
+def test_custom_calendar_skips_an_excluded_dst_day_without_checking_each_hour(monkeypatch):
+    zone = ZoneInfo('America/New_York')
+    start = datetime(2026, 11, 1, tzinfo=zone)  # This excluded day has 25 real hours.
+    item = production_steps()[0]
+    source = replace(context(), created_at=start, as_of=start, timezone=zone.key,
+                     step_hours={item.step.step_key: 1}, unavailable_dates=(start.date(),))
+    checked = []
+    original = weekly_plan.slot_is_available
+    def check(starts_at, *args):
+        checked.append(starts_at.astimezone(zone).date())
+        return original(starts_at, *args)
+    monkeypatch.setattr(weekly_plan, 'slot_is_available', check)
+    custom = weekly_plan.PlanOverrides(weekly_hours=10, rest_weeks=(), order=(), hours={}, saved_at=None)
+    plan = weekly_plan.build_weekly_plan(source, (item,), custom)
+    assert plan.steps[0].planned_start_at.astimezone(zone).date() == date(2026, 11, 2)
+    assert checked and start.date() not in checked

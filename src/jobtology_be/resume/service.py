@@ -220,8 +220,9 @@ class ResumeService:
             result = json.loads(result_path.read_text())
             if not result.get('ok'):
                 kind = result.get('error_type', '')
+                code = result.get('code', 'UNREADABLE_DOCUMENT')
                 raise ResumeError(
-                    result.get('code', 'UNREADABLE_DOCUMENT'),
+                    code, 503 if code == 'PARSER_ISOLATION_UNAVAILABLE' else 422,
                     parser_exit_code=process.returncode,
                     parser_error_type=kind if isinstance(kind, str) and re.fullmatch(
                         r'[A-Za-z_][A-Za-z0-9_]{0,79}', kind,

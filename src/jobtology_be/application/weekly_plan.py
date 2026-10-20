@@ -122,6 +122,7 @@ def _pack(
     """
     weekly = overrides.weekly_hours if overrides else context.recommended_weekly_hours
     rests = frozenset(overrides.rest_weeks) if overrides else frozenset()
+    excluded = frozenset(context.unavailable_dates)
     by_id = {item.step.step_id: item for item in ordered}
     fixed = fixed or {}
     remaining = {item.step.step_id: overrides.hours.get(str(item.step.step_id), _hours(context, item))
@@ -161,12 +162,18 @@ def _pack(
             raise WeeklyPlanSchedulingError('Requested work does not fit the available calendar within 520 weeks')
         local = cursor.astimezone(timezone)
         week = (local.date() - start).days // 7 + 1
+        if local.date() in excluded:
+            next_day = datetime.combine(local.date() + timedelta(days=1), datetime.min.time(), timezone)
+            # Skip the excluded day on the same real-hour grid as this plan.
+            hours = max(1, ceil((next_day.astimezone(UTC) - cursor).total_seconds() / 3600))
+            cursor += timedelta(hours=hours)
+            continue
         if week in rests or used_by_week.get(week, 0) >= weekly:
             next_monday = start + timedelta(weeks=week)
             cursor = datetime.combine(next_monday, datetime.min.time(), timezone).astimezone(UTC)
             continue
         if not slot_is_available(cursor, cursor + timedelta(hours=1), context.weekly_availability,
-                                 context.unavailable_dates, timezone):
+                                 excluded, timezone):
             cursor += timedelta(hours=1)
             continue
         admitted: list[UUID] = []

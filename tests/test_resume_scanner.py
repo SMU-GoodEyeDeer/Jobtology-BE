@@ -375,3 +375,30 @@ def test_headings_give_category_context_without_creating_fake_qualifications():
     assert len(values) == 2
     assert values[0].category == 'project'
     assert values[1].score is None
+
+
+def test_parser_isolation_failure_is_a_retryable_server_error_and_erases_upload(tmp_path, monkeypatch, caplog):
+    import sys
+
+    import jobtology_be.resume.service as module
+
+    original = asyncio.create_subprocess_exec
+    async def failed_isolation(*args, **kwargs):
+        code = '''import json, pathlib, sys
+pathlib.Path(sys.argv[1]).write_text(json.dumps({
+    'ok': False, 'code': 'PARSER_ISOLATION_UNAVAILABLE', 'error_type': 'OSError'}))
+'''
+        return await original(sys.executable, '-c', code, args[-1], **kwargs)
+    monkeypatch.setattr(module.asyncio, 'create_subprocess_exec', failed_isolation)
+    app, service = application(tmp_path)
+    with TestClient(app) as client:
+        response = client.post('/api/v1/me/resume/scan?format=docx', content=docx_bytes())
+    assert response.status_code == 503
+    result = response.json()['error']
+    assert result['code'] == 'PARSER_ISOLATION_UNAVAILABLE'
+    UUID(result['request_id'])
+    assert response.headers['X-Request-ID'] == result['request_id']
+    assert 'code=PARSER_ISOLATION_UNAVAILABLE status=503' in caplog.text
+    assert 'parser_error_type=OSError' in caplog.text
+    assert TEXT not in caplog.text and TEXT not in response.text
+    assert not list(service.root.glob('scan-*'))

@@ -111,3 +111,20 @@ def test_preferences_constraints_and_snapshots_are_immutable_and_carried_forward
     assert carried['constraints'] == changed.model_dump(mode='json')
     first = datetime.fromisoformat(carried['calendar'][0]['starts_at']).astimezone(zone)
     assert first == datetime(2026, 10, 27, 19, tzinfo=zone)
+
+
+def test_flexible_calendar_indexes_excluded_dates_once_for_the_whole_horizon():
+    class CountedDates(tuple):
+        iterations = 0
+
+        def __iter__(self):
+            self.iterations += 1
+            return super().__iter__()
+
+    zone = ZoneInfo('Asia/Seoul')
+    start = datetime(2026, 10, 19, tzinfo=zone)
+    excluded = CountedDates((start.date(), start.date() + timedelta(days=1)))
+    slots = flexible_weekly_slots(start, start + timedelta(days=14), 10,
+                                  unavailable_dates=excluded)
+    assert excluded.iterations == 1
+    assert slots and all(slot.starts_at.astimezone(zone).date() not in excluded for slot in slots)

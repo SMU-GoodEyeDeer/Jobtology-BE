@@ -26,3 +26,26 @@ assert 'NoNewPrivs:\t1' in open('/proc/self/status').read()
     result = subprocess.run([sys.executable, '-c', code], capture_output=True,
                             text=True, timeout=10, check=False)
     assert result.returncode == 0, result.stderr
+
+
+def test_isolation_failure_stops_before_document_extraction(tmp_path, monkeypatch):
+    import json
+    from unittest.mock import Mock
+
+    from jobtology_be.resume import isolation, worker
+
+    extract = Mock(side_effect=AssertionError('document must stay unopened'))
+    output = tmp_path / 'result.json'
+    monkeypatch.setattr(worker.sys, 'argv', ['worker', str(tmp_path / 'private.docx'), str(output)])
+    monkeypatch.setattr(worker.resource, 'setrlimit', Mock())
+    monkeypatch.setattr(worker.signal, 'signal', Mock())
+    monkeypatch.setattr(worker.signal, 'alarm', Mock())
+    monkeypatch.setattr(worker, 'extract', extract)
+    monkeypatch.setattr(isolation, 'restrict_parser_network', Mock(
+        side_effect=OSError('private deployment details must not leak'),
+    ))
+    worker.main()
+    assert json.loads(output.read_text()) == {
+        'ok': False, 'code': 'PARSER_ISOLATION_UNAVAILABLE', 'error_type': 'OSError',
+    }
+    extract.assert_not_called()

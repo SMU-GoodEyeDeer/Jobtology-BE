@@ -1,4 +1,4 @@
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from datetime import UTC, date, datetime, timedelta, tzinfo
 
 from jobtology_be.contracts import WeeklyAvailabilityWindow
@@ -32,6 +32,7 @@ def flexible_weekly_slots(
     slot_start = _next_hour(planning_started_at)
     slots: list[PlanningSlot] = []
     allocated_by_week: dict[tuple[int, int], int] = {}
+    excluded = frozenset(unavailable_dates)
     while slot_start + SLOT_DURATION <= target_utc:
         # Advance real hours in UTC, retaining the goal's local ISO week for
         # capacity accounting. Local arithmetic creates nonexistent/repeated
@@ -41,7 +42,7 @@ def flexible_weekly_slots(
         allocated = allocated_by_week.get(week, 0)
         if allocated < available_hours_per_week and slot_is_available(
             slot_start, slot_start + SLOT_DURATION, weekly_availability,
-            unavailable_dates, planning_started_at.tzinfo,
+            excluded, planning_started_at.tzinfo,
         ):
             slots.append(
                 PlanningSlot(
@@ -59,7 +60,7 @@ def slot_is_available(
     starts_at: datetime,
     ends_at: datetime,
     weekly_availability: Sequence[WeeklyAvailabilityWindow] = (),
-    unavailable_dates: Sequence[date] = (),
+    unavailable_dates: Collection[date] = (),
     timezone: tzinfo | None = None,
 ) -> bool:
     """Check occupied real hours against local windows, including DST folds/gaps."""
@@ -70,7 +71,8 @@ def slot_is_available(
     if end <= start or end - start > MAX_FLEXIBLE_CALENDAR_HORIZON:
         return False
     zone = timezone or starts_at.tzinfo
-    excluded = frozenset(unavailable_dates)
+    excluded = (unavailable_dates if isinstance(unavailable_dates, frozenset)
+                else frozenset(unavailable_dates))
     cursor = start
     while cursor < end:
         segment_end = min(cursor + SLOT_DURATION, end)
