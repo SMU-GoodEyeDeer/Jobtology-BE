@@ -143,7 +143,9 @@ Coolify의 push 자동배포는 꺼져 있으므로, CI가 실패한 커밋은 �
 
 ## 5. 마이그레이션
 
-Alembic은 이미지 안의 `/app/.venv/bin/alembic`에 있다(이미지에는 `uv`, `curl`, `wget`도 있다). 현재 적용된
+Alembic은 이미지 안의 `/app/.venv/bin/alembic`에 있다. Coolify의 HTTP 헬스체크를 위해
+`railpack.json`의 **deploy.aptPackages**에 `curl`을 명시한다. 빌드 단계나 서버에만 설치하면
+최종 컨테이너에서 헬스체크가 실패한다. 현재 적용된
 revision은 운영 컨테이너의 `alembic current`로 확인한다. 이번 변경의 최신 revision은
 `20261019_01 (head)`이며, Google 계정별 공유 chat 한도 테이블과 identity 조회 index를 추가한다.
 인증된 chat 트래픽을 받기 전에 이 revision까지 적용해야 한다.
