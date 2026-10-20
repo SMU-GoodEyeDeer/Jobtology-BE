@@ -18,6 +18,15 @@ Coolify resources or reclassify catalogue evidence.
    monitor readiness latency and container OOM events before reducing memory.
    The application cannot enforce the host/container CPU or memory allocation.
 
+For a host checkout, use **Jobtology-BE**, not Jobtology-DB, and first run
+`uv sync --locked --no-dev --python 3.12`. Alembic configuration is in
+`pyproject.toml`; no `alembic.ini` is required. With the application migration/admin
+URL set as `JOBTOLOGY_DATABASE_URL`, run
+`.venv/bin/python -m alembic -c pyproject.toml upgrade head`, then the same command
+with `current` instead of `upgrade head`. The URL must be reachable from that
+host. A prior temporary loopback tunnel is usable only while its listener is
+running; Docker-only database names resolve inside the container network.
+
 Verify the image and limits without printing secrets:
 
 ```sh
