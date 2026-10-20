@@ -26,6 +26,7 @@ from jobtology_be.settings import CorpusSource
 
 MISSING_RECOMPUTE_CONTEXT: Final = "MISSING_RECOMPUTE_CONTEXT"
 RECOMPUTE_LEASE_FOR: Final = timedelta(minutes=5)
+STALE_RECOMPUTE_BATCH_LIMIT: Final = 1000
 _logger = logging.getLogger(__name__)
 
 
@@ -188,7 +189,7 @@ class OutboxRepository:
                 .where(*claim_conditions, recompute_requests.c.profile_version < profiles.c.version)
                 .order_by(outbox_jobs.c.id)
                 .with_for_update(of=outbox_jobs, skip_locked=True)
-                .limit(1000)
+                .limit(STALE_RECOMPUTE_BATCH_LIMIT)
             )).all()
             if stale:
                 await session.execute(update(outbox_jobs).where(
@@ -216,9 +217,12 @@ class OutboxRepository:
                             ).join(
                                 recompute_contexts,
                                 recompute_contexts.c.request_id == recompute_requests.c.id,
+                            ).join(
+                                profiles,
+                                profiles.c.user_id == recompute_requests.c.user_id,
                             )
                         )
-                        .where(*claim_conditions)
+                        .where(*claim_conditions, recompute_requests.c.profile_version == profiles.c.version)
                         .order_by(outbox_jobs.c.available_at, outbox_jobs.c.id)
                         .with_for_update(of=outbox_jobs, skip_locked=True)
                         .limit(limit)

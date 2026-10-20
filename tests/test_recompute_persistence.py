@@ -128,8 +128,10 @@ def _context_payload(
 
 
 def test_claim_skips_obsolete_versions_but_preserves_live_leases_and_other_accounts(
-    recompute_database_url: str,
+    recompute_database_url: str, monkeypatch,
 ) -> None:
+    # More stale jobs than one cleanup batch must never reach the solver.
+    monkeypatch.setattr('jobtology_be.infrastructure.persistence.outbox.STALE_RECOMPUTE_BATCH_LIMIT', 1)
     async def exercise():
         database = Database.create(recompute_database_url)
         store = PostgresApplicationStore(database)
@@ -169,6 +171,7 @@ def test_claim_skips_obsolete_versions_but_preserves_live_leases_and_other_accou
             other = await enqueue(other_user, 1)
             claimed = await store.claim_recompute_work(10)
             assert {work.request_id for work in claimed} == {current.request_id, other.request_id}
+            assert await store.claim_recompute_work(10) == ()
             async with database.sessions() as session:
                 rows = (await session.execute(text('''SELECT r.id, r.state, r.error_code, j.state,
                     j.attempt_count FROM recompute_requests r JOIN outbox_jobs j ON j.recompute_request_id=r.id'''))).all()
