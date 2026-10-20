@@ -127,6 +127,60 @@ def _context_payload(
     }
 
 
+def test_claim_skips_obsolete_versions_but_preserves_live_leases_and_other_accounts(
+    recompute_database_url: str,
+) -> None:
+    async def exercise():
+        database = Database.create(recompute_database_url)
+        store = PostgresApplicationStore(database)
+        user_id, other_user, goal_id = uuid4(), uuid4(), uuid4()
+        async def enqueue(owner, version):
+            event_id = uuid4()
+            async with database.sessions.begin() as session:
+                await session.execute(text('UPDATE profiles SET version=:version WHERE user_id=:owner'),
+                                      {'version': version, 'owner': owner})
+                await session.execute(insert(user_state_events).values(
+                    id=event_id, user_id=owner, aggregate_id=owner, aggregate_type='PROFILE',
+                    version=version, kind='ANALYSIS_REQUESTED', payload={'goal_id': str(goal_id)},
+                ))
+            return await store.create_recompute_request(RecomputeRequestCreate(
+                user_id=owner, profile_version=version, trigger_event_id=event_id,
+                dedupe_key=f'test:{event_id}', payload={},
+                context={**_context_payload(owner, goal_id), 'profile_version': version},
+            ))
+        try:
+            await store.create_user(UserCreate(user_id=user_id))
+            await store.create_user(UserCreate(user_id=other_user))
+            expired = await enqueue(user_id, 1)
+            old_work, = await store.claim_recompute_work(1)
+            # Claim the next version while the first lease is still current, then
+            # let that older lease expire before exercising stale cleanup.
+            async with database.sessions.begin() as session:
+                await session.execute(text("UPDATE outbox_jobs SET lease_until=now()+interval '1 minute' WHERE id=:id"),
+                                      {'id': old_work.lease.job_id})
+            active = await enqueue(user_id, 2)
+            active_work, = await store.claim_recompute_work(1)
+            assert active_work.request_id == active.request_id
+            async with database.sessions.begin() as session:
+                await session.execute(text("UPDATE outbox_jobs SET lease_until=now()-interval '1 second' WHERE id=:id"),
+                                      {'id': old_work.lease.job_id})
+            pending = await enqueue(user_id, 3)
+            current = await enqueue(user_id, 4)
+            other = await enqueue(other_user, 1)
+            claimed = await store.claim_recompute_work(10)
+            assert {work.request_id for work in claimed} == {current.request_id, other.request_id}
+            async with database.sessions() as session:
+                rows = (await session.execute(text('''SELECT r.id, r.state, r.error_code, j.state,
+                    j.attempt_count FROM recompute_requests r JOIN outbox_jobs j ON j.recompute_request_id=r.id'''))).all()
+            states = {row[0]: tuple(row[1:]) for row in rows}
+            assert states[expired.request_id] == ('FAILED', 'STALE_PROFILE', 'COMPLETED', 1)
+            assert states[pending.request_id] == ('FAILED', 'STALE_PROFILE', 'COMPLETED', 0)
+            assert states[active.request_id] == ('RUNNING', None, 'LEASED', 1)
+        finally:
+            await database.dispose()
+    anyio.run(exercise)
+
+
 async def _exercise_recompute_lifecycle(database_url: str) -> None:
     database = Database.create(database_url)
     store = PostgresApplicationStore(database)

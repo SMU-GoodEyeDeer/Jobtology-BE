@@ -189,9 +189,9 @@ def main() -> None:
         result = {'ok': True, 'result': extract(path).model_dump(mode='json')}
     except DocumentRejected as error:
         result = {'ok': False, 'code': str(error)}
-    except Exception:  # noqa: BLE001 -- isolate arbitrary third-party parser failures.
+    except Exception as error:  # noqa: BLE001 -- isolate arbitrary third-party parser failures.
         # No parser traceback, filename or résumé content in the API/logs.
-        result = {'ok': False, 'code': 'UNREADABLE_DOCUMENT'}
+        result = {'ok': False, 'code': 'UNREADABLE_DOCUMENT', 'error_type': type(error).__name__}
     output.write_text(json.dumps(result, ensure_ascii=False))
 
 

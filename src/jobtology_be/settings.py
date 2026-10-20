@@ -65,7 +65,7 @@ class Settings(BaseSettings):
     product_role_artifact_approval_path: Path | None = None
     inprocess_worker_enabled: bool = False
     capability_list_authoritative: bool = False
-    solver_worker_count: int = Field(default=8, ge=1, le=16)
+    solver_worker_count: int = Field(default=2, ge=1, le=16)
     solver_time_limit_seconds: float | None = Field(default=10.0, gt=0, le=60)
     llm_provider: Literal["disabled", "openai_api_key", "chatgpt_oauth"] = "disabled"
     openai_api_key: SecretStr | None = None

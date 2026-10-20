@@ -1,3 +1,5 @@
+import logging
+import time
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Protocol, assert_never, override
@@ -50,6 +52,8 @@ from jobtology_be.workers.outcomes import PinnedOutcomeResolutionError
 from jobtology_be.workers.recompute_artifacts import build_recompute_artifacts
 
 from .recompute_planning import build_planning_problem
+
+_logger = logging.getLogger(__name__)
 
 __all__ = [
     "LeasedRecomputeWorker",
@@ -162,6 +166,7 @@ class RecomputeWorker:
     solver_time_limit_seconds: float | None = None
 
     async def process(self, work_item: RecomputeWorkItem) -> RecomputeFinalization:
+        started = time.monotonic()
         context = await self.context_reader.get_context(work_item)
         if (
             context.user_id != work_item.user_id
@@ -215,6 +220,12 @@ class RecomputeWorker:
         planning_result = await anyio.to_thread.run_sync(
             CpSatRoutePlanner(worker_count=self.solver_worker_count).plan, problem
         )
+        elapsed = time.monotonic() - started
+        log = _logger.warning if elapsed >= 5 else _logger.info
+        log('recompute_planning_complete request_id=%s elapsed_ms=%d candidates=%d '
+            'calendar_slots=%d solver_workers=%d status=%s',
+            work_item.request_id, elapsed * 1000, len(problem.candidates), len(problem.calendar),
+            self.solver_worker_count, planning_result.optimization_status)
         if planning_result.feasibility is None:
             raise SolverTimeoutError()
         return await self.finalizer.finalize_recompute(

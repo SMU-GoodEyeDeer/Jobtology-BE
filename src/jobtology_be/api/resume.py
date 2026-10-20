@@ -1,4 +1,6 @@
 import asyncio
+import logging
+import time
 from typing import Annotated
 from uuid import uuid4
 
@@ -25,6 +27,7 @@ from jobtology_be.resume.models import (
 from jobtology_be.resume.service import ResumeError, ResumeService
 
 router = APIRouter(tags=['resume'])
+_logger = logging.getLogger(__name__)
 
 
 def require_resume_service() -> ResumeService:
@@ -42,8 +45,15 @@ async def _quota(limiter: AccountRateLimiter | None, principal: AuthenticatedPri
         raise HTTPException(status_code=429, headers={'Retry-After': str(decision.retry_after_seconds)})
 
 
-def _error(error: ResumeError):
+def _error(error: ResumeError, *, operation: str, started: float, format: str | None = None):
     request_id = str(uuid4())
+    # Never log filenames, document text, hashes, user IDs or exception messages.
+    _logger.warning(
+        'resume_processing_failed request_id=%s operation=%s format=%s code=%s '
+        'status=%s elapsed_ms=%d parser_exit_code=%s parser_error_type=%s',
+        request_id, operation, format, error.code, error.status,
+        (time.monotonic() - started) * 1000, error.parser_exit_code, error.parser_error_type,
+    )
     return JSONResponse(status_code=error.status, content={'error': {
         'code': error.code, 'message': 'Resume processing could not complete',
         'request_id': request_id, 'details': [],
@@ -77,15 +87,16 @@ async def scan(
 ):
     """Raw file body; filenames never enter URLs, logs or storage. Session CSRF applies."""
     response.headers['Cache-Control'] = 'no-store'
+    started = time.monotonic()
     await _quota(limiter, principal)
     length = request.headers.get('content-length')
     if length and (not length.isdigit() or len(length) > 20 or int(length) > MAX_BYTES):
-        return _error(ResumeError('FILE_TOO_LARGE', 413))
+        return _error(ResumeError('FILE_TOO_LARGE', 413), operation='scan', started=started, format=format)
     try:
         return await service.scan(principal.user_id, format, request.stream(), occupation_id,
                                   request.is_disconnected)
     except ResumeError as error:
-        return _error(error)
+        return _error(error, operation='scan', started=started, format=format)
     except ClientDisconnect:
         return Response(status_code=499, headers={'Cache-Control': 'no-store'})
 
@@ -100,10 +111,11 @@ async def interpret(
 ):
     """Explicit fallback: only the user-reviewed passage is sent to the configured model."""
     response.headers['Cache-Control'] = 'no-store'
+    started = time.monotonic()
     await _quota(limiter, principal)
     try:
         return await service.interpret(request.text, request.occupation_id)
     except ResumeError as error:
-        return _error(error)
+        return _error(error, operation='interpret', started=started)
     except LlmUnavailableError:
-        return _error(ResumeError('AI_UNAVAILABLE', 503))
+        return _error(ResumeError('AI_UNAVAILABLE', 503), operation='interpret', started=started)

@@ -1,4 +1,5 @@
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, replace
 from typing import assert_never, override
 
 from ortools.sat.python import cp_model
@@ -23,6 +24,7 @@ from jobtology_be.planning.solver_models import (
     RouteFeasibility,
     RouteRejection,
     RouteRejectionCode,
+    SolverSettings,
 )
 
 
@@ -47,7 +49,13 @@ class CpSatRoutePlanner:
         artifacts = build_route_model(
             problem, candidates, require_required_coverage=True
         )
-        solver, status = _solve(artifacts.model, problem, self.worker_count)
+        # Full and partial searches share one budget. Previously an unknown/full
+        # infeasible result could trigger a second complete time allowance.
+        deadline = time.monotonic() + problem.settings.time_limit_seconds
+        full_problem = replace(problem, settings=SolverSettings(
+            time_limit_seconds=problem.settings.time_limit_seconds * .75,
+        ))
+        solver, status = _solve(artifacts.model, full_problem, self.worker_count)
         match status:
             case cp_model.OPTIMAL:
                 solved_steps = scheduled_steps(problem, artifacts, solver)
@@ -74,7 +82,7 @@ class CpSatRoutePlanner:
                     diagnostic=None,
                 )
             case cp_model.INFEASIBLE:
-                diagnostic = _partial_diagnostic(problem, candidates, self.worker_count)
+                diagnostic = _partial_diagnostic(problem, candidates, self.worker_count, deadline=deadline)
                 if diagnostic.scheduled_steps:
                     return planning_result(
                         worker_count=self.worker_count,
@@ -100,7 +108,7 @@ class CpSatRoutePlanner:
                 # No full-coverage route was found in time. Fall back to the best route
                 # without the coverage constraint; it is a regular route only when it
                 # still covers every required requirement.
-                diagnostic = _partial_diagnostic(problem, candidates, self.worker_count)
+                diagnostic = _partial_diagnostic(problem, candidates, self.worker_count, deadline=deadline)
                 if not diagnostic.scheduled_steps:
                     return planning_result(
                         worker_count=self.worker_count,
@@ -144,6 +152,12 @@ class UnexpectedCpSatStatusError(Exception):
     @override
     def __str__(self) -> str:
         return f"unexpected CP-SAT status: {self.status}"
+
+
+def _remaining_problem(problem: PlanningProblem, deadline: float) -> PlanningProblem:
+    return replace(problem, settings=SolverSettings(
+        time_limit_seconds=max(0.0, deadline - time.monotonic()),
+    ))
 
 
 def _solve(
@@ -215,10 +229,10 @@ def _has_unknown_cost(candidate: Candidate) -> bool:
 
 
 def _partial_diagnostic(
-    problem: PlanningProblem, candidates: tuple[Candidate, ...], worker_count: int
+    problem: PlanningProblem, candidates: tuple[Candidate, ...], worker_count: int, *, deadline: float,
 ) -> PartialRouteDiagnostic:
     artifacts = build_route_model(problem, candidates, require_required_coverage=False)
-    solver, status = _solve(artifacts.model, problem, worker_count)
+    solver, status = _solve(artifacts.model, _remaining_problem(problem, deadline), worker_count)
     match status:
         case cp_model.OPTIMAL | cp_model.FEASIBLE:
             unmet = tuple(

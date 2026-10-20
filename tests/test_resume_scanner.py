@@ -118,12 +118,17 @@ def test_authentication_and_csrf_reject_before_parsing(tmp_path):
 
 
 @pytest.mark.parametrize(('content', 'expected'), [(b'not a document', 'FORMAT_MISMATCH'), (b'', 'EMPTY_DOCUMENT')])
-def test_bad_documents_are_safe_errors_and_files_are_deleted(tmp_path, content, expected):
+def test_bad_documents_are_safe_errors_and_files_are_deleted(tmp_path, content, expected, caplog):
     app, service = application(tmp_path)
     with TestClient(app) as client:
         response = client.post('/api/v1/me/resume/scan?format=docx', content=content)
     assert response.status_code == 422
     assert response.json()['error']['code'] == expected
+    request_id = response.json()['error']['request_id']
+    assert response.headers['x-request-id'] == request_id
+    assert f'request_id={request_id}' in caplog.text
+    assert f'code={expected}' in caplog.text
+    assert str(tmp_path) not in caplog.text and 'not a document' not in caplog.text
     assert not list(service.root.glob('scan-*'))
 
 
@@ -270,6 +275,35 @@ def test_parser_timeout_kills_child_and_erases_source(tmp_path, monkeypatch):
     with pytest.raises(ResumeError, match='PARSE_TIMEOUT'):
         asyncio.run(service.scan(USER, 'docx', stream()))
     assert children[0].returncode < 0
+    assert not list(tmp_path.glob('scan-*'))
+
+
+def test_parser_keeps_railpack_runtime_paths_without_forwarding_secrets(tmp_path, monkeypatch):
+    import sys
+
+    import jobtology_be.resume.service as module
+    runtime_keys = ('MISE_DATA_DIR', 'MISE_CONFIG_DIR', 'MISE_CACHE_DIR', 'MISE_INSTALLS_DIR')
+    for key in runtime_keys:
+        monkeypatch.setenv(key, '/mise')
+    monkeypatch.setenv('JOBTOLOGY_DATABASE_URL', 'synthetic-private-database')
+    monkeypatch.setenv('JOBTOLOGY_GOOGLE_CLIENT_SECRET', 'synthetic-private-secret')
+    original = asyncio.create_subprocess_exec
+    async def native_probe(*args, **kwargs):
+        code = '''import json, os, pathlib, sys
+assert all(os.environ.get(key) == '/mise' for key in (
+    'MISE_DATA_DIR', 'MISE_CONFIG_DIR', 'MISE_CACHE_DIR', 'MISE_INSTALLS_DIR'))
+assert 'JOBTOLOGY_DATABASE_URL' not in os.environ
+assert 'JOBTOLOGY_GOOGLE_CLIENT_SECRET' not in os.environ
+assert pathlib.Path(os.environ['HOME']) == pathlib.Path.cwd()
+pathlib.Path(sys.argv[1]).write_text(json.dumps({'ok': True, 'result': {
+    'blocks': [], 'warnings': [], 'skipped_pages': []}}))
+'''
+        return await original(sys.executable, '-c', code, args[-1], **kwargs)
+    monkeypatch.setattr(module.asyncio, 'create_subprocess_exec', native_probe)
+    service = ResumeService(catalog(), root=tmp_path, formats=('docx',))
+    async def stream():
+        yield docx_bytes()
+    assert asyncio.run(service.scan(USER, 'docx', stream())).blocks == ()
     assert not list(tmp_path.glob('scan-*'))
 
 
