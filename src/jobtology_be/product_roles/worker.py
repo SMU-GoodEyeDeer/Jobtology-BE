@@ -21,12 +21,16 @@ class WorkerHealth:
     running: bool = False
     last_success: float | None = None
     last_cycle_failed: bool = False
+    last_cycle: float | None = None
+    consecutive_failures: int = 0
+    failure_threshold: int = 3
     stale_after_seconds: float = 90
 
     @property
     def ready(self) -> bool:
-        return (self.running and not self.last_cycle_failed and self.last_success is not None
-                and time.monotonic() - self.last_success < self.stale_after_seconds)
+        return (self.running and self.last_cycle is not None
+                and time.monotonic() - self.last_cycle < self.stale_after_seconds
+                and self.consecutive_failures < self.failure_threshold)
 
 
 class RoleNames(Protocol):
@@ -81,10 +85,13 @@ class InProcessRecomputeLoop:
                     await self.process_once()
                 except Exception:
                     self.health.last_cycle_failed = True
+                    self.health.consecutive_failures += 1
                     _logger.exception("product role recompute cycle deferred after error")
                 else:
                     self.health.last_success = time.monotonic()
                     self.health.last_cycle_failed = False
+                    self.health.consecutive_failures = 0
+                self.health.last_cycle = time.monotonic()
                 await anyio.sleep(RECOMPUTE_CYCLE_DELAY_SECONDS)
         finally:
             self.health.running = False

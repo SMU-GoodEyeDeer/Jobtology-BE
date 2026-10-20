@@ -140,7 +140,7 @@ def _pack(
     waiting = {item.step.step_id: {
         key for key in item.step.prerequisite_step_ids
         if key not in by_id or by_id[key].step.state != 'COMPLETED'
-    } for item in ordered}
+    } for item in ordered if item.step.step_id in remaining}
     dependents: dict[UUID, set[UUID]] = {}
     for key, prerequisites in waiting.items():
         for prerequisite in prerequisites:

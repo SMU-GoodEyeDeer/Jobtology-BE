@@ -56,6 +56,9 @@ or worker is ready for product traffic.
 The readiness endpoint checks the application database, required role catalog,
 and required in-process worker heartbeat; it returns 503 while any required
 component is unavailable. Keep `/api/v1/health/live` for process-only probes.
+Worker readiness tolerates isolated failures: the last completed cycle must be
+less than 90 seconds old, and three consecutive failed cycles mark it unready.
+A successful cycle resets the failure count; individual failures remain logged.
 
 ## Runtime configuration
 

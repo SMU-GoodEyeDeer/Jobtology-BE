@@ -116,18 +116,54 @@ async def test_deferred_roadmap_follow_up_preserves_other_accounts_and_fails_cyc
 
 
 @pytest.mark.anyio
-async def test_readiness_requires_a_recent_success_and_a_running_worker():
+async def test_readiness_requires_a_recent_cycle_and_a_running_worker():
     class Worker:
-        health = WorkerHealth(running=True, last_success=time.monotonic())
+        health = WorkerHealth(running=True, last_cycle=time.monotonic())
 
     worker = Worker()
     state = RuntimeReadiness(None, None, worker)
     assert await state.ready()
-    worker.health.last_success -= worker.health.stale_after_seconds + 1
+    worker.health.last_cycle -= worker.health.stale_after_seconds + 1
     assert not await state.ready()
-    worker.health.last_success = time.monotonic()
+    worker.health.last_cycle = time.monotonic()
     worker.health.running = False
     assert not await state.ready()
+
+
+@pytest.mark.anyio
+async def test_worker_tolerates_isolated_failures_and_recovers_after_failure_threshold(monkeypatch, caplog):
+    observations = []
+    recovered = anyio.Event()
+    calls = 0
+
+    async def process_once(self):
+        nonlocal calls
+        if calls:
+            observations.append((self.health.last_cycle, self.health.consecutive_failures,
+                                 self.health.ready))
+        calls += 1
+        if calls <= self.health.failure_threshold:
+            raise ValueError('work-item failure')
+        if calls > self.health.failure_threshold + 1:
+            recovered.set()
+            await anyio.sleep_forever()
+
+    monkeypatch.setattr(InProcessRecomputeLoop, 'process_once', process_once)
+    monkeypatch.setattr('jobtology_be.product_roles.worker.RECOMPUTE_CYCLE_DELAY_SECONDS', 0)
+    worker = InProcessRecomputeLoop(None, None, None, None)
+    assert not worker.health.ready
+    async with anyio.create_task_group() as tasks:
+        tasks.start_soon(worker.run)
+        await recovered.wait()
+        assert [(count, ready) for _, count, ready in observations] == [
+            (1, True), (2, True), (3, False), (0, True),
+        ]
+        assert all(stamp is not None for stamp, _, _ in observations)
+        assert [stamp for stamp, _, _ in observations] == sorted(stamp for stamp, _, _ in observations)
+        assert worker.health.last_success is not None
+        tasks.cancel_scope.cancel()
+    assert not worker.health.ready
+    assert caplog.text.count('product role recompute cycle deferred after error') == 3
 
 
 @pytest.mark.parametrize("retryable", [True, False])
@@ -160,10 +196,11 @@ def test_catalog_startup_recovery_keeps_unapproved_catalog_closed(monkeypatch, r
 
 
 @pytest.mark.anyio
-async def test_catalog_connection_failure_is_retryable():
+@pytest.mark.parametrize('failure', [ConnectionRefusedError, OSError])
+async def test_catalog_connection_failure_is_retryable(failure):
     class Engine:
         def connect(self):
-            raise ConnectionRefusedError("offline")
+            raise failure("offline")
 
     policy = Path(__file__).parents[1] / "config/product_roles/policy.v1.json"
     holder = ProductRoleHolder(Engine(), policy)

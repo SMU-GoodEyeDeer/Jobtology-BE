@@ -602,6 +602,17 @@ def test_new_custom_schedule_starts_in_future_even_without_completed_tasks():
     assert min(step.start_date for step in recommended.steps) < date(2026, 12, 1)
 
 
+def test_completed_dependent_is_not_rescheduled_when_its_prerequisite_is_todo():
+    first, second = production_steps()[:2]
+    second = replace(second, step=replace(second.step, state='COMPLETED',
+                                          prerequisite_step_ids=(first.step.step_id,)))
+    overrides = weekly_plan.PlanOverrides(weekly_hours=12, rest_weeks=(), order=(),
+                                          hours={}, saved_at=None)
+    plan = weekly_plan.build_weekly_plan(context(), (first, second), overrides)
+    assert [step.state for step in plan.steps] == ['TODO', 'COMPLETED']
+    assert plan.total_hours == 35
+
+
 def test_completed_solver_hours_still_consume_capacity_in_the_current_week():
     local = ZoneInfo('Asia/Seoul')
     start = datetime(2026, 10, 19, 8, tzinfo=local)

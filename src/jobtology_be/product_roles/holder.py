@@ -91,13 +91,13 @@ class ProductRoleHolder:
                 )
                 return False
             self._built = self._draft.publish(approval)
-        except (SQLAlchemyError, TimeoutError, ConnectionError) as error:
+        except (SQLAlchemyError, TimeoutError, OSError) as error:
             self.retryable_load_failure = True
             _logger.warning("%s: load failed (%s)", _UNAVAILABLE, type(error).__name__, exc_info=True)
             return False
         except (ValidationError, ProductRoleBuildError,
                 CorpusSnapshotError, EditorialBaselineError, CandidateTemplateError,
-                OSError, ValueError) as error:
+                ValueError) as error:
             _logger.warning("%s: load failed (%s)", _UNAVAILABLE, type(error).__name__, exc_info=True)
             return False
         return True

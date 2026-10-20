@@ -302,6 +302,32 @@ def test_stale_weekly_plan_save_and_reset_conflict_including_after_reset():
         assert client.put(PATH, json=payload() | {'expected_version': 2}).json()['version'] == 3
 
 
+def test_completed_dependent_with_todo_prerequisite_supports_get_put_and_preview():
+    class CompletedDependentQueries(Queries):
+        async def get_roadmap(self, user_id, roadmap_id):
+            roadmap = await super().get_roadmap(user_id, roadmap_id)
+            first, second = roadmap.steps[:2]
+            second = replace(second, state='COMPLETED', prerequisite_step_ids=(first.step_id,))
+            return replace(roadmap, steps=(first, second))
+
+    store = Store()
+    store.saved = PlanOverrides(weekly_hours=12, rest_weeks=(), order=(), hours={},
+                                saved_at=None, version=1)
+    app = app_with_store(store)
+    app.dependency_overrides[require_product_queries] = lambda: CompletedDependentQueries()
+    request = {'expected_version': 1, 'weekly_hours': 12, 'rest_weeks': [],
+               'order': [str(UUID(int=1)), str(UUID(int=2))], 'hours': {}}
+    with TestClient(app) as client:
+        fetched = client.get(PATH)
+        previewed = client.post(f'{PATH}/preview', json=request)
+        saved = client.put(PATH, json=request)
+        reloaded = client.get(PATH)
+    for response in (fetched, previewed, saved, reloaded):
+        assert response.status_code == 200
+        assert [step['state'] for step in response.json()['steps']] == ['TODO', 'COMPLETED']
+        assert response.json()['total_hours'] == 35
+
+
 def test_completed_hours_cannot_be_changed_by_an_override():
     class CompletedQueries(Queries):
         async def get_roadmap(self, user_id, roadmap_id):
