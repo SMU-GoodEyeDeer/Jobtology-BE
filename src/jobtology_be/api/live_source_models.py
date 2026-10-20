@@ -22,6 +22,7 @@ class NcsCategory(LiveRead):
 
 class PostingItem(LiveRead):
     posting_id: str
+    source_id: str | None = None
     title: str | None
     organization_code: str | None
     organization_name: str | None

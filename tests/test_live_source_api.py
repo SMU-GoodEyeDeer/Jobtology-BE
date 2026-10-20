@@ -37,7 +37,7 @@ class Identity:
 
 POSTING = {
     "posting_id": "urn:job:one", "title": "Developer", "organization_code": "ORG",
-    "organization_name": "Organization", "date_posted": "2026-10-01",
+    "source_id": "job_alio", "organization_name": "Organization", "date_posted": "2026-10-01",
     "closing_date": None, "ongoing": True, "regions": ["Seoul"],
     "employment_types": ["regular"], "recruitment_type": None,
     "education": None, "ncs_categories": [{"code": "01", "name": "IT"}],
@@ -158,7 +158,9 @@ def test_live_routes_forward_filters_and_return_typed_payloads() -> None:
         ("exams", "Q1", date(2026, 10, 1), date(2026, 12, 31), 5, 3),
     ]
     assert postings.json()["items"][0]["posting_id"] == "urn:job:one"
+    assert postings.json()["items"][0]["source_id"] == "job_alio"
     assert detail.json()["item"]["title"] == "Developer"
+    assert detail.json()["item"]["source_id"] == "job_alio"
     assert unit.json()["item"]["base_code"] == "2001020205"
     assert exams.json()["items"][0]["qualification_code"] == "Q1"
 

@@ -100,7 +100,8 @@ run, requests fail closed with 503; unauthenticated requests return 401.
 | `/api/v2/live/exam-sessions` | `qualification`, `from=YYYY-MM-DD`, `to=YYYY-MM-DD`, `limit=20` (1–100), `offset=0` (nonnegative) | `contract_version`, `sources`, `filters`, `limit`, `offset`, `total`, `items` |
 | `/api/v2/live/ncs-demand` | `ncs_prefix` (2–8 digits), `limit=20` (1–100), `offset=0` (nonnegative) | reviewed NCS linkage inventory (`contract_version`, `sources`, `review`, `filters`, `limit`, `offset`, `total`, `items`) |
 
-`contract_version` is `hop-live-source-v1`. Posting items expose `posting_id`,
+`contract_version` is `hop-live-source-v1`. Posting items expose `posting_id`, optional
+`source_id` (null with an older catalog reader),
 `title`, `organization_code`, `organization_name`, `date_posted`, `closing_date`,
 `ongoing`, `regions`, `employment_types`, `recruitment_type`, `education`,
 `ncs_categories` (`code`, `name`), `headcount`, and `source_url`. Exam items expose
@@ -112,6 +113,25 @@ Unknown or repeated query keys, invalid filters or pages return 422; missing
 posting returns 404; source/driver/validation failures return 503. Errors use
 the standard envelope without private database messages. There is no
 eligibility, preference, selection, or disqualification text in these responses.
+
+The multi-source posting reader includes JobKorea and JOB-ALIO, selecting each
+source's latest READY run. It orders JobKorea before JOB-ALIO **before** pagination;
+the frontend preserves that order. JobKorea IDs are `jobkorea:<native posting ID>`;
+existing JOB-ALIO IDs stay unchanged. Detail responses identify only the selected
+posting's source/run. JobKorea listing metadata is displayed only from selected,
+accepted records; missing descriptions, employer identities and dates stay missing.
+An inferred occupation match is not a source-provided NCS category, so the NCS
+filter can exclude JobKorea listings without such a source field. `sources.data_as_of`
+reports run completion/import time, not an independently verified scrape time.
+
+JobKorea visibility requires the catalog database's multi-source reader SQL upgrade
+[`031_multi_source_live_postings.sql`](https://github.com/SMU-GoodEyeDeer/Jobtology-DB/blob/feat/functionality-improvements/hop/ontology/sql/031_multi_source_live_postings.sql)
+from Jobtology-DB. On an already compatible catalog, apply only this additive SQL
+file as its existing owner/administrator. Application Alembic migrations do not
+install catalog readers.
+The additive `source_id` response field alone does not change the installed SQL's
+source selection. Install the catalog upgrade before expecting JobKorea results;
+existing grants and public function signatures are preserved.
 
 NCS unit detail calls `catalog.live_ncs_unit_v1(text)` on the same restricted pool.
 `code` includes the selected live version; `level` and `definition` may be null.
