@@ -121,7 +121,10 @@ class PostgresProductQueries:
                         user_capabilities.c.created_at,
                         user_capabilities.c.updated_at,
                     )
-                    .where(user_capabilities.c.user_id == user_id)
+                    .where(
+                        user_capabilities.c.user_id == user_id,
+                        user_capabilities.c.lifecycle == "ACTIVE",
+                    )
                     .order_by(user_capabilities.c.updated_at.desc(), user_capabilities.c.id)
                 )
             ).all()
@@ -146,6 +149,7 @@ class PostgresProductQueries:
                     ).where(
                         user_capabilities.c.id == capability_id,
                         user_capabilities.c.user_id == user_id,
+                        user_capabilities.c.lifecycle == "ACTIVE",
                     )
                 )
             ).one_or_none()

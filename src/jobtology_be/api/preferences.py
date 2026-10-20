@@ -60,7 +60,11 @@ def _response(preferences: RoutePreferences) -> RoutePreferencesResponse:
     "/me/route-preferences",
     response_model=RoutePreferencesResponse,
     summary="Get route preferences",
-    description="Returns the authenticated user's current route planning preferences.",
+    description=(
+        "Returns the authenticated user's current route planning preferences. "
+        "An existing account without saved preferences receives the analysis defaults "
+        "with availability_source=DEFAULT; this read does not save preferences or bump the version."
+    ),
 )
 async def get_route_preferences(
     principal: Annotated[AuthenticatedPrincipal, Depends(require_authenticated_principal)],

@@ -5,6 +5,7 @@ import anyio
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import func, select
 
 from jobtology_be.api.dependencies import ApiDependencies
 from jobtology_be.api.errors import register_error_handlers
@@ -14,8 +15,10 @@ from jobtology_be.application.services.preferences import (
     PersistentPreferencesService,
     PreferencesService,
 )
+from jobtology_be.infrastructure.persistence.contracts import UserCreate
 from jobtology_be.infrastructure.persistence.database import Database
 from jobtology_be.infrastructure.persistence.preference_queries import PostgresRoutePreferencesQuery
+from jobtology_be.infrastructure.persistence.schema import profiles, route_preferences
 from jobtology_be.infrastructure.persistence.store import PostgresApplicationStore
 from jobtology_be.main import create_app
 from jobtology_be.settings import Settings
@@ -173,3 +176,54 @@ def test_configured_app_exposes_route_preferences_api(
     assert update_response.status_code == 200
     assert update_response.json()["profile_version"] == 2
     assert get_response.json() == update_response.json()
+
+
+def test_existing_account_without_preferences_reads_analysis_defaults_without_writes(
+    acceptance_database_url: str,
+) -> None:
+    user_id = uuid4()
+
+    async def setup() -> None:
+        database = Database.create(acceptance_database_url)
+        try:
+            await PostgresApplicationStore(database).create_user(UserCreate(user_id=user_id))
+        finally:
+            await database.dispose()
+
+    async def persisted() -> tuple[int, int]:
+        database = Database.create(acceptance_database_url)
+        try:
+            async with database.sessions() as session:
+                version = await session.scalar(select(profiles.c.version).where(
+                    profiles.c.user_id == user_id,
+                ))
+                count = await session.scalar(select(func.count()).select_from(route_preferences))
+                return version, count
+        finally:
+            await database.dispose()
+
+    anyio.run(setup)
+    database = Database.create(acceptance_database_url)
+    service = PersistentPreferencesService(
+        PostgresApplicationStore(database), PostgresRoutePreferencesQuery(database),
+    )
+    try:
+        identity = SwitchableIdentityProvider(user_id)
+        with TestClient(_app(service, identity)) as client:
+            for _ in range(2):
+                response = client.get("/me/route-preferences")
+                assert response.status_code == 200
+                assert response.json() == {
+                    "profile_version": 1, "available_hours_per_week": 10,
+                    "availability_source": "DEFAULT", "budget_mode": "REGULAR",
+                    "max_out_of_pocket_krw": None, "fastest_path": False,
+                    "needs_portfolio": False, "career_switch": False,
+                }
+            assert anyio.run(persisted) == (1, 0)
+            saved = client.put("/me/route-preferences", json=PREFERENCES_REQUEST)
+            assert saved.status_code == 200
+            assert client.get("/me/route-preferences").json() == saved.json()
+            identity.user_id = uuid4()
+            assert client.get("/me/route-preferences").status_code == 404
+    finally:
+        anyio.run(database.dispose)

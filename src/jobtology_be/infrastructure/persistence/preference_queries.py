@@ -2,7 +2,10 @@ from uuid import UUID
 
 from sqlalchemy import select
 
-from jobtology_be.application.services.preferences import RoutePreferences
+from jobtology_be.application.services.preferences import (
+    DEFAULT_ROUTE_PREFERENCES,
+    RoutePreferences,
+)
 from jobtology_be.infrastructure.persistence.contracts import MissingRecordError
 from jobtology_be.infrastructure.persistence.database import Database
 from jobtology_be.infrastructure.persistence.schema import profiles, route_preferences
@@ -28,12 +31,18 @@ class PostgresRoutePreferencesQuery:
                         route_preferences.c.needs_portfolio,
                         route_preferences.c.career_switch,
                     )
-                    .join(route_preferences, route_preferences.c.user_id == profiles.c.user_id)
+                    .outerjoin(route_preferences, route_preferences.c.user_id == profiles.c.user_id)
                     .where(profiles.c.user_id == user_id)
                 )
             ).one_or_none()
         if row is None:
             raise MissingRecordError(resource="route preferences")
+        if row.available_hours_per_week is None:
+            return RoutePreferences(
+                profile_version=row.version,
+                availability_source="DEFAULT",
+                **DEFAULT_ROUTE_PREFERENCES,
+            )
         return RoutePreferences(
             profile_version=row.version,
             available_hours_per_week=row.available_hours_per_week,
