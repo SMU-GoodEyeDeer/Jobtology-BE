@@ -4,6 +4,7 @@ from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from math import ceil
 from typing import Final
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -22,6 +23,8 @@ from jobtology_be.application.weekly_plan_models import (
 )
 
 _STATE: Final = TypeAdapter[StepState](StepState)
+# Keep custom plans manageable without turning priority order into a prerequisite chain.
+MAX_ACTIVE_LEARNING_ACTIVITIES: Final = 2
 
 
 def _identity(item: PlanStepInput) -> tuple[str | None, str]:
@@ -60,6 +63,41 @@ class _Scheduled:
     allocations: tuple[WeeklyPlanAllocation, ...]
 
 
+def _working_hour_offset(
+    value: datetime, starts_at: datetime, weekly: int, timezone: ZoneInfo,
+) -> int:
+    """Locate a solver start on the same flexible weekly capacity axis as planning."""
+    first = starts_at.astimezone(UTC)
+    rounded = first.replace(minute=0, second=0, microsecond=0)
+    first = rounded if first == rounded else rounded + timedelta(hours=1)
+    local_start, local_value = first.astimezone(timezone), value.astimezone(timezone)
+    first_monday = local_start.date() - timedelta(days=local_start.weekday())
+    value_monday = local_value.date() - timedelta(days=local_value.weekday())
+    weeks = (value_monday - first_monday).days // 7
+    if weeks <= 0:
+        return max(0, min(weekly, ceil((value.astimezone(UTC) - first).total_seconds() / 3600)))
+    next_week = datetime.combine(first_monday + timedelta(weeks=1), datetime.min.time(), timezone)
+    first_capacity = min(weekly, max(0, int((next_week.astimezone(UTC) - first).total_seconds() // 3600)))
+    value_week_start = datetime.combine(value_monday, datetime.min.time(), timezone).astimezone(UTC)
+    value_week_hours = min(weekly, max(0, ceil((value.astimezone(UTC) - value_week_start).total_seconds() / 3600)))
+    return first_capacity + (weeks - 1) * weekly + value_week_hours
+
+
+def _preferred_start_offsets(
+    context: PlanContext, ordered: tuple[PlanStepInput, ...], overrides: PlanOverrides | None,
+    starts_at: datetime, timezone: ZoneInfo,
+) -> dict[UUID, int]:
+    recommended = tuple(sorted(ordered, key=lambda item: (item.step.position, str(item.step.step_id))))
+    if overrides is not None and ordered != recommended:
+        return {}
+    return {
+        item.step.step_id: _working_hour_offset(
+            item.step.planned_start, starts_at, context.recommended_weekly_hours, timezone,
+        )
+        for item in ordered if _has_solver_dates(item) and item.step.planned_start is not None
+    }
+
+
 def _pack(
     context: PlanContext,
     ordered: tuple[PlanStepInput, ...],
@@ -68,11 +106,12 @@ def _pack(
     start: date,
     timezone: ZoneInfo,
 ) -> dict[UUID, _Scheduled]:
-    """Share real hourly slots among ready activities, respecting the weekly capacity.
+    """Stagger ready activities in a small rolling window, sharing real hourly slots.
 
     The order is a priority among eligible activities, rather than a new prerequisite
-    chain. One learner still uses only one activity per hour; independent activities
-    can overlap across days and weeks without multiplying the available hours.
+    chain. At most two activities are in progress, so short activities do not stretch
+    over the whole plan. Source start spacing is a soft preference when order is
+    unchanged; it never leaves available capacity idle when no activity is active.
     """
     weekly = overrides.weekly_hours if overrides else context.recommended_weekly_hours
     rests = frozenset(overrides.rest_weeks) if overrides else frozenset()
@@ -82,11 +121,11 @@ def _pack(
     first: dict[UUID, datetime] = {}
     last: dict[UUID, datetime] = {}
     allocations: dict[UUID, dict[int, int]] = {key: {} for key in by_id}
+    preferred_starts = _preferred_start_offsets(context, ordered, overrides, starts_at, timezone)
     cursor = starts_at.astimezone(UTC)
     rounded = cursor.replace(minute=0, second=0, microsecond=0)
     cursor = rounded if rounded == cursor else rounded + timedelta(hours=1)
     used_by_week: dict[int, int] = {}
-    next_index = 0
     positions = {item.step.step_id: index for index, item in enumerate(ordered)}
     waiting = {item.step.step_id: {
         key for key in item.step.prerequisite_step_ids
@@ -97,7 +136,9 @@ def _pack(
         for prerequisite in prerequisites:
             dependents.setdefault(prerequisite, set()).add(key)
     ready = deque(key for key in remaining if not waiting[key])
+    active: deque[UUID] = deque()
     hours_left = sum(remaining.values())
+    total_hours = hours_left
     while hours_left:
         local = cursor.astimezone(timezone)
         week = (local.date() - start).days // 7 + 1
@@ -105,12 +146,23 @@ def _pack(
             next_monday = start + timedelta(weeks=week)
             cursor = datetime.combine(next_monday, datetime.min.time(), timezone).astimezone(UTC)
             continue
+        admitted: list[UUID] = []
+        while ready and len(active) + len(admitted) < MAX_ACTIVE_LEARNING_ACTIVITIES:
+            next_ready = next((key for key in ready
+                               if preferred_starts.get(key, 0) <= total_hours - hours_left), None)
+            if next_ready is None and (active or admitted):
+                break
+            next_ready = next_ready or ready[0]
+            ready.remove(next_ready)
+            admitted.append(next_ready)
+        # Give a newly opened activity its first hour now, rather than shifting a
+        # preserved source start by another turn through the current activity.
+        active.extendleft(reversed(admitted))
         # Broken/missing source dependencies must remain visible and produce warnings,
         # rather than hanging the scheduler or silently dropping activities.
-        if not ready:
-            ready.append(next(key for key, hours in remaining.items() if hours))
-        key = ready.popleft()
-        next_index = (positions[key] + 1) % len(ordered)
+        if not active:
+            active.append(next(key for key, hours in remaining.items() if hours))
+        key = active.popleft()
         end = cursor + timedelta(hours=1)
         first.setdefault(key, cursor)
         last[key] = end
@@ -118,13 +170,14 @@ def _pack(
         remaining[key] -= 1
         hours_left -= 1
         if remaining[key]:
-            ready.append(key)
+            active.append(key)
         else:
             for dependent in dependents.get(key, ()):
                 waiting[dependent].discard(key)
-                if not waiting[dependent] and remaining[dependent] and dependent not in ready:
+                if (not waiting[dependent] and remaining[dependent]
+                        and dependent not in ready and dependent not in active):
                     ready.append(dependent)
-            ready = deque(sorted(ready, key=lambda key: (positions[key] - next_index) % len(ordered)))
+            ready = deque(sorted(ready, key=positions.__getitem__))
         used_by_week[week] = used_by_week.get(week, 0) + 1
         cursor = end
     return {key: _Scheduled(first[key], last[key], tuple(
