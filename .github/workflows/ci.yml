@@ -30,7 +30,7 @@ jobs:
       - uses: actions/setup-java@v6.1.0
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "25"
       - uses: actions/setup-dotnet@v6.0.0
         with:
           dotnet-version: "8.0.x"

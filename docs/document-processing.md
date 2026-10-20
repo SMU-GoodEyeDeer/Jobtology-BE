@@ -50,10 +50,11 @@ must never be passed directly to these internal functions by a future API.
 | --- | --- |
 | DOCX, HWPX | Python dependencies only |
 | PDF with a text layer | Java + bundled OpenDataLoader JAR; PDFium provides probing/preview |
-| HWP | Java/JPype + bundled HWP-to-HWPX converter JARs |
+| HWP | Java 25/JPype + bundled HWP-to-HWPX converter JARs |
 | Word 97–2003 DOC | .NET 8 + bundled DocSharp CLI assemblies |
 
-`railpack.json` requests Java 17 and .NET 8 through Mise and retains the platform's
+The HWP converter JAR contains Java class version 69, which requires Java 25.
+PDF alone needs Java 11+. `railpack.json` requests Java 25 and .NET 8 through Mise and retains the platform's
 default runtime Apt packages while adding ICU and fontconfig. `.mise.toml` uses
 isolated .NET installs so all runtime files stay in `/mise/installs`, which
 Railpack carries into the final image. The API provider and start command remain

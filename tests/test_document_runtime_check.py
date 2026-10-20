@@ -21,13 +21,24 @@ def test_missing_native_tools_leave_python_formats_available(monkeypatch):
 @pytest.mark.parametrize(('version', 'doc'), [('8.0.34', True), ('9.0.1', False)])
 def test_legacy_doc_requires_the_net8_framework(monkeypatch, version, doc):
     monkeypatch.setattr(runtime_check, '_run_tool', lambda name, _: (
-        'java version' if name == 'java' else f'Microsoft.NETCore.App {version} [/runtime]\n'
+        'openjdk version "25.0.4"' if name == 'java' else f'Microsoft.NETCore.App {version} [/runtime]\n'
     ))
     monkeypatch.setattr(runtime_check.jpype, 'getDefaultJVMPath', lambda: __file__)
     report = runtime_check.runtime_report()
     assert report['formats']['pdf'] is True
     assert report['formats']['hwp'] is True
     assert report['formats']['doc'] is doc
+
+
+def test_java17_supports_pdf_but_not_the_bundled_java25_hwp_converter(monkeypatch):
+    monkeypatch.setattr(runtime_check, '_run_tool', lambda name, _: (
+        'openjdk version "17.0.20"' if name == 'java' else ''
+    ))
+    monkeypatch.setattr(runtime_check.jpype, 'getDefaultJVMPath', lambda: __file__)
+    report = runtime_check.runtime_report()
+    assert report['java_major'] == 17
+    assert report['formats']['pdf'] is True
+    assert report['formats']['hwp'] is False
 
 
 def test_native_probe_timeout_is_reported_unavailable(monkeypatch):

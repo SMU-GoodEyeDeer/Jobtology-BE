@@ -28,7 +28,10 @@ def _run_tool(name: str, argument: str) -> str | None:
 
 
 def runtime_report() -> dict[str, object]:
-    java = _run_tool('java', '-version') is not None
+    java_output = _run_tool('java', '-version')
+    java = java_output is not None
+    match = re.search(r'(?:openjdk|java) version "(\d+)(?:\.(\d+))?', java_output or '')
+    java_major = (int(match[2]) if match[1] == '1' else int(match[1])) if match else 0
     dotnet = _run_tool('dotnet', '--list-runtimes') or ''
     dotnet8 = re.search(r'^Microsoft\.NETCore\.App 8\.0\.\d+\s', dotnet, re.MULTILINE) is not None
     try:
@@ -49,10 +52,10 @@ def runtime_report() -> dict[str, object]:
         doc_bundle = False
     formats = {
         'docx': True, 'hwpx': True,
-        'pdf': java and pdf_bundle, 'hwp': java and jvm and hwp_bundle,
+        'pdf': java_major >= 11 and pdf_bundle, 'hwp': java_major >= 25 and jvm and hwp_bundle,
         'doc': dotnet8 and doc_bundle,
     }
-    return {'python': sys.version.split()[0], 'java': java, 'jvm': jvm,
+    return {'python': sys.version.split()[0], 'java': java, 'java_major': java_major, 'jvm': jvm,
             'dotnet8': dotnet8, 'bundles': {'pdf': pdf_bundle, 'hwp': hwp_bundle, 'doc': doc_bundle},
             'formats': formats,
             'note': 'Checks runtime discovery and bundled files; does not prove arbitrary-file parsing or OCR.'}

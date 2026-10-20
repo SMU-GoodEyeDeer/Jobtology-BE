@@ -2,7 +2,7 @@
   "$schema": "https://schema.railpack.com",
   "provider": "python",
   "packages": {
-    "java": "17",
+    "java": "25",
     "dotnet": "8.0"
   },
   "deploy": {
