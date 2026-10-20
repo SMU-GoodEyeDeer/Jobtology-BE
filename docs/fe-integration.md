@@ -599,3 +599,7 @@ NCS 1–8수준 설명은 [공식 수준체계](https://www.ncs.go.kr/mobile/rm0
 - 열람용 API 문서(ReDoc): [\/api\/redoc](/api/redoc)
 - OpenAPI JSON: [\/api\/openapi.json](/api/openapi.json)
 - 이 문서의 원본 markdown: 저장소 `docs/fe-integration.md`
+
+### Résumé scanner
+
+Onboarding and My Info share **내 스펙 → 이력서에서 가져오기**. The authenticated status, raw-binary scan, and explicit selected-passage interpretation endpoints are documented in [resume-scanner.md](resume-scanner.md). A scan does not mutate the profile or call AI. Review each draft in the existing spec editor, require an explicit experience-level choice, then save with ordinary capability versioning/idempotency and full readback. Imported specs use `DOCUMENT_IMPORT` plus typed source quotation/span metadata. No SQL migration or new secret is required; deploy the BE first. Original files are request-only temporary data, and OCR/automatic education-profile writes are not implemented.

@@ -35,12 +35,32 @@ CREDIT = {'FAMILIAR': .25, 'GUIDED': .5, 'INDEPENDENT': .75, 'PRODUCTION': 1.0}
 MIN_EVIDENCE_LENGTH = 20
 
 
+class DocumentEvidence(BaseModel):
+    """User-confirmed source quotation, not credential/proficiency verification."""
+    model_config = ConfigDict(extra='forbid', frozen=True)
+    document_sha256: str = Field(pattern=r'^[a-f0-9]{64}$')
+    parser_revision: Literal['jobtology-resume-v1-7541e87']
+    block_id: str = Field(pattern=r'^[a-f0-9]{24}$')
+    text_hash: str = Field(pattern=r'^[a-f0-9]{64}$')
+    quote: str = Field(min_length=1, max_length=2000)
+    start: StrictInt = Field(ge=0)
+    end: StrictInt = Field(gt=0)
+    method: Literal['KEYWORD', 'AI_ASSISTED', 'SELECTED_TEXT']
+
+    @model_validator(mode='after')
+    def valid_span(self) -> Self:
+        if self.end - self.start != len(self.quote):
+            raise ValueError('source span differs from quotation')
+        return self
+
+
 class SpecDetails(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra='forbid', frozen=True, str_strip_whitespace=True)
 
     competency_ids: tuple[str, ...] = Field(default=(), max_length=12)
     evidence: str = Field(default='', max_length=2000)
-    source: Literal['MANUAL', 'LLM_ASSISTED'] = 'MANUAL'
+    source: Literal['MANUAL', 'LLM_ASSISTED', 'DOCUMENT_IMPORT'] = 'MANUAL'
+    document_evidence: DocumentEvidence | None = None
     started_on: date | None = None
     ended_on: date | None = None
     ongoing: bool = False
@@ -57,6 +77,8 @@ class SpecDetails(BaseModel):
 
     @model_validator(mode='after')
     def valid_details(self) -> Self:
+        if (self.source == 'DOCUMENT_IMPORT') != (self.document_evidence is not None):
+            raise ValueError('document imports require source evidence')
         if len(set(self.competency_ids)) != len(self.competency_ids):
             raise ValueError('choose each competency once')
         if any(not value or len(value) > 128 for value in self.competency_ids):

@@ -32,10 +32,12 @@ from jobtology_be.infrastructure.persistence.source_catalog import CatalogQuerie
 from jobtology_be.modules.auth.google_oidc import GoogleIdentityProvider
 from jobtology_be.modules.auth.session import SessionStore
 from jobtology_be.product_roles.checklist import OnboardingChecklistCatalog
+from jobtology_be.resume.service import ResumeService
 
 
 @dataclass(frozen=True, slots=True)
 class ApiDependencies:
+    resume_service: ResumeService | None = None
     skill_catalog: SkillCatalog | None = None
     identity_provider: IdentityProvider | None = None
     session_store: SessionStore | None = None

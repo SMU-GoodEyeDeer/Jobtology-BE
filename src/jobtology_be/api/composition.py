@@ -68,9 +68,11 @@ from jobtology_be.modules.auth.session import SessionStore
 from jobtology_be.product_roles.checklist import OnboardingChecklistCatalog
 from jobtology_be.product_roles.holder import ProductRoleHolder
 from jobtology_be.product_roles.worker import InProcessRecomputeLoop
+from jobtology_be.resume.service import ResumeService
 from jobtology_be.settings import Settings
 
 OPENAPI_TAGS = [
+    {"name": "resume", "description": "이력서를 임시 처리하고 원문 근거가 있는 스펙 후보를 제안합니다. 자동 저장하지 않습니다."},
     {"name": "health", "description": "프로세스 liveness 상태를 확인합니다."},
     {"name": "authentication", "description": "세션 확인과 로그아웃을 제공합니다."},
     {"name": "profiles", "description": "사용자 프로필을 조회하거나 전체 갱신합니다."},
@@ -98,11 +100,14 @@ async def lifespan(
     source_catalog: PostgresSourceCatalog | None = None,
     role_holder: ProductRoleHolder | None = None,
     inprocess_worker: InProcessRecomputeLoop | None = None,
+    resume_service: ResumeService | None = None,
 ) -> AsyncIterator[None]:
     try:
         if role_holder is not None:
             _ = await role_holder.load()
         async with anyio.create_task_group() as tasks:
+            if resume_service is not None:
+                tasks.start_soon(resume_service.cleanup_loop)
             if role_holder is not None and role_holder.available and inprocess_worker is not None:
                 _ = tasks.start_soon(inprocess_worker.run)
             try:
@@ -128,8 +133,9 @@ def database_lifespan(
     source_catalog: PostgresSourceCatalog | None = None,
     role_holder: ProductRoleHolder | None = None,
     inprocess_worker: InProcessRecomputeLoop | None = None,
+    resume_service: ResumeService | None = None,
 ) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
-    return lambda app: lifespan(app, database, corpus_source, source_catalog, role_holder, inprocess_worker)
+    return lambda app: lifespan(app, database, corpus_source, source_catalog, role_holder, inprocess_worker, resume_service)
 
 
 def configured_analysis_context_factory(

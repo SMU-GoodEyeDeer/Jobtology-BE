@@ -47,6 +47,7 @@ jobs:
           cd /tmp
           /tmp/jobtology-wheel-check/bin/python -m jobtology_be.document_processor.runtime_check --require-all
           /tmp/jobtology-wheel-check/bin/python "$GITHUB_WORKSPACE/Jobtology-BE/experiments/resume_import/verify_processor.py" --out /tmp/jobtology-wheel-probe --native-smoke
+          /tmp/jobtology-wheel-check/bin/python "$GITHUB_WORKSPACE/Jobtology-BE/experiments/resume_import/verify_scanner.py" --out /tmp/jobtology-wheel-scanner
 
   deploy:
     needs: checks
