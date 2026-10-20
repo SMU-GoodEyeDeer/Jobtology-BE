@@ -92,6 +92,7 @@ class RoadmapStepResponse(BaseModel):
 
 
 class RoadmapDetailResponse(RoadmapResponse):
+    analysis_id: UUID | None = None
     goal_id: UUID
     proposal_id: UUID
     title: str
@@ -115,3 +116,58 @@ class RoadmapListResponse(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
 
     items: tuple[RoadmapDetailResponse, ...]
+
+
+class RoadmapRevisionRequest(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra='forbid', frozen=True)
+    proposal_id: UUID
+    expected_proposal_hash: StrictStr = Field(min_length=1, max_length=128)
+    expected_roadmap_version: StrictInt = Field(ge=1)
+    expected_profile_version: StrictInt = Field(ge=1)
+    expected_plan_version: StrictInt = Field(ge=0)
+    title: StrictStr | None = Field(default=None, min_length=1, max_length=200)
+
+
+class PreservedCompletedStepResponse(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra='forbid', frozen=True, from_attributes=True)
+    step_id: UUID
+    step_key: str
+    title: str
+
+
+class RevisionScheduleChangeResponse(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra='forbid', frozen=True, from_attributes=True)
+    step_key: str
+    old_planned_start: datetime | None
+    old_planned_end: datetime | None
+    new_planned_start: datetime | None
+    new_planned_end: datetime | None
+
+
+class RoadmapRevisionResponse(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra='forbid', frozen=True, from_attributes=True)
+    roadmap_id: UUID
+    roadmap_version: int
+    profile_version: int
+    plan_version: int
+    proposal_id: UUID
+    proposal_hash: str
+    analysis_id: UUID
+    release_id: str | None
+    feasibility: str
+    can_apply: bool
+    resets_future_customization: bool
+    blocking_reasons: tuple[str, ...]
+    preserved_completed_steps: tuple[PreservedCompletedStepResponse, ...]
+    retained_in_progress_step_ids: tuple[UUID, ...]
+    unretained_in_progress_step_ids: tuple[UUID, ...]
+    added_step_keys: tuple[str, ...]
+    removed_step_keys: tuple[str, ...]
+    revised_step_count: int
+    constraint_changes: dict[str, tuple[JsonValue, JsonValue]]
+    schedule_changes: tuple[RevisionScheduleChangeResponse, ...]
+
+
+class RoadmapRevisionAppliedResponse(RoadmapResponse):
+    previous_roadmap_id: UUID
+    preserved_completed_count: int

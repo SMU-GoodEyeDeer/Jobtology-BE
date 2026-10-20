@@ -215,6 +215,8 @@ def main() -> None:
     signal.alarm(60)
     path, output = map(Path, sys.argv[1:3])
     try:
+        from jobtology_be.resume.isolation import restrict_parser_network
+        restrict_parser_network()
         result = {'ok': True, 'result': extract(path).model_dump(mode='json')}
     except DocumentRejected as error:
         result = {'ok': False, 'code': str(error)}

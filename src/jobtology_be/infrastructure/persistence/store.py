@@ -8,7 +8,13 @@ from sqlalchemy import insert, select, update
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from jobtology_be.application.roadmap_revisions import (
+    RoadmapRevisionApplied,
+    RoadmapRevisionApply,
+    RoadmapRevisionView,
+)
 from jobtology_be.contracts import RoadmapOutcome
+from jobtology_be.infrastructure.persistence.compute_budget import AnalysisBudgetPolicy
 from jobtology_be.infrastructure.persistence.configured_recompute import (
     ConfiguredRecomputeRepository,
 )
@@ -52,6 +58,10 @@ from jobtology_be.infrastructure.persistence.idempotency import (
 )
 from jobtology_be.infrastructure.persistence.outbox import OutboxRepository
 from jobtology_be.infrastructure.persistence.recompute_requests import RecomputeRequestRepository
+from jobtology_be.infrastructure.persistence.roadmap_revisions import (
+    load_revision,
+    preserve_revision_progress,
+)
 from jobtology_be.infrastructure.persistence.roadmap_source_validity import (
     parse_source_validity,
     source_is_current,
@@ -83,8 +93,9 @@ class PostgresApplicationStore(OutboxRepository, WorkerRepository):
     def __init__(
         self, database: Database, *, capability_list_authoritative: bool = False,
         google_accounts_only: bool = False,
+        analysis_budget_policy: AnalysisBudgetPolicy | None = None,
     ) -> None:
-        super().__init__(database)
+        super().__init__(database, analysis_budget_policy=analysis_budget_policy)
         self._google_accounts_only = google_accounts_only
         self._active_session: ContextVar[AsyncSession | None] = ContextVar(
             "postgres_application_store_active_session", default=None
@@ -98,7 +109,9 @@ class PostgresApplicationStore(OutboxRepository, WorkerRepository):
         self._roadmap_steps = RoadmapStepRepository(
             database, capability_list_authoritative=capability_list_authoritative,
         )
-        self._recompute_requests = RecomputeRequestRepository(database)
+        self._recompute_requests = RecomputeRequestRepository(
+            database, analysis_budget_policy=self._analysis_budget_policy,
+        )
 
     async def create_user(self, request: UserCreate) -> ProfileSnapshot:
         async with self._transaction() as session:
@@ -385,6 +398,8 @@ class PostgresApplicationStore(OutboxRepository, WorkerRepository):
                     fastest_path=request.fastest_path,
                     needs_portfolio=request.needs_portfolio,
                     career_switch=request.career_switch,
+                    weekly_availability=[window.model_dump(mode="json") for window in request.weekly_availability],
+                    unavailable_dates=[day.isoformat() for day in request.unavailable_dates],
                 )
                 .on_conflict_do_update(
                     index_elements=[route_preferences.c.user_id],
@@ -396,6 +411,8 @@ class PostgresApplicationStore(OutboxRepository, WorkerRepository):
                         "fastest_path": request.fastest_path,
                         "needs_portfolio": request.needs_portfolio,
                         "career_switch": request.career_switch,
+                        "weekly_availability": [window.model_dump(mode="json") for window in request.weekly_availability],
+                        "unavailable_dates": [day.isoformat() for day in request.unavailable_dates],
                         "updated_at": datetime.now(UTC),
                     },
                 )
@@ -651,6 +668,50 @@ class PostgresApplicationStore(OutboxRepository, WorkerRepository):
                         )
                     )
         return RoadmapSnapshot(roadmap_id=request.roadmap_id, version=1, state="DRAFT")
+
+    async def get_roadmap_revision(self, user_id: UUID, roadmap_id: UUID, proposal_id: UUID) -> RoadmapRevisionView:
+        async with self._transaction() as session:
+            return (await load_revision(session, user_id, roadmap_id, proposal_id)).view
+
+    async def apply_roadmap_revision(self, request: RoadmapRevisionApply) -> RoadmapRevisionApplied:
+        async with self._transaction() as session:
+            if self._google_accounts_only:
+                await self._lock_google_account(session, request.user_id)
+            else:
+                owner = await session.scalar(select(users.c.id).where(
+                    users.c.id == request.user_id, users.c.status == 'ACTIVE',
+                ).with_for_update())
+                if owner is None:
+                    raise MissingRecordError(resource='account')
+                await session.scalar(select(profiles.c.version).where(
+                    profiles.c.user_id == request.user_id,
+                ).with_for_update())
+            context = await load_revision(session, request.user_id, request.roadmap_id, request.proposal_id, lock=True)
+            view = context.view
+            if (view.roadmap_version != request.expected_roadmap_version
+                    or view.profile_version != request.expected_profile_version
+                    or view.plan_version != request.expected_plan_version
+                    or view.proposal_hash != request.expected_proposal_hash):
+                raise PersistenceConflictError(resource='roadmap revision version')
+            if not view.can_apply:
+                raise PersistenceConflictError(resource='roadmap revision: ' + ','.join(view.blocking_reasons))
+            token = self._active_session.set(session)
+            try:
+                created = await self.create_roadmap(RoadmapCreate(
+                    user_id=request.user_id, roadmap_id=uuid4(), goal_id=context.goal_id,
+                    proposal_id=request.proposal_id, title=request.title or context.title,
+                    profile_version=request.expected_profile_version,
+                ))
+                preserved = await preserve_revision_progress(session, context, created.roadmap_id)
+                activated = await self.mutate_roadmap(RoadmapMutation(
+                    user_id=request.user_id, roadmap_id=created.roadmap_id,
+                    expected_roadmap_version=created.version,
+                    expected_profile_version=request.expected_profile_version, state='ACTIVE', title=None,
+                ))
+            finally:
+                self._active_session.reset(token)
+        return RoadmapRevisionApplied(activated.roadmap_id, activated.version, activated.state,
+                                      request.roadmap_id, preserved)
 
     async def reconcile_automatic_roadmap(self, request_id: UUID, title: str) -> None:
         """Settle durable follow-up work atomically, preserving an existing active roadmap.

@@ -17,6 +17,7 @@ from test_acceptance_m5_worker import (
     process_recompute,
 )
 
+from jobtology_be.infrastructure.persistence.compute_budget import AnalysisBudgetPolicy
 from jobtology_be.infrastructure.persistence.contracts import (
     JsonValue,
     RecomputeFinalization,
@@ -118,7 +119,7 @@ async def _pending_context(
 
 async def _process_pending_recompute(database_url: str) -> RecomputeFinalization:
     database = Database.create(database_url)
-    store = PostgresApplicationStore(database)
+    store = PostgresApplicationStore(database, analysis_budget_policy=AnalysisBudgetPolicy(executions_per_minute=60))
     try:
         worker = LeasedRecomputeWorker(
             claimer=store,

@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from datetime import datetime
 from uuid import UUID
 
@@ -19,6 +20,7 @@ from jobtology_be.infrastructure.persistence.database import Database
 from jobtology_be.infrastructure.persistence.schema import (
     analyses,
     goals,
+    outbox_jobs,
     profiles,
     recompute_requests,
     roadmap_steps,
@@ -220,14 +222,15 @@ class PostgresProductQueries:
             ).one_or_none()
             if roadmap is None:
                 raise MissingRecordError(resource="roadmap")
-            proposal_steps = await session.scalar(
-                select(route_proposals.c.steps).where(
+            proposal = (await session.execute(
+                select(route_proposals.c.steps, route_proposals.c.analysis_id).where(
                     route_proposals.c.id == roadmap.proposal_id,
                     route_proposals.c.user_id == user_id,
                 )
-            )
-            if proposal_steps is None:
+            )).one_or_none()
+            if proposal is None:
                 raise MissingRecordError(resource="route proposal")
+            proposal_steps = proposal.steps
             step_rows = (
                 await session.execute(
                     select(
@@ -259,6 +262,10 @@ class PostgresProductQueries:
                 dependency.prerequisite_step_id
             )
         proposal_titles = {step["step_key"]: step["title"] for step in proposal_steps}
+        history = roadmap.validity.get('revision_history_steps', {})
+        if isinstance(history, Mapping):
+            proposal_titles.update({key: item['title'] for key, item in history.items()
+                                    if isinstance(item, Mapping) and isinstance(item.get('title'), str)})
         return RoadmapView(
             roadmap_id=roadmap.id,
             roadmap_version=roadmap.version,
@@ -269,6 +276,7 @@ class PostgresProductQueries:
             profile_version=roadmap.profile_version,
             release_id=roadmap.release_id,
             validity=roadmap.validity,
+            analysis_id=proposal.analysis_id,
             steps=tuple(
                 RoadmapStepView(
                     step_id=row.id,
@@ -414,6 +422,11 @@ class PostgresProductQueries:
                         recompute_requests.c.resulting_analysis_id,
                         recompute_requests.c.proposal_id,
                         recompute_requests.c.error_code,
+                        select(outbox_jobs.c.available_at).where(
+                            outbox_jobs.c.recompute_request_id == recompute_requests.c.id,
+                            outbox_jobs.c.state == "READY",
+                            recompute_requests.c.state == "PENDING",
+                        ).scalar_subquery().label("next_attempt_at"),
                     ).where(
                         recompute_requests.c.id == recompute_request_id,
                         recompute_requests.c.user_id == user_id,
@@ -429,6 +442,7 @@ class PostgresProductQueries:
             resulting_analysis_id=row.resulting_analysis_id,
             proposal_id=row.proposal_id,
             error_code=row.error_code,
+            next_attempt_at=row.next_attempt_at,
         )
 
     async def get_analysis(self, user_id: UUID, analysis_id: UUID) -> AnalysisView:

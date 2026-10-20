@@ -6,6 +6,7 @@ from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from jobtology_be.corpus.source_factory import build_configured_corpus_source
+from jobtology_be.infrastructure.persistence.compute_budget import AnalysisBudgetPolicy
 from jobtology_be.infrastructure.persistence.contracts import RecomputeFinalization
 from jobtology_be.infrastructure.persistence.database import Database
 from jobtology_be.infrastructure.persistence.store import PostgresApplicationStore
@@ -29,6 +30,9 @@ class WorkerSettings(BaseSettings):
     db_password: SecretStr | None = None
     db_protocol: ExternalDatabaseProtocol | None = None
     worker_batch_limit: int = Field(default=1, ge=1)
+    analysis_requests_per_hour: int = Field(default=10, ge=1, le=1000)
+    analysis_executions_per_hour: int = Field(default=30, ge=1, le=1000)
+    analysis_executions_per_minute: int = Field(default=2, ge=1, le=60)
 
     @model_validator(mode="after")
     def validate_source_settings(self) -> Self:
@@ -66,7 +70,11 @@ async def run_once(settings: WorkerSettings) -> tuple[RecomputeFinalization, ...
         await corpus_source.aclose()
         raise
     try:
-        store = PostgresApplicationStore(database)
+        store = PostgresApplicationStore(database, analysis_budget_policy=AnalysisBudgetPolicy(
+            requests_per_hour=settings.analysis_requests_per_hour,
+            executions_per_hour=settings.analysis_executions_per_hour,
+            executions_per_minute=settings.analysis_executions_per_minute,
+        ))
         worker = build_leased_recompute_worker(
             store=store,
             snapshot_reader=corpus_source.legacy_snapshot_reader,

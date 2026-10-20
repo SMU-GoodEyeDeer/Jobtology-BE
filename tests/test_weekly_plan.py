@@ -630,3 +630,36 @@ def test_completed_solver_hours_still_consume_capacity_in_the_current_week():
     assert [(part.week, part.hours) for part in plan.steps[0].week_allocations] == [(1, 5)]
     assert [(part.week, part.hours) for part in plan.steps[1].week_allocations] == [(1, 5), (2, 5)]
     assert sum(part.hours for step in plan.steps for part in step.week_allocations if part.week == 1) == 10
+
+
+def test_custom_weekly_schedule_obeys_actual_windows_and_excluded_dates():
+    from jobtology_be.contracts import WeeklyAvailabilityWindow
+
+    local = ZoneInfo('Asia/Seoul')
+    monday = datetime(2026, 10, 19, 8, tzinfo=local)
+    item = production_steps()[0]
+    source = replace(context(), created_at=monday, as_of=monday,
+                     step_hours={item.step.step_key: 3},
+                     weekly_availability=(WeeklyAvailabilityWindow(weekday=1, start_hour=9, end_hour=11),
+                                          WeeklyAvailabilityWindow(weekday=3, start_hour=19, end_hour=21)),
+                     unavailable_dates=(monday.date(),))
+    custom = weekly_plan.PlanOverrides(weekly_hours=4, rest_weeks=(), order=(), hours={}, saved_at=None)
+    plan = weekly_plan.build_weekly_plan(source, (item,), custom)
+    assert plan.steps[0].planned_start_at.astimezone(local) == datetime(2026, 10, 21, 19, tzinfo=local)
+    assert plan.steps[0].planned_end_at.astimezone(local) == datetime(2026, 10, 26, 10, tzinfo=local)
+    assert [(part.week, part.hours) for part in plan.steps[0].week_allocations] == [(1, 2), (2, 1)]
+
+
+def test_custom_calendar_limit_returns_explicit_failure_without_ignoring_windows(monkeypatch):
+    from jobtology_be.contracts import WeeklyAvailabilityWindow
+
+    local = ZoneInfo('Asia/Seoul')
+    monday = datetime(2026, 10, 19, 8, tzinfo=local)
+    item = production_steps()[0]
+    source = replace(context(), created_at=monday, as_of=monday,
+                     step_hours={item.step.step_key: 3},
+                     weekly_availability=(WeeklyAvailabilityWindow(weekday=1, start_hour=9, end_hour=10),))
+    monkeypatch.setattr(weekly_plan, 'MAX_CUSTOM_PLAN_WEEKS', 1)
+    custom = weekly_plan.PlanOverrides(weekly_hours=4, rest_weeks=(), order=(), hours={}, saved_at=None)
+    with pytest.raises(weekly_plan.WeeklyPlanSchedulingError):
+        weekly_plan.build_weekly_plan(source, (item,), custom)

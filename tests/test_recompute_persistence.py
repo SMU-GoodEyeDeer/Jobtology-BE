@@ -155,22 +155,26 @@ def test_claim_skips_obsolete_versions_but_preserves_live_leases_and_other_accou
             await store.create_user(UserCreate(user_id=other_user))
             expired = await enqueue(user_id, 1)
             old_work, = await store.claim_recompute_work(1)
-            # Claim the next version while the first lease is still current, then
-            # let that older lease expire before exercising stale cleanup.
+            # Model two leases issued by an older deployment; a new worker must
+            # preserve the live one and avoid overlapping it with current work.
             async with database.sessions.begin() as session:
                 await session.execute(text("UPDATE outbox_jobs SET lease_until=now()+interval '1 minute' WHERE id=:id"),
                                       {'id': old_work.lease.job_id})
             active = await enqueue(user_id, 2)
-            active_work, = await store.claim_recompute_work(1)
-            assert active_work.request_id == active.request_id
             async with database.sessions.begin() as session:
+                await session.execute(text("UPDATE recompute_requests SET state='RUNNING' WHERE id=:id"),
+                                      {'id': active.request_id})
+                await session.execute(text("""UPDATE outbox_jobs SET state='LEASED',
+                    lease_token=:token, lease_until=now()+interval '1 minute', attempt_count=1
+                    WHERE recompute_request_id=:id"""),
+                                      {'id': active.request_id, 'token': uuid4()})
                 await session.execute(text("UPDATE outbox_jobs SET lease_until=now()-interval '1 second' WHERE id=:id"),
                                       {'id': old_work.lease.job_id})
             pending = await enqueue(user_id, 3)
             current = await enqueue(user_id, 4)
             other = await enqueue(other_user, 1)
             claimed = await store.claim_recompute_work(10)
-            assert {work.request_id for work in claimed} == {current.request_id, other.request_id}
+            assert {work.request_id for work in claimed} == {other.request_id}
             assert await store.claim_recompute_work(10) == ()
             async with database.sessions() as session:
                 rows = (await session.execute(text('''SELECT r.id, r.state, r.error_code, j.state,
@@ -179,6 +183,7 @@ def test_claim_skips_obsolete_versions_but_preserves_live_leases_and_other_accou
             assert states[expired.request_id] == ('FAILED', 'STALE_PROFILE', 'COMPLETED', 1)
             assert states[pending.request_id] == ('FAILED', 'STALE_PROFILE', 'COMPLETED', 0)
             assert states[active.request_id] == ('RUNNING', None, 'LEASED', 1)
+            assert states[current.request_id] == ('PENDING', None, 'READY', 0)
         finally:
             await database.dispose()
     anyio.run(exercise)

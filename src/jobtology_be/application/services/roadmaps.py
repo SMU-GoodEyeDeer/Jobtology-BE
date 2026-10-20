@@ -1,7 +1,12 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal, Protocol
 from uuid import UUID, uuid4
 
+from jobtology_be.application.roadmap_revisions import (
+    RoadmapRevisionApplied,
+    RoadmapRevisionApply,
+    RoadmapRevisionView,
+)
 from jobtology_be.infrastructure.persistence.contracts import (
     ProfileSnapshot,
     RoadmapCreate,
@@ -16,6 +21,10 @@ type StepState = Literal["TODO", "IN_PROGRESS", "COMPLETED"]
 
 
 class RoadmapStore(Protocol):
+    async def get_roadmap_revision(self, user_id: UUID, roadmap_id: UUID, proposal_id: UUID) -> RoadmapRevisionView: ...
+
+    async def apply_roadmap_revision(self, request: RoadmapRevisionApply) -> RoadmapRevisionApplied: ...
+
     async def create_user(self, request: UserCreate) -> ProfileSnapshot: ...
 
     async def create_roadmap(self, request: RoadmapCreate) -> RoadmapSnapshot: ...
@@ -61,6 +70,10 @@ class RoadmapResult:
 
 
 class RoadmapService(Protocol):
+    async def preview_revision(self, user_id: UUID, roadmap_id: UUID, proposal_id: UUID) -> RoadmapRevisionView: ...
+
+    async def apply_revision(self, user_id: UUID, command: RoadmapRevisionApply) -> RoadmapRevisionApplied: ...
+
     async def reconcile_automatic(self, request_id: UUID, title: str) -> None: ...
 
     async def create(self, user_id: UUID, command: RoadmapCreateCommand) -> RoadmapResult: ...
@@ -75,6 +88,12 @@ class PersistentRoadmapService:
 
     def __init__(self, store: RoadmapStore) -> None:
         self._store = store
+
+    async def preview_revision(self, user_id: UUID, roadmap_id: UUID, proposal_id: UUID) -> RoadmapRevisionView:
+        return await self._store.get_roadmap_revision(user_id, roadmap_id, proposal_id)
+
+    async def apply_revision(self, user_id: UUID, command: RoadmapRevisionApply) -> RoadmapRevisionApplied:
+        return await self._store.apply_roadmap_revision(replace(command, user_id=user_id))
 
     async def reconcile_automatic(self, request_id: UUID, title: str) -> None:
         await self._store.reconcile_automatic_roadmap(request_id, title)

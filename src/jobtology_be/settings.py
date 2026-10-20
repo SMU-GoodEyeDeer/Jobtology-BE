@@ -67,6 +67,9 @@ class Settings(BaseSettings):
     capability_list_authoritative: bool = False
     solver_worker_count: int = Field(default=2, ge=1, le=16)
     solver_time_limit_seconds: float | None = Field(default=10.0, gt=0, le=60)
+    analysis_requests_per_hour: int = Field(default=10, ge=1, le=1000)
+    analysis_executions_per_hour: int = Field(default=30, ge=1, le=1000)
+    analysis_executions_per_minute: int = Field(default=2, ge=1, le=60)
     llm_provider: Literal["disabled", "openai_api_key", "chatgpt_oauth"] = "disabled"
     openai_api_key: SecretStr | None = None
     openai_model: str = Field(default="gpt-5.6-luna", min_length=1)

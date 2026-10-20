@@ -60,14 +60,21 @@ def test_inferred_context_keeps_freshness_and_real_preview_without_private_field
     assert "private" not in response.text
 
 
-def test_role_context_uses_reviewed_role_codes_and_requires_authentication():
+def test_role_context_keeps_context_selection_separate_and_requires_authentication():
     feed = ContextFeed()
     with TestClient(application(feed)) as client:
         found = client.get("/api/v2/roles/BACKEND_DEVELOPER/posting-context?limit=3")
         missing = client.get("/api/v2/roles/UNKNOWN/posting-context")
     assert found.status_code == 200
     assert missing.status_code == 404
-    assert feed.calls == [("context", "20010202,20010204", 3, 0)]
+    assert feed.calls == [("context", "15-1252.00,20010202,20010204", 3, 0)]
+    assert found.json()["role_context"] == {
+        "role_id": "BACKEND_DEVELOPER", "version": "posting-context-v1",
+        "basis": "APPLICATION_CONTEXT_SELECTION",
+        "onet_occupations": [{"code": "15-1252.00", "name": "Software Developers"}],
+    }
+    assert found.json()["competency_evidence"] is False
+    assert found.json()["items"][0]["catalog_freshness"] == "STALE"
     with TestClient(application(feed, authenticated=False)) as client:
         assert client.get("/api/v2/live/occupation-context").status_code == 401
         assert client.get("/api/v2/roles/BACKEND_DEVELOPER/posting-context").status_code == 401

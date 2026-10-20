@@ -1,6 +1,6 @@
 import json
 from collections.abc import Mapping
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import ClassVar
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from jobtology_be.application.requirement_metadata import RequirementMetadata
 from jobtology_be.application.weekly_plan_models import PlanContext, PlanOverrides, WeeklyPlanStep
+from jobtology_be.contracts import WeeklyAvailabilityWindow
 from jobtology_be.infrastructure.persistence.contracts import (
     MissingRecordError,
     PersistenceConflictError,
@@ -31,6 +32,8 @@ from jobtology_be.infrastructure.persistence.schema import (
 class _Constraints(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
     available_hours_per_week: int | None = Field(default=None, ge=1, le=60)
+    weekly_availability: tuple[WeeklyAvailabilityWindow, ...] = ()
+    unavailable_dates: tuple[date, ...] = ()
 
 
 class _StoredOverride(BaseModel):
@@ -60,23 +63,26 @@ class _StoredContext(BaseModel):
     goal_target_by: datetime
     proposal_steps: tuple[object, ...]
     analysis_results: dict[str, JsonValue] | None
+    validity: dict[str, JsonValue]
 
 
 class PostgresWeeklyPlanStore:
     def __init__(self, database: Database) -> None:
         self._database: Database = database
 
-    async def _require_owner(self, session: AsyncSession, user_id: UUID, roadmap_id: UUID) -> None:
-        owner = await session.scalar(select(roadmaps.c.id).where(
+    async def _require_owner(self, session: AsyncSession, user_id: UUID, roadmap_id: UUID, *, writable: bool = False) -> None:
+        owner = (await session.execute(select(roadmaps.c.state).where(
             roadmaps.c.id == roadmap_id, roadmaps.c.user_id == user_id,
-        ).with_for_update())
+        ).with_for_update())).one_or_none()
         if owner is None:
             raise MissingRecordError(resource='roadmap')
+        if writable and owner.state == 'ARCHIVED':
+            raise PersistenceConflictError(resource='archived roadmap plan')
 
     async def get_context(self, user_id: UUID, roadmap_id: UUID) -> PlanContext:
         async with self._database.sessions() as session:
             row = (await session.execute(select(
-                roadmaps.c.created_at, route_proposals.c.constraints_snapshot,
+                roadmaps.c.created_at, roadmaps.c.validity, route_proposals.c.constraints_snapshot,
                 goals.c.timezone, goals.c.target_by.label('goal_target_by'),
                 route_proposals.c.steps.label('proposal_steps'),
                 analyses.c.results.label('analysis_results'),
@@ -94,7 +100,14 @@ class PostgresWeeklyPlanStore:
         target_date = stored.goal_target_by.astimezone(timezone).date()
         step_hours: dict[str, int] = {}
         step_allocations: dict[str, tuple[datetime, ...]] = {}
-        for step in stored.proposal_steps:
+        history = stored.validity.get('revision_history_steps', {})
+        history = history if isinstance(history, Mapping) else {}
+        step_metadata: dict[str, RequirementMetadata | None] = {}
+        for key, document in history.items():
+            values = document.get('requirement_metadata') if isinstance(document, Mapping) else None
+            value = next(iter(values.values()), None) if isinstance(values, Mapping) else None
+            step_metadata[key] = TypeAdapter(RequirementMetadata).validate_python(value) if value is not None else None
+        for step in (*stored.proposal_steps, *history.values()):
             if not isinstance(step, Mapping):
                 continue
             key, hours = step.get('step_key'), step.get('estimated_hours')
@@ -119,7 +132,9 @@ class PostgresWeeklyPlanStore:
                            recommended_weekly_hours=constraints.available_hours_per_week or 10,
                            target_date=target_date, timezone=stored.timezone,
                            step_hours=step_hours, step_allocations=step_allocations,
-                           requirement_metadata=metadata, as_of=datetime.now(UTC))
+                           requirement_metadata=metadata, as_of=datetime.now(UTC), step_metadata=step_metadata,
+                           weekly_availability=constraints.weekly_availability,
+                           unavailable_dates=constraints.unavailable_dates)
 
     async def get(self, user_id: UUID, roadmap_id: UUID) -> PlanOverrides | None:
         async with self._database.sessions.begin() as session:
@@ -151,7 +166,7 @@ class PostgresWeeklyPlanStore:
         async with self._database.sessions.begin() as session:
             # Serialize with step/proposal writes using the existing owner row lock;
             # the override version remains independent of the roadmap version.
-            await self._require_owner(session, user_id, roadmap_id)
+            await self._require_owner(session, user_id, roadmap_id, writable=True)
             completed = (await session.execute(select(roadmap_steps.c.id).where(
                 roadmap_steps.c.roadmap_id == roadmap_id, roadmap_steps.c.state == 'COMPLETED',
             ))).scalars().all()
@@ -163,7 +178,7 @@ class PostgresWeeklyPlanStore:
     async def delete(self, user_id: UUID, roadmap_id: UUID, expected_version: int) -> PlanOverrides:
         context = await self.get_context(user_id, roadmap_id)
         async with self._database.sessions.begin() as session:
-            await self._require_owner(session, user_id, roadmap_id)
+            await self._require_owner(session, user_id, roadmap_id, writable=True)
             row = (await session.execute(select(roadmap_plan_overrides).where(
                 roadmap_plan_overrides.c.roadmap_id == roadmap_id,
             ))).mappings().one_or_none()

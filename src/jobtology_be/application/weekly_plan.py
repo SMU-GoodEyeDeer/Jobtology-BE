@@ -21,10 +21,16 @@ from jobtology_be.application.weekly_plan_models import (
     WeeklyPlanStep,
     WeeklyPlanWarning,
 )
+from jobtology_be.planning.calendar import slot_is_available
 
 _STATE: Final = TypeAdapter[StepState](StepState)
 # Keep custom plans manageable without turning priority order into a prerequisite chain.
 MAX_ACTIVE_LEARNING_ACTIVITIES: Final = 2
+MAX_CUSTOM_PLAN_WEEKS: Final = 520
+
+
+class WeeklyPlanSchedulingError(ValueError):
+    """The bounded weekly calculator cannot fit all requested work."""
 
 
 def _identity(item: PlanStepInput) -> tuple[str | None, str]:
@@ -132,6 +138,7 @@ def _pack(
     cursor = future_start.astimezone(UTC)
     rounded = cursor.replace(minute=0, second=0, microsecond=0)
     cursor = rounded if rounded == cursor else rounded + timedelta(hours=1)
+    calendar_limit = cursor + timedelta(weeks=MAX_CUSTOM_PLAN_WEEKS)
     used_by_week: dict[int, int] = {}
     for schedule in fixed.values():
         for allocation in schedule.allocations:
@@ -150,11 +157,17 @@ def _pack(
     hours_left = sum(remaining.values())
     total_hours = hours_left
     while hours_left:
+        if cursor >= calendar_limit:
+            raise WeeklyPlanSchedulingError('Requested work does not fit the available calendar within 520 weeks')
         local = cursor.astimezone(timezone)
         week = (local.date() - start).days // 7 + 1
         if week in rests or used_by_week.get(week, 0) >= weekly:
             next_monday = start + timedelta(weeks=week)
             cursor = datetime.combine(next_monday, datetime.min.time(), timezone).astimezone(UTC)
+            continue
+        if not slot_is_available(cursor, cursor + timedelta(hours=1), context.weekly_availability,
+                                 context.unavailable_dates, timezone):
+            cursor += timedelta(hours=1)
             continue
         admitted: list[UUID] = []
         while ready and len(active) + len(admitted) < MAX_ACTIVE_LEARNING_ACTIVITIES:

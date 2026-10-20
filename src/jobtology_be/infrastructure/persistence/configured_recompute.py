@@ -176,6 +176,8 @@ class ConfiguredRecomputeRepository(OutboxRepository):
                 route_preferences.c.fastest_path,
                 route_preferences.c.needs_portfolio,
                 route_preferences.c.career_switch,
+                route_preferences.c.weekly_availability,
+                route_preferences.c.unavailable_dates,
             ).where(route_preferences.c.user_id == user_id)
         )
         row = preference.one_or_none()
@@ -189,4 +191,6 @@ class ConfiguredRecomputeRepository(OutboxRepository):
             fastest_path=row.fastest_path,
             needs_portfolio=row.needs_portfolio,
             career_switch=row.career_switch,
+            weekly_availability=row.weekly_availability,
+            unavailable_dates=row.unavailable_dates,
         )

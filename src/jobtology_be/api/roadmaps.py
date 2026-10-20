@@ -1,10 +1,12 @@
+from collections.abc import Mapping
 from typing import Annotated, Final, assert_never
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
-from pydantic import JsonValue, TypeAdapter
+from pydantic import BaseModel, JsonValue, TypeAdapter
 from starlette.responses import JSONResponse
 
+from jobtology_be.api.analyses import AnalysisSkillResponse, require_requirement_metadata
 from jobtology_be.api.errors import ErrorResponse
 from jobtology_be.api.idempotency import (
     IdempotencyReplay,
@@ -21,10 +23,18 @@ from jobtology_be.api.roadmap_models import (
     RoadmapListResponse,
     RoadmapMutationRequest,
     RoadmapResponse,
+    RoadmapRevisionAppliedResponse,
+    RoadmapRevisionRequest,
+    RoadmapRevisionResponse,
     RoadmapStepResponse,
     StepStateRequest,
 )
 from jobtology_be.application.queries import ProductQueries, RoadmapView
+from jobtology_be.application.requirement_metadata import (
+    RequirementMetadataLookup,
+    build_analysis_summary,
+)
+from jobtology_be.application.roadmap_revisions import RoadmapRevisionApply
 from jobtology_be.application.services.roadmaps import (
     RoadmapCreateCommand,
     RoadmapMutationCommand,
@@ -56,6 +66,7 @@ def _response(result: RoadmapResult) -> RoadmapResponse:
 
 def _detail_response(roadmap: RoadmapView) -> RoadmapDetailResponse:
     return RoadmapDetailResponse(
+        analysis_id=roadmap.analysis_id,
         roadmap_id=roadmap.roadmap_id,
         roadmap_version=roadmap.roadmap_version,
         state=_ROADMAP_STATE.validate_python(roadmap.state),
@@ -273,4 +284,115 @@ async def update_step_state(
                 state=request.state,
             ),
         )
+    )
+
+
+@router.get('/roadmaps/{roadmap_id}/revision', response_model=RoadmapRevisionResponse,
+            summary='Compare an active roadmap with a revised proposal')
+async def preview_roadmap_revision(
+    roadmap_id: UUID, proposal_id: UUID,
+    principal: Annotated[AuthenticatedPrincipal, Depends(require_authenticated_principal)],
+    service: Annotated[RoadmapService, Depends(require_roadmap_service)],
+) -> RoadmapRevisionResponse:
+    return RoadmapRevisionResponse.model_validate(
+        await service.preview_revision(principal.user_id, roadmap_id, proposal_id), from_attributes=True,
+    )
+
+
+@router.post('/roadmaps/{roadmap_id}/revision', response_model=RoadmapRevisionAppliedResponse,
+             summary='Apply a reviewed roadmap revision atomically',
+             description='Requires the exact reviewed proposal hash and current profile, roadmap and weekly plan versions. '
+                         'The old active roadmap remains unchanged until the revised roadmap is fully ready to activate. '
+                         'Completed history and original completion lineage are preserved without creating new credit.',
+             responses={409: {'model': ErrorResponse, 'description': 'The comparison is stale or cannot preserve completed history.'}})
+async def apply_roadmap_revision(
+    roadmap_id: UUID, request: RoadmapRevisionRequest,
+    principal: Annotated[AuthenticatedPrincipal, Depends(require_authenticated_principal)],
+    service: Annotated[RoadmapService, Depends(require_roadmap_service)],
+) -> RoadmapRevisionAppliedResponse:
+    result = await service.apply_revision(principal.user_id, RoadmapRevisionApply(
+        user_id=principal.user_id, roadmap_id=roadmap_id, proposal_id=request.proposal_id,
+        expected_proposal_hash=request.expected_proposal_hash,
+        expected_roadmap_version=request.expected_roadmap_version,
+        expected_profile_version=request.expected_profile_version,
+        expected_plan_version=request.expected_plan_version, title=request.title,
+    ))
+    return RoadmapRevisionAppliedResponse(
+        roadmap_id=result.roadmap_id, roadmap_version=result.roadmap_version, state=result.state,
+        previous_roadmap_id=result.previous_roadmap_id, preserved_completed_count=result.preserved_completed_count,
+    )
+
+
+class RoadmapSkillResponse(AnalysisSkillResponse):
+    step_ids: tuple[UUID, ...] = ()
+    source_analysis_id: UUID
+
+
+class RoadmapSkillsResponse(BaseModel):
+    roadmap_id: UUID
+    analysis_id: UUID
+    release_id: str | None
+    skills: tuple[RoadmapSkillResponse, ...]
+
+
+@router.get('/roadmaps/{roadmap_id}/skills', response_model=RoadmapSkillsResponse,
+            summary='Read full skill metadata from the roadmap origin analysis',
+            description='Includes satisfied skills. Stored metadata is pinned; legacy metadata is supplemented only '
+                        'from the exact same release. This endpoint never borrows the latest dashboard analysis.')
+async def get_roadmap_skills(
+    roadmap_id: UUID,
+    principal: Annotated[AuthenticatedPrincipal, Depends(require_authenticated_principal)],
+    queries: Annotated[ProductQueries, Depends(require_product_queries)],
+    metadata: Annotated[RequirementMetadataLookup | None, Depends(require_requirement_metadata)],
+) -> RoadmapSkillsResponse:
+    roadmap = await queries.get_roadmap(principal.user_id, roadmap_id)
+    if roadmap.analysis_id is None:
+        raise HTTPException(status_code=503, detail='Roadmap origin analysis is unavailable')
+    analysis = await queries.get_analysis(principal.user_id, roadmap.analysis_id)
+    lookup = metadata if analysis.release_id is not None and getattr(metadata, 'release_id', None) == analysis.release_id else None
+    summary = build_analysis_summary(analysis.results, lookup, include_satisfied=True)
+    if summary is None:
+        raise HTTPException(status_code=503, detail='Roadmap origin metadata is unavailable')
+    history = roadmap.validity.get('revision_history_steps', {})
+    history = history if isinstance(history, Mapping) else {}
+    skills = [RoadmapSkillResponse(
+        **AnalysisSkillResponse.model_validate(item, from_attributes=True).model_dump(),
+        source_analysis_id=analysis.analysis_id,
+        step_ids=tuple(step.step_id for step in roadmap.steps if step.step_key not in history
+                       and any(isinstance(outcome, Mapping) and outcome.get('requirement_key') == item.requirement_key
+                               for outcome in step.outcomes)),
+    ) for item in summary.skills]
+    historical: dict[tuple[UUID, str], RoadmapSkillResponse] = {}
+    source_cache = {}
+    for step in roadmap.steps:
+        document = history.get(step.step_key)
+        if not isinstance(document, Mapping):
+            continue
+        source_id = UUID(str(document['source_analysis_id']))
+        requirements = document.get('source_requirements')
+        source_release = document.get('source_release_id')
+        if not isinstance(requirements, (list, tuple)) or not requirements:
+            if source_id not in source_cache:
+                source_cache[source_id] = await queries.get_analysis(principal.user_id, source_id)
+            source = source_cache[source_id]
+            source_results, source_release = source.results, source.release_id
+        else:
+            source_results = {'requirements': requirements}
+        source_lookup = metadata if source_release is not None and getattr(metadata, 'release_id', None) == source_release else None
+        source_summary = build_analysis_summary(source_results, source_lookup, include_satisfied=True)
+        if source_summary is None:
+            continue
+        keys = {outcome.get('requirement_key') for outcome in step.outcomes if isinstance(outcome, Mapping)}
+        for item in source_summary.skills:
+            if item.requirement_key not in keys:
+                continue
+            identity = (source_id, item.requirement_key)
+            prior_ids = historical[identity].step_ids if identity in historical else ()
+            details = AnalysisSkillResponse.model_validate(item, from_attributes=True).model_dump()
+            details.update(status='SATISFIED', credit=1.0, estimated_hours=0, achievement='완료한 역량')
+            historical[identity] = RoadmapSkillResponse(**details, source_analysis_id=source_id,
+                                                      step_ids=(*prior_ids, step.step_id))
+    return RoadmapSkillsResponse(
+        roadmap_id=roadmap_id, analysis_id=analysis.analysis_id, release_id=analysis.release_id,
+        skills=(*skills, *historical.values()),
     )

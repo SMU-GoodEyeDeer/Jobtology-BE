@@ -14,6 +14,7 @@ from jobtology_be.application.services.analysis_inputs import (
     ActiveTargetedGoalRequiredError,
     AnalysisContextInputsUnavailableError,
 )
+from jobtology_be.infrastructure.persistence.compute_budget import AnalysisBudgetExceeded
 from jobtology_be.infrastructure.persistence.contracts import (
     IdempotencyConflictError,
     IdempotencyInProgressError,
@@ -164,6 +165,7 @@ async def goal_write_validation_error_handler(
 
 
 def register_error_handlers(app: FastAPI) -> None:
+    app.exception_handler(AnalysisBudgetExceeded)(analysis_budget_exceeded_error_handler)
     app.exception_handler(RequestValidationError)(validation_error_handler)
     app.exception_handler(GoalWriteValidationError)(goal_write_validation_error_handler)
     app.exception_handler(HTTPException)(http_error_handler)
@@ -176,3 +178,13 @@ def register_error_handlers(app: FastAPI) -> None:
     app.exception_handler(AnalysisContextInputsUnavailableError)(
         analysis_context_inputs_unavailable_error_handler
     )
+
+
+async def analysis_budget_exceeded_error_handler(
+    _request: Request, exc: AnalysisBudgetExceeded,
+) -> Response:
+    response = _product_error_response(
+        429, "ANALYSIS_RATE_LIMITED", "Analysis limit reached; retry after the indicated delay",
+    )
+    response.headers["Retry-After"] = str(exc.retry_after_seconds)
+    return response

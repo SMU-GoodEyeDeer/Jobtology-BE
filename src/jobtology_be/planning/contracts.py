@@ -1,12 +1,21 @@
 from datetime import datetime
 from typing import Literal, Protocol
 
-from pydantic import AwareDatetime, Field
+from pydantic import AwareDatetime, ConfigDict, Field
 
-from jobtology_be.contracts import AnalysisPreview, Contract, ProposedStep, RoadmapPreview
+from jobtology_be.contracts import (
+    AnalysisPreview,
+    Contract,
+    ProposedStep,
+    RoadmapPreview,
+    UnavailableDates,
+    WeeklyAvailability,
+)
 
 
 class PlanningConstraints(Contract):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
     target_by: AwareDatetime
     available_hours_per_week: int = Field(ge=1, le=60)
     budget_mode: Literal["REGULAR", "LOW_COST"] = "REGULAR"
@@ -14,6 +23,8 @@ class PlanningConstraints(Contract):
     fastest_path: bool = False
     needs_portfolio: bool = False
     career_switch: bool = False
+    weekly_availability: WeeklyAvailability = ()
+    unavailable_dates: UnavailableDates = ()
 
 
 class CandidateBuilder(Protocol):

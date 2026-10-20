@@ -13,6 +13,7 @@ from test_acceptance_m5_worker import (
     process_recompute,
 )
 
+from jobtology_be.infrastructure.persistence.compute_budget import AnalysisBudgetPolicy
 from jobtology_be.infrastructure.persistence.contracts import (
     CapabilityDelete,
     CapabilityMutation,
@@ -76,7 +77,9 @@ async def _exercise_configured_mutations(
     database_url: str, user_id: UUID, goal_id: UUID, target_by: datetime
 ) -> None:
     database = Database.create(database_url)
-    store = PostgresApplicationStore(database)
+    # Exercise several logical user edits without waiting for wall-clock quota windows.
+    store = PostgresApplicationStore(database, analysis_budget_policy=AnalysisBudgetPolicy(
+        executions_per_minute=60))
     try:
         capability = await store.mutate_capability(
             CapabilityMutation(

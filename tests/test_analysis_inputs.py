@@ -178,3 +178,42 @@ def test_postgres_analysis_context_source_reads_version_fenced_explicit_inputs(
     acceptance_database_url: str,
 ) -> None:
     anyio.run(_exercise_source, acceptance_database_url)
+
+
+def test_analysis_inputs_use_saved_local_availability_and_excluded_dates(
+    acceptance_database_url: str,
+) -> None:
+    from datetime import date
+
+    from sqlalchemy import update
+
+    from jobtology_be.infrastructure.persistence.configured_recompute import (
+        ConfiguredRecomputeRepository,
+    )
+
+    async def exercise():
+        database = Database.create(acceptance_database_url)
+        try:
+            user_id, goal_id = await _seed_context_inputs(database, timezone='Asia/Seoul')
+            async with database.sessions.begin() as session:
+                await session.execute(update(route_preferences).where(
+                    route_preferences.c.user_id == user_id,
+                ).values(weekly_availability=[{"weekday": 3, "start_hour": 18, "end_hour": 20}],
+                         unavailable_dates=['2026-09-23']))
+                current = await ConfiguredRecomputeRepository(database)._current_constraints(
+                    session, user_id, REFERENCE_AT + timedelta(days=30),
+                )
+                assert current.unavailable_dates == (date(2026, 9, 23),)
+                assert current.weekly_availability[0].weekday == 3
+            inputs = await PostgresAnalysisContextInputSource(database).load_context_inputs(
+                user_id, AnalysisRequestCommand(goal_id=goal_id, expected_profile_version=1,
+                                               basis_type='EDITORIAL'), REFERENCE_AT,
+            )
+            assert inputs.constraints.unavailable_dates == (date(2026, 9, 23),)
+            assert inputs.calendar[0].starts_at == datetime(2026, 9, 30, 9, tzinfo=UTC)
+            assert all(slot.starts_at.weekday() == 2 and slot.starts_at.hour in (9, 10)
+                       for slot in inputs.calendar)
+        finally:
+            await database.dispose()
+
+    anyio.run(exercise)

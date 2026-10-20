@@ -196,6 +196,16 @@ route_preferences = Table(
     Column("fastest_path", BOOLEAN, nullable=False, server_default=text("false")),
     Column("needs_portfolio", BOOLEAN, nullable=False, server_default=text("false")),
     Column("career_switch", BOOLEAN, nullable=False, server_default=text("false")),
+    Column("weekly_availability", JSONB, nullable=False, server_default=text("'[]'::jsonb")),
+    Column("unavailable_dates", JSONB, nullable=False, server_default=text("'[]'::jsonb")),
+    CheckConstraint(
+        "jsonb_typeof(weekly_availability) = 'array' AND jsonb_array_length(weekly_availability) <= 168",
+        name="route_preferences_weekly_availability_array_check",
+    ),
+    CheckConstraint(
+        "jsonb_typeof(unavailable_dates) = 'array' AND jsonb_array_length(unavailable_dates) <= 366",
+        name="route_preferences_unavailable_dates_array_check",
+    ),
     Column("updated_at", DateTime(timezone=True), nullable=False, server_default=UTC_NOW),
     CheckConstraint(
         "available_hours_per_week BETWEEN 1 AND 60", name="route_preferences_capacity_check"

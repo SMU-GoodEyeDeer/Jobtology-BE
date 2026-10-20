@@ -1,0 +1,16 @@
+{
+  "version": "posting-context-v1",
+  "basis": "APPLICATION_CONTEXT_SELECTION",
+  "competency_evidence": false,
+  "roles": {
+    "BACKEND_DEVELOPER": ["15-1252.00"],
+    "FRONTEND_DEVELOPER": ["15-1254.00"],
+    "AI_ENGINEER": ["15-1252.00", "15-2051.00"],
+    "DATA_ANALYST": ["15-2051.00"]
+  },
+  "occupations": {
+    "15-1252.00": {"title": "Software Developers", "source": "https://www.onetonline.org/link/summary/15-1252.00"},
+    "15-1254.00": {"title": "Web Developers", "source": "https://www.onetonline.org/link/summary/15-1254.00"},
+    "15-2051.00": {"title": "Data Scientists", "source": "https://www.onetonline.org/link/summary/15-2051.00"}
+  }
+}

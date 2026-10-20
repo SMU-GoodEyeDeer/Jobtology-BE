@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from jobtology_be.application.queries import RoadmapStepView
 from jobtology_be.application.requirement_metadata import RequirementMetadata
+from jobtology_be.contracts import WeeklyAvailabilityWindow
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,6 +26,9 @@ class PlanContext:
     step_allocations: Mapping[str, tuple[datetime, ...]] = field(default_factory=dict)
     requirement_metadata: Mapping[str, RequirementMetadata | None] = field(default_factory=dict)
     as_of: datetime | None = None
+    step_metadata: Mapping[str, RequirementMetadata | None] = field(default_factory=dict)
+    weekly_availability: tuple[WeeklyAvailabilityWindow, ...] = ()
+    unavailable_dates: tuple[date, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

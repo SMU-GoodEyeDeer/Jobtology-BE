@@ -102,12 +102,15 @@ For a product environment with application persistence:
    uv run alembic upgrade head
    ```
 
-   The current head is `20261020_01`, adding weekly-plan versions, completed
-   schedule snapshots and recompute failure diagnostics. Apply it before serving
+   The current head is `20261020_02`, adding optional weekday/hour availability
+   and excluded dates after the weekly-plan version migration. Apply it before serving
    this image; otherwise reads referencing the new columns fail. Common `users`, `profiles`, and
    `auth_sessions` tables remain in use by Google accounts.
    Do not run it independently in every API replica. Preserve backward compatibility before
    relying on an image rollback.
+
+   See [compute and planning operations](../docs/compute-and-planning-operations.md)
+   for account budgets, Coolify resource limits and reviewed roadmap adoption.
 3. In the separate catalog database, apply the additive Jobtology-DB SQL
    `031_multi_source_live_postings.sql` and `032_inferred_occupation_context.sql`
    as the existing owner/administrator. They do not change the approved

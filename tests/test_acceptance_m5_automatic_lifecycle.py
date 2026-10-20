@@ -52,6 +52,8 @@ def _run_worker(database_url: str, snapshot_path: Path) -> None:
             **os.environ,
             "JOBTOLOGY_DATABASE_URL": database_url,
             "JOBTOLOGY_CORPUS_SNAPSHOT_PATH": str(snapshot_path),
+            # This lifecycle deliberately executes several user transitions in seconds.
+            "JOBTOLOGY_ANALYSIS_EXECUTIONS_PER_MINUTE": "60",
         },
         text=True,
         timeout=30,

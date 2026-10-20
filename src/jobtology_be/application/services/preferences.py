@@ -1,7 +1,9 @@
 from dataclasses import dataclass
+from datetime import date
 from typing import Final, Literal, Protocol, TypedDict
 from uuid import UUID
 
+from jobtology_be.contracts import WeeklyAvailabilityWindow
 from jobtology_be.infrastructure.persistence.contracts import (
     ProfileSnapshot,
     RoutePreferenceMutation,
@@ -17,6 +19,8 @@ class RoutePreferenceDefaults(TypedDict):
     fastest_path: bool
     needs_portfolio: bool
     career_switch: bool
+    weekly_availability: tuple[WeeklyAvailabilityWindow, ...]
+    unavailable_dates: tuple[date, ...]
 
 
 # Shared by read-only preference defaults and the analysis input builder. Missing
@@ -28,6 +32,8 @@ DEFAULT_ROUTE_PREFERENCES: Final[RoutePreferenceDefaults] = {
     "fastest_path": False,
     "needs_portfolio": False,
     "career_switch": False,
+    "weekly_availability": (),
+    "unavailable_dates": (),
 }
 
 
@@ -41,6 +47,8 @@ class RoutePreferences:
     fastest_path: bool
     needs_portfolio: bool
     career_switch: bool
+    weekly_availability: tuple[WeeklyAvailabilityWindow, ...] = ()
+    unavailable_dates: tuple[date, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +61,8 @@ class PreferencesUpdateCommand:
     fastest_path: bool
     needs_portfolio: bool
     career_switch: bool
+    weekly_availability: tuple[WeeklyAvailabilityWindow, ...] = ()
+    unavailable_dates: tuple[date, ...] = ()
 
 
 class RoutePreferencesStore(Protocol):
@@ -99,6 +109,8 @@ class PersistentPreferencesService:
                 fastest_path=command.fastest_path,
                 needs_portfolio=command.needs_portfolio,
                 career_switch=command.career_switch,
+                weekly_availability=command.weekly_availability,
+                unavailable_dates=command.unavailable_dates,
             )
         )
         return RoutePreferences(
@@ -110,4 +122,6 @@ class PersistentPreferencesService:
             fastest_path=command.fastest_path,
             needs_portfolio=command.needs_portfolio,
             career_switch=command.career_switch,
+            weekly_availability=command.weekly_availability,
+            unavailable_dates=command.unavailable_dates,
         )

@@ -24,6 +24,7 @@ from jobtology_be.infrastructure.persistence.schema import (
     recompute_contexts,
     recompute_requests,
     roadmaps,
+    route_proposals,
     user_state_events,
 )
 
@@ -84,6 +85,12 @@ class PostgresM5DashboardQueries:
                         analyses.c.methodology_version,
                         analyses.c.status,
                         analyses.c.generated_at,
+                        select(route_proposals.c.id).where(
+                            route_proposals.c.analysis_id == analyses.c.id,
+                            route_proposals.c.user_id == user_id,
+                            route_proposals.c.feasibility.in_(('FEASIBLE', 'RISKY', 'PARTIAL')),
+                        ).order_by(route_proposals.c.created_at.desc(), route_proposals.c.id).limit(1)
+                        .correlate(analyses).scalar_subquery().label('proposal_id'),
                     )
                     .join(profiles, profiles.c.latest_analysis_id == analyses.c.id)
                     .where(
@@ -107,6 +114,7 @@ class PostgresM5DashboardQueries:
             methodology_version=row["methodology_version"],
             status=row["status"],
             generated_at=row["generated_at"],
+            proposal_id=row['proposal_id'],
         )
 
     async def _active_roadmap(

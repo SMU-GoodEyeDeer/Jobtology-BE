@@ -1,9 +1,10 @@
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from enum import StrEnum
 from math import isfinite
 from typing import Final, Literal, assert_never, override
 
+from jobtology_be.contracts import WeeklyAvailabilityWindow
 from jobtology_be.planning.candidate_models import (
     Candidate,
     CandidateBlocker,
@@ -113,6 +114,8 @@ class PlanningConstraintSnapshot:
     fastest_path: bool
     needs_portfolio: bool
     career_switch: bool
+    weekly_availability: tuple[WeeklyAvailabilityWindow, ...] = ()
+    unavailable_dates: tuple[date, ...] = ()
 
     @classmethod
     def from_constraints(cls, constraints: PlanningConstraints) -> "PlanningConstraintSnapshot":
@@ -124,6 +127,8 @@ class PlanningConstraintSnapshot:
             fastest_path=constraints.fastest_path,
             needs_portfolio=constraints.needs_portfolio,
             career_switch=constraints.career_switch,
+            weekly_availability=constraints.weekly_availability,
+            unavailable_dates=constraints.unavailable_dates,
         )
 
 

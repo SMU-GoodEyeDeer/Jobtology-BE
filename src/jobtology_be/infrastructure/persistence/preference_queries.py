@@ -1,11 +1,13 @@
 from uuid import UUID
 
+from pydantic import TypeAdapter
 from sqlalchemy import select
 
 from jobtology_be.application.services.preferences import (
     DEFAULT_ROUTE_PREFERENCES,
     RoutePreferences,
 )
+from jobtology_be.contracts import UnavailableDates, WeeklyAvailability
 from jobtology_be.infrastructure.persistence.contracts import MissingRecordError
 from jobtology_be.infrastructure.persistence.database import Database
 from jobtology_be.infrastructure.persistence.schema import profiles, route_preferences
@@ -30,6 +32,8 @@ class PostgresRoutePreferencesQuery:
                         route_preferences.c.fastest_path,
                         route_preferences.c.needs_portfolio,
                         route_preferences.c.career_switch,
+                        route_preferences.c.weekly_availability,
+                        route_preferences.c.unavailable_dates,
                     )
                     .outerjoin(route_preferences, route_preferences.c.user_id == profiles.c.user_id)
                     .where(profiles.c.user_id == user_id)
@@ -52,4 +56,6 @@ class PostgresRoutePreferencesQuery:
             fastest_path=row.fastest_path,
             needs_portfolio=row.needs_portfolio,
             career_switch=row.career_switch,
+            weekly_availability=TypeAdapter(WeeklyAvailability).validate_python(row.weekly_availability),
+            unavailable_dates=TypeAdapter(UnavailableDates).validate_python(row.unavailable_dates),
         )
