@@ -120,6 +120,10 @@ def build_route_model(
         assignments_by_action,
         reward_required_coverage=not require_required_coverage,
     )
+    _add_schedule_hint(
+        model, problem, candidates, selected_by_action, assignments_by_action,
+        require_required_coverage=require_required_coverage,
+    )
     return RouteModelArtifacts(
         model=model,
         candidates=candidates,
@@ -127,6 +131,67 @@ def build_route_model(
         assignments_by_action=assignments_by_action,
         covered_by_requirement=covered_by_requirement,
     )
+
+
+def _add_schedule_hint(
+    model: cp_model.CpModel,
+    problem: PlanningProblem,
+    candidates: tuple[Candidate, ...],
+    selected_by_action: dict[str, cp_model.IntVar],
+    assignments_by_action: dict[str, tuple[cp_model.IntVar, ...]],
+    *,
+    require_required_coverage: bool,
+) -> None:
+    """Seed search with a valid list schedule; hints never constrain the optimum."""
+    available = {item.action_id: item for item in problem.candidate_availability}
+    allocations: dict[str, tuple[int, ...]] = {}
+    used: set[int] = set()
+    weekly: dict[str, int] = {}
+    spent = 0
+    pending = sorted(candidates, key=lambda item: (
+        item.action_id not in problem.foundational_priority_action_ids, item.action_id,
+    ))
+    while pending:
+        ready = next((item for item in pending if all(
+            key in allocations for key in item.prerequisite_action_ids
+        )), None)
+        if ready is None:
+            break
+        pending.remove(ready)
+        cap = problem.constraints.max_out_of_pocket_krw
+        if cap is not None and (isinstance(ready.cost, UnknownKrwCost)
+                                or spent + _known_cost(ready) > cap):
+            continue
+        earliest = max((allocations[key][-1] + 1 for key in ready.prerequisite_action_ids), default=0)
+        chosen: list[int] = []
+        chosen_weekly: dict[str, int] = {}
+        for index in range(earliest, len(problem.calendar)):
+            slot = problem.calendar[index]
+            week = slot.capacity_week_key
+            if (index in used or not _is_available(slot, available.get(ready.action_id))
+                    or weekly.get(week, 0) + chosen_weekly.get(week, 0)
+                    >= problem.constraints.available_hours_per_week):
+                continue
+            chosen.append(index)
+            chosen_weekly[week] = chosen_weekly.get(week, 0) + 1
+            if len(chosen) == ready.estimated_hours:
+                break
+        if len(chosen) != ready.estimated_hours:
+            continue
+        allocations[ready.action_id] = tuple(chosen)
+        used.update(chosen)
+        spent += _known_cost(ready)
+        for week, count in chosen_weekly.items():
+            weekly[week] = weekly.get(week, 0) + count
+    covered = frozenset(key for item in candidates if item.action_id in allocations
+                        for key in item.outcome_requirement_keys)
+    if require_required_coverage and not problem.required_requirement_keys <= covered:
+        return
+    for item in candidates:
+        selected = set(allocations.get(item.action_id, ()))
+        model.add_hint(selected_by_action[item.action_id], int(bool(selected)))
+        for index, assignment in enumerate(assignments_by_action[item.action_id]):
+            model.add_hint(assignment, int(index in selected))
 
 
 def _validate_candidates(candidates: tuple[Candidate, ...]) -> None:
@@ -202,6 +267,21 @@ def _add_objective(
         model.add_max_equality(completion, list(completion_by_action.values()))
     else:
         model.add(completion == 0)
+    # Selected effort cannot finish before that many capacity slots have elapsed.
+    # This redundant bound removes the need to discover it by permuting thousands
+    # of interchangeable hourly assignments over a long planning horizon.
+    total_hours = model.new_int_var(0, len(problem.calendar), 'total_selected_hours')
+    model.add(total_hours == sum(
+        candidate.estimated_hours * selected_by_action[candidate.action_id]
+        for candidate in candidates
+    ))
+    earliest_completion = model.new_int_var(
+        0, objective.horizon_microseconds, 'earliest_capacity_completion',
+    )
+    model.add_element(total_hours, [0, *(
+        microseconds_from_planning_start(problem, slot.ends_at) for slot in problem.calendar
+    )], earliest_completion)
+    model.add(completion >= earliest_completion)
     coverage_points = _coverage_points(model, problem, covered_by_requirement)
     time_remaining = model.new_int_var(0, objective.horizon_microseconds, "time_remaining")
     model.add(time_remaining == objective.horizon_microseconds - completion)

@@ -4,6 +4,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import shutil
 import signal
 import sys
@@ -29,9 +30,12 @@ from jobtology_be.resume.models import (
 
 
 class ResumeError(Exception):
-    def __init__(self, code: str, status: int = 422):
+    def __init__(self, code: str, status: int = 422, *,
+                 parser_exit_code: int | None = None, parser_error_type: str | None = None):
         self.code = code
         self.status = status
+        self.parser_exit_code = parser_exit_code
+        self.parser_error_type = parser_error_type
 
 
 # Only classification and exact source spans; no inferred levels, dates or credentials.
@@ -181,7 +185,10 @@ class ResumeService:
         result_path = directory / 'result.json'
         # No application credentials in the child environment. No shell expansion.
         env = {key: value for key, value in os.environ.items()
-               if key in {'PATH', 'JAVA_HOME', 'DOTNET_ROOT', 'LANG', 'LC_ALL', 'PYTHONPATH'}}
+               if key in {'PATH', 'JAVA_HOME', 'DOTNET_ROOT', 'LANG', 'LC_ALL', 'PYTHONPATH',
+                          'MISE_DATA_DIR', 'MISE_CONFIG_DIR', 'MISE_CACHE_DIR', 'MISE_INSTALLS_DIR'}}
+        # Railpack puts java/dotnet shims on PATH. They must still find the installed
+        # tools after HOME and cwd move into the private request directory.
         env.update({
             'HOME': str(directory), 'TMPDIR': str(directory),
             'JAVA_TOOL_OPTIONS': '-Xmx256m -XX:CompressedClassSpaceSize=64m -XX:ReservedCodeCacheSize=64m -XX:MaxMetaspaceSize=128m -XX:ActiveProcessorCount=2 -Xss512k',
@@ -209,10 +216,17 @@ class ResumeService:
             except TimeoutError:
                 raise ResumeError('PARSE_TIMEOUT', 422) from None
             if process.returncode != 0 or not result_path.exists() or result_path.stat().st_size > 2 * 1024 * 1024:
-                raise ResumeError('UNREADABLE_DOCUMENT')
+                raise ResumeError('UNREADABLE_DOCUMENT', parser_exit_code=process.returncode)
             result = json.loads(result_path.read_text())
             if not result.get('ok'):
-                raise ResumeError(result.get('code', 'UNREADABLE_DOCUMENT'))
+                kind = result.get('error_type', '')
+                raise ResumeError(
+                    result.get('code', 'UNREADABLE_DOCUMENT'),
+                    parser_exit_code=process.returncode,
+                    parser_error_type=kind if isinstance(kind, str) and re.fullmatch(
+                        r'[A-Za-z_][A-Za-z0-9_]{0,79}', kind,
+                    ) else None,
+                )
             return ParsedResume.model_validate(result['result'])
         finally:
             # Includes converters/grandchildren, on timeout, cancellation and normal exit.

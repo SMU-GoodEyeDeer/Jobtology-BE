@@ -86,17 +86,24 @@ HWP converter classes in a JVM and boots the bundled DOC CLI to its usage respon
 This checks native packaging/startup, rather than claiming HWP/DOC file accuracy.
 No real résumé or LLM is involved in that check.
 
-## Résumé import remains a separate product step
+The upload parser uses a private `HOME`/working directory and a restricted child
+environment. Railpack's `/mise/shims` launchers also require `MISE_DATA_DIR`,
+`MISE_CONFIG_DIR`, `MISE_CACHE_DIR`, and `MISE_INSTALLS_DIR` to locate the installed
+Java/.NET runtimes. These non-secret paths are retained; application credentials
+are not forwarded. Verify the bounded scanner in the final Railpack image as well
+as the CI wheel, since a system Java installation does not exercise Mise shims.
 
-This integrates the library, dependencies, native bundles, and runtime image
-configuration. It adds no public upload endpoint, persistent import jobs, OCR,
-or automatic profile writes. The parser's rich HTML is untrusted, and scan-only
-PDF pages are classified/skipped rather than OCR'd. Hidden text and unsafe IR
-style values remain documented limitations of the copied library.
+Failed scans log a random `request_id`, format, error code, elapsed time and parser
+exit/type diagnostics, without file names, document text or parser exception
+messages. The frontend displays the matching request reference for support.
 
-Use a bounded child process from the same BE image for future upload jobs;
-monolithic packaging does not require running untrusted document parsing in an
-API request thread. Add resource limits, strict file/container validation,
-sanitized/controlled preview, per-account ownership/quotas, expiry cleanup, and
-reviewed capability/profile writes as described in the
-[résumé integration design](plans/resume-import-feasibility.md).
+## Résumé upload flow
+
+The authenticated `/api/v1/me/resume/scan` endpoint streams uploads into a private
+request directory and runs the bounded child parser from this image. Files are
+removed when the request finishes; crash leftovers are swept after 15 minutes.
+The frontend renders extracted text and exact source highlights, without exposing
+the processor's HTML. Keyword suggestions are reviewed before saving through the
+normal capability API; AI fallback requires explicit selected-passage consent.
+OCR and automatic profile writes remain unsupported. See the
+[résumé integration design](plans/resume-import-feasibility.md) for limits.

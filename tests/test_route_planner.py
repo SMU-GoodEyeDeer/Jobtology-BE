@@ -1,4 +1,6 @@
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 from ortools.sat.python import cp_model
@@ -289,3 +291,37 @@ def test_plan_recovers_a_partial_route_when_the_first_solve_times_out(monkeypatc
     assert result.optimization_status is OptimizationStatus.TIMEOUT
     assert result.trace.partial_route_diagnostic is not None
     assert result.trace.partial_route_diagnostic.unmet_required_requirement_keys == ("big",)
+
+
+def test_full_and_partial_search_share_one_time_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    elapsed = [0.0]
+    limits = []
+    real_solve = cp_sat_planner._solve
+    monkeypatch.setattr(cp_sat_planner, 'time', SimpleNamespace(monotonic=lambda: elapsed[0]))
+    def solve(model, request, worker_count):
+        limits.append(request.settings.time_limit_seconds)
+        if len(limits) == 1:
+            elapsed[0] += request.settings.time_limit_seconds
+            return cp_model.CpSolver(), cp_model.UNKNOWN
+        return real_solve(model, request, worker_count)
+    monkeypatch.setattr(cp_sat_planner, '_solve', solve)
+    request = problem((candidate('api', frozenset({'api'})),), settings=SolverSettings(10))
+    result = CpSatRoutePlanner().plan(request)
+    assert limits == [7.5, 2.5]
+    assert result.feasibility is RouteFeasibility.FEASIBLE
+    assert result.trace.time_limit_seconds == 10
+
+
+def test_long_horizon_route_keeps_all_required_effort_without_overlap() -> None:
+    candidates = tuple(candidate(f'action-{index:02}', frozenset({f'req-{index}'}),
+                                 estimated_hours=20 + index % 4 * 5) for index in range(10))
+    request = problem(candidates, required=frozenset(f'req-{index}' for index in range(10)),
+                      slots=calendar(*([10] * 45)), settings=SolverSettings(4))
+    request = replace(request, constraints=request.constraints.model_copy(update={'available_hours_per_week': 10}))
+    result = CpSatRoutePlanner(worker_count=2).plan(request)
+    assert result.optimization_status is OptimizationStatus.OPTIMAL
+    assert len(result.scheduled_steps) == len(candidates)
+    allocations = [slot.slot_index for step in result.scheduled_steps for slot in step.slot_allocations]
+    effort = sum(candidate.estimated_hours for candidate in candidates)
+    assert len(allocations) == len(set(allocations)) == effort
+    assert max(step.planned_end_at for step in result.scheduled_steps) == request.calendar[effort - 1].ends_at

@@ -1,3 +1,4 @@
+import logging
 from datetime import timedelta
 from typing import Any, Final, cast
 from uuid import UUID, uuid4
@@ -17,6 +18,7 @@ from jobtology_be.infrastructure.persistence.contracts import (
 from jobtology_be.infrastructure.persistence.database import Database
 from jobtology_be.infrastructure.persistence.schema import (
     outbox_jobs,
+    profiles,
     recompute_contexts,
     recompute_requests,
 )
@@ -24,6 +26,8 @@ from jobtology_be.settings import CorpusSource
 
 MISSING_RECOMPUTE_CONTEXT: Final = "MISSING_RECOMPUTE_CONTEXT"
 RECOMPUTE_LEASE_FOR: Final = timedelta(minutes=5)
+STALE_RECOMPUTE_BATCH_LIMIT: Final = 1000
+_logger = logging.getLogger(__name__)
 
 
 class OutboxRepository:
@@ -172,6 +176,29 @@ class OutboxRepository:
                     .as_string()
                     .in_(eligible_corpus_sources),
                 )
+            # Rapid edits leave immutable contexts for older profile versions.
+            # Retire unleased/expired work in one batch before claiming the latest,
+            # rather than spending a full solver budget on each obsolete version.
+            stale = (await session.execute(
+                select(outbox_jobs.c.id, recompute_requests.c.id.label('request_id'))
+                .select_from(outbox_jobs.join(
+                    recompute_requests, outbox_jobs.c.recompute_request_id == recompute_requests.c.id,
+                ).join(
+                    recompute_contexts, recompute_contexts.c.request_id == recompute_requests.c.id,
+                ).join(profiles, profiles.c.user_id == recompute_requests.c.user_id))
+                .where(*claim_conditions, recompute_requests.c.profile_version < profiles.c.version)
+                .order_by(outbox_jobs.c.id)
+                .with_for_update(of=outbox_jobs, skip_locked=True)
+                .limit(STALE_RECOMPUTE_BATCH_LIMIT)
+            )).all()
+            if stale:
+                await session.execute(update(outbox_jobs).where(
+                    outbox_jobs.c.id.in_([row.id for row in stale]),
+                ).values(state='COMPLETED', lease_token=None, lease_until=None))
+                await session.execute(update(recompute_requests).where(
+                    recompute_requests.c.id.in_([row.request_id for row in stale]),
+                ).values(state='FAILED', error_code='STALE_PROFILE', updated_at=func.clock_timestamp()))
+                _logger.info('recompute_skipped_stale count=%d', len(stale))
             rows = (
                 (
                     await session.execute(
@@ -190,9 +217,12 @@ class OutboxRepository:
                             ).join(
                                 recompute_contexts,
                                 recompute_contexts.c.request_id == recompute_requests.c.id,
+                            ).join(
+                                profiles,
+                                profiles.c.user_id == recompute_requests.c.user_id,
                             )
                         )
-                        .where(*claim_conditions)
+                        .where(*claim_conditions, recompute_requests.c.profile_version == profiles.c.version)
                         .order_by(outbox_jobs.c.available_at, outbox_jobs.c.id)
                         .with_for_update(of=outbox_jobs, skip_locked=True)
                         .limit(limit)
