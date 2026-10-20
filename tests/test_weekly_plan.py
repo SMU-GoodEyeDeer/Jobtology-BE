@@ -51,12 +51,12 @@ def test_production_recommended_order_and_weeks():
     plan = weekly_plan.build_weekly_plan(context(), tuple(reversed(steps)))
     # Then
     assert [step.step_id.int for step in plan.steps] == list(range(1, 12))
-    assert [(s.start_week, s.end_week) for s in plan.steps] == [
-        (1, 2), (2, 4), (4, 7), (7, 9), (9, 11), (11, 13),
-        (13, 17), (17, 19), (19, 21), (21, 24), (24, 26),
-    ]
+    assert sum(step.start_week == 1 for step in plan.steps) == 10
+    assert all(sum(a.hours for a in step.week_allocations) == step.hours for step in plan.steps)
+    assert all(sum(a.hours for step in plan.steps for a in step.week_allocations if a.week == week)
+               <= 10 for week in range(1, 27))
     assert plan.start_date == date(2026, 10, 19)
-    assert plan.completion_date == date(2027, 4, 18)
+    assert plan.completion_date == date(2027, 4, 12)
     assert plan.total_hours == 259
     assert plan.total_weeks == 26
     assert plan.saved_at is None
@@ -75,13 +75,13 @@ def test_custom_hours_and_rest_weeks_pack_continuously():
     # Then
     assert plan.total_hours == 253
     assert plan.total_weeks == 24
-    assert plan.completion_date == date(2027, 4, 4)
-    assert plan.recommended_completion_date == date(2027, 4, 18)
+    assert plan.completion_date == date(2027, 3, 29)
+    assert plan.recommended_completion_date == date(2027, 4, 12)
     assert plan.steps[9].hours_basis == 'CUSTOM'
     assert all(s.start_week not in (10, 11) and s.end_week not in (10, 11) for s in plan.steps)
 
 
-def test_moving_sql_application_before_sql_writing_reports_unmet_prerequisite():
+def test_moving_sql_application_first_still_waits_for_its_real_prerequisite():
     # Given
     order = (10, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11)
     overrides = weekly_plan.PlanOverrides(
@@ -93,13 +93,12 @@ def test_moving_sql_application_before_sql_writing_reports_unmet_prerequisite():
     inputs[9] = replace(inputs[9], step=replace(inputs[9].step, prerequisite_step_ids=(UUID(int=3),)))
     plan = weekly_plan.build_weekly_plan(context(), tuple(inputs), overrides)
     # Then
-    assert UUID(int=3) in plan.steps[0].unmet_prerequisite_step_ids
+    assert plan.steps[0].unmet_prerequisite_step_ids == ()
     assert plan.steps[0].moved
     assert plan.steps[0].recommended_number == 10
-    assert plan.has_dependency_violations
-    warning = next(w for w in plan.warnings if w.code == 'PREREQUISITE_VIOLATION')
-    assert warning.step_ids == (UUID(int=10),)
-    assert warning.prerequisite_step_ids == (UUID(int=3),)
+    assert not plan.has_dependency_violations
+    prerequisite = next(step for step in plan.steps if step.step_id == UUID(int=3))
+    assert prerequisite.end_date <= plan.steps[0].start_date
 
 
 def test_null_metadata_uses_fallbacks_without_inventing_fields():
@@ -158,9 +157,10 @@ def test_rest_week_one_and_boundary_rest_do_not_consume_capacity():
     # When
     result = weekly_plan.build_weekly_plan(context(), production_steps()[:2], overrides)
     # Then
-    assert [(s.start_week, s.end_week) for s in result.steps] == [(2, 2), (4, 5)]
+    assert [(s.start_week, s.end_week) for s in result.steps] == [(2, 4), (2, 5)]
     assert result.steps[0].start_date == date(2026, 10, 26)
-    assert result.steps[1].end_date == date(2026, 11, 22)
+    assert result.steps[1].end_date == date(2026, 11, 16)
+    assert all(a.week not in (1, 3, 104) for step in result.steps for a in step.week_allocations)
     assert result.total_weeks == 5
 
 
@@ -199,9 +199,11 @@ def test_step_boundaries_reuse_capacity_without_rounding_each_step():
     # When
     result = weekly_plan.build_weekly_plan(context(), tuple(inputs))
     # Then
-    assert [(s.start_week, s.end_week) for s in result.steps] == [(1, 1), (1, 2), (2, 2), (2, 3)]
+    assert [(s.start_week, s.end_week) for s in result.steps] == [(1, 1), (1, 3), (1, 1), (1, 3)]
     assert result.total_weeks == 3
-    assert result.completion_date == result.recommended_completion_date == date(2026, 11, 8)
+    assert result.completion_date == result.recommended_completion_date == date(2026, 11, 2)
+    assert [sum(a.hours for step in result.steps for a in step.week_allocations if a.week == week)
+            for week in (1, 2, 3)] == [10, 10, 10]
 
 
 def test_unknown_level_reason_still_appends_known_demand():
@@ -267,12 +269,12 @@ def test_custom_schedule_past_target_is_allowed_with_completion_warning():
     )
     result = weekly_plan.build_weekly_plan(replace(context(), target_date=date(2026, 10, 20)),
                                          inputs, overrides)
-    assert result.completion_date == date(2026, 11, 15)
+    assert result.completion_date == date(2026, 11, 9)
     assert result.deadline_exceeded
-    assert result.days_past_target == 26
+    assert result.days_past_target == 20
     assert result.schedule_source == 'CUSTOM'
     warning = next(w for w in result.warnings if w.code == 'TARGET_DATE_EXCEEDED')
-    assert '2026-11-15' in warning.message
+    assert '2026-11-09' in warning.message
     assert '2026-10-20' in warning.message
     assert result.saved_at is None
 
@@ -356,6 +358,61 @@ def test_no_op_overrides_do_not_rebuild_solver_schedule():
     )
     result = weekly_plan.build_weekly_plan(context(), inputs, overrides)
     assert result == weekly_plan.build_weekly_plan(context(), inputs)
+
+
+def test_custom_independent_steps_share_capacity_and_finish_before_midweek_target():
+    inputs = tuple(replace(item, step=replace(item.step, state='TODO', prerequisite_step_ids=()))
+                   for item in solver_steps())
+    plan_context = replace(context(), target_date=date(2026, 10, 20),
+                           step_hours={item.step.step_key: 5 for item in inputs})
+    overrides = weekly_plan.PlanOverrides(
+        weekly_hours=11, rest_weeks=(), order=tuple(str(item.step.step_id) for item in inputs),
+        hours={str(inputs[0].step.step_id): 6}, saved_at=None,
+    )
+    result = weekly_plan.build_weekly_plan(plan_context, inputs, overrides)
+    assert result.completion_date == date(2026, 10, 19)
+    assert not result.deadline_exceeded
+    assert result.total_weeks == 1
+    assert [step.start_week for step in result.steps] == [1, 1]
+    assert [sum(a.hours for a in step.week_allocations) for step in result.steps] == [6, 5]
+    assert sum(a.hours for step in result.steps for a in step.week_allocations) == 11
+    assert all(warning.code != 'TARGET_DATE_EXCEEDED' for warning in result.warnings)
+
+
+def test_parallel_plan_still_warns_when_total_effort_exceeds_weekly_capacity():
+    inputs = tuple(replace(item, step=replace(item.step, state='TODO', prerequisite_step_ids=()))
+                   for item in solver_steps())
+    plan_context = replace(context(), target_date=date(2026, 10, 20),
+                           step_hours={item.step.step_key: 5 for item in inputs})
+    overrides = weekly_plan.PlanOverrides(
+        weekly_hours=5, rest_weeks=(), order=tuple(str(item.step.step_id) for item in inputs),
+        hours={str(inputs[0].step.step_id): 6}, saved_at=None,
+    )
+    result = weekly_plan.build_weekly_plan(plan_context, inputs, overrides)
+    assert result.completion_date == date(2026, 11, 2)
+    assert result.deadline_exceeded
+    assert result.days_past_target == 13
+    assert [sum(a.hours for step in result.steps for a in step.week_allocations if a.week == week)
+            for week in (1, 2, 3)] == [5, 5, 1]
+
+
+def test_missing_solver_dates_never_schedule_before_the_creation_instant():
+    created = datetime(2026, 10, 25, 14, 30, tzinfo=UTC)  # Sunday 23:30 in Seoul.
+    result = weekly_plan.build_weekly_plan(replace(context(), created_at=created), production_steps()[:1])
+    assert result.steps[0].start_date == date(2026, 10, 26)
+    assert result.steps[0].start_week == 2
+
+
+def test_dependency_cycles_are_reported_without_losing_steps_or_hanging():
+    first, second = production_steps()[:2]
+    inputs = (
+        replace(first, step=replace(first.step, prerequisite_step_ids=(second.step.step_id,))),
+        replace(second, step=replace(second.step, prerequisite_step_ids=(first.step.step_id,))),
+    )
+    result = weekly_plan.build_weekly_plan(context(), inputs)
+    assert result.has_dependency_violations
+    assert len(result.steps) == 2
+    assert all(sum(a.hours for a in step.week_allocations) == step.hours for step in result.steps)
 
 
 

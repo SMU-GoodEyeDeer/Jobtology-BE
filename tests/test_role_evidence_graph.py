@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from jobtology_be.api.errors import register_error_handlers
 from jobtology_be.api.identity import AuthenticatedPrincipal, require_authenticated_principal
 from jobtology_be.api.role_evidence_graph import require_role_evidence_graph, router
+from jobtology_be.application.requirement_metadata import RequirementMetadata
 from jobtology_be.corpus.neo4j_client import (
     JsonValue,
     Neo4jQueryResult,
@@ -88,6 +89,13 @@ def test_role_graph_links_policy_ncs_codes_through_postings_to_onet_details() ->
     assert kinds["role:BACKEND_DEVELOPER"] == "role"
     assert kinds["ncs:occupation:20010202"] == "ncs_occupation"
     assert kinds["postings:20010202"] == "posting_evidence"
+    nodes = {node.id: node for node in graph.nodes}
+    assert nodes["postings:20010202"].ncs_category == "20010202"
+    assert nodes["ncs:occupation:20010202"].ncs_category == "20010202"
+    unit = nodes["ncs:unit:2001020201_23v1"]
+    assert unit.ncs_base_code == "2001020201"
+    assert unit.requirement_key is None  # Source evidence alone is not a reviewed requirement.
+    assert nodes["qnet:qualification:C290"].qualification_code == "C290"
     assert kinds["onet:15-1252.00"] == "onet_occupation"
     assert len([node for node in graph.nodes if node.id == "tech:python"]) == 1
     targets = {(edge.source, edge.target, edge.kind) for edge in graph.edges}
@@ -98,6 +106,25 @@ def test_role_graph_links_policy_ncs_codes_through_postings_to_onet_details() ->
     assert ("ncs:occupation:20010204", "qnet:qualification:C290", "QUALIFIED_BY") in targets
     assert kinds["qnet:qualification:C290"] == "qualification"
     assert ("onet:15-1252.00", "tech:python", "HOT_TECHNOLOGY") in targets
+
+
+def test_graph_deep_link_requirement_uses_verified_role_metadata() -> None:
+    class Metadata:
+        def lookup(self, requirement_key: str) -> RequirementMetadata | None:
+            if requirement_key == "BACKEND_DEVELOPER:2001020201":
+                return RequirementMetadata(
+                    ncs_level=4, demand_pct=None, estimated_hours=20,
+                    hours_basis="ESTIMATED", ncs_base_code="2001020201",
+                )
+            return None
+
+    graph = anyio.run(Neo4jRoleEvidenceGraph(
+        policy=POLICY, client=_backend_client(), requirement_metadata=Metadata(),
+    ).graph, "BACKEND_DEVELOPER")
+    assert graph is not None
+    nodes = {node.id: node for node in graph.nodes}
+    assert nodes["ncs:unit:2001020201_23v1"].requirement_key == "BACKEND_DEVELOPER:2001020201"
+    assert nodes["ncs:unit:2001020401_23v1"].requirement_key is None
 
 
 def test_unknown_role_returns_none_without_querying_neo4j() -> None:
