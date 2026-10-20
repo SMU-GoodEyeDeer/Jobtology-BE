@@ -20,6 +20,17 @@ from ...models import (
     set_paragraph_page_number,
 )
 from ...style_types import CellStyleInfo, ParaStyleInfo, RunStyleInfo, TableStyleInfo
+from ..meta import (
+    PdfBoundingBox,
+    coerce_bbox,
+    coerce_float,
+    coerce_int,
+    extract_text_from_odl_node,
+    node_value,
+    normalize_align,
+    pixels_to_points,
+    sanitize_css_color,
+)
 
 
 def _pdf_node_kwargs(
@@ -39,17 +50,6 @@ def _pdf_node_kwargs(
     )
 
 
-from ..meta import (
-    PdfBoundingBox,
-    coerce_bbox,
-    coerce_float,
-    coerce_int,
-    extract_text_from_odl_node,
-    node_value,
-    normalize_align,
-    pixels_to_points,
-    sanitize_css_color,
-)
 
 _STRIP_CONNECTOR_CHARS = frozenset({"➡", "→", "➜", "➝", "←", "↑", "↓", "↔", "↕", ""})
 _STRIP_ROW_TOLERANCE_PT = 18.0
