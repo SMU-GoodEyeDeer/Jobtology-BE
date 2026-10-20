@@ -20,7 +20,7 @@ class ProfileUpdateRequest(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
 
     expected_profile_version: StrictInt = Field(ge=1)
-    major_raw: StrictStr = Field(min_length=1, max_length=500)
+    major_raw: StrictStr = Field(max_length=500)
     major_concept_id: StrictStr | None = Field(default=None, max_length=128)
     year: StrictInt | None = Field(default=None, ge=1)
     enrollment_status: StrictStr | None = Field(default=None, max_length=32)

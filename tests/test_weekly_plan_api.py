@@ -103,7 +103,7 @@ def test_plan_get_put_get_delete_round_trip():
         reset = client.delete(PATH)
     # Then
     assert recommended.status_code == saved.status_code == fetched.status_code == reset.status_code == 200
-    assert recommended.json()['completion_date'] == '2027-04-18'
+    assert recommended.json()['completion_date'] == '2027-04-12'
     assert saved.json() == fetched.json()
     assert saved.json()['rest_weeks'] == [10, 11]
     assert saved.json()['is_customized'] is True

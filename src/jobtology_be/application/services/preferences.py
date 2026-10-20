@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import Final, Literal, Protocol, TypedDict
 from uuid import UUID
 
 from jobtology_be.infrastructure.persistence.contracts import (
@@ -9,6 +9,26 @@ from jobtology_be.infrastructure.persistence.contracts import (
 )
 
 type BudgetMode = Literal["REGULAR", "LOW_COST"]
+
+class RoutePreferenceDefaults(TypedDict):
+    available_hours_per_week: int
+    budget_mode: BudgetMode
+    max_out_of_pocket_krw: int | None
+    fastest_path: bool
+    needs_portfolio: bool
+    career_switch: bool
+
+
+# Shared by read-only preference defaults and the analysis input builder. Missing
+# optional onboarding preferences must not prevent the first roadmap/settings read.
+DEFAULT_ROUTE_PREFERENCES: Final[RoutePreferenceDefaults] = {
+    "available_hours_per_week": 10,
+    "budget_mode": "REGULAR",
+    "max_out_of_pocket_krw": None,
+    "fastest_path": False,
+    "needs_portfolio": False,
+    "career_switch": False,
+}
 
 
 @dataclass(frozen=True, slots=True)

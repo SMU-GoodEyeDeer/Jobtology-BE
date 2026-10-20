@@ -40,6 +40,11 @@ class PlanOverrides(PlanModel):
     saved_at: datetime | None
 
 
+class WeeklyPlanAllocation(PlanModel):
+    week: int
+    hours: int
+
+
 class WeeklyPlanStep(PlanModel):
     step_id: UUID
     number: int
@@ -65,6 +70,7 @@ class WeeklyPlanStep(PlanModel):
     prerequisite_step_ids: tuple[UUID, ...]
     unmet_prerequisite_step_ids: tuple[UUID, ...]
     completion_criteria: tuple[str, ...] = ()
+    week_allocations: tuple[WeeklyPlanAllocation, ...] = ()
 
 
 class WeeklyPlanWarning(PlanModel):

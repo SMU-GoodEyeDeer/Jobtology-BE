@@ -1,7 +1,9 @@
 """Project persisted solver schedules and explicitly labelled weekly customizations."""
 
+from collections import deque
 from collections.abc import Mapping
-from datetime import date, timedelta
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
 from typing import Final
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -13,6 +15,7 @@ from jobtology_be.application.weekly_plan_models import (
     PlanContext,
     PlanOverrides,
     PlanStepInput,
+    WeeklyPlanAllocation,
     WeeklyPlanResponse,
     WeeklyPlanStep,
     WeeklyPlanWarning,
@@ -50,30 +53,83 @@ def _reason(item: PlanStepInput, by_id: Mapping[UUID, PlanStepInput]) -> str:
     return '저장된 로드맵 순서로 배치했어요' + suffix
 
 
+@dataclass(frozen=True, slots=True)
+class _Scheduled:
+    starts_at: datetime
+    ends_at: datetime
+    allocations: tuple[WeeklyPlanAllocation, ...]
+
+
 def _pack(
     context: PlanContext,
     ordered: tuple[PlanStepInput, ...],
     overrides: PlanOverrides | None,
-) -> dict[UUID, tuple[int, int]]:
-    """Keep the user's effort/rest-week layout without changing the saved solver schedule."""
+    starts_at: datetime,
+    start: date,
+    timezone: ZoneInfo,
+) -> dict[UUID, _Scheduled]:
+    """Share real hourly slots among ready activities, respecting the weekly capacity.
+
+    The order is a priority among eligible activities, rather than a new prerequisite
+    chain. One learner still uses only one activity per hour; independent activities
+    can overlap across days and weeks without multiplying the available hours.
+    """
     weekly = overrides.weekly_hours if overrides else context.recommended_weekly_hours
     rests = frozenset(overrides.rest_weeks) if overrides else frozenset()
-    week, used = 1, 0
-    packed_steps: dict[UUID, tuple[int, int]] = {}
-    for item in ordered:
-        remaining = (overrides.hours.get(str(item.step.step_id), _hours(context, item))
-                     if overrides else _hours(context, item))
-        while week in rests or used == weekly:
-            week, used = week + 1, 0
-        first = week
-        while remaining:
-            while week in rests or used == weekly:
-                week, used = week + 1, 0
-            packed = min(remaining, weekly - used)
-            remaining -= packed
-            used += packed
-        packed_steps[item.step.step_id] = (first, week)
-    return packed_steps
+    by_id = {item.step.step_id: item for item in ordered}
+    remaining = {item.step.step_id: overrides.hours.get(str(item.step.step_id), _hours(context, item))
+                 if overrides else _hours(context, item) for item in ordered}
+    first: dict[UUID, datetime] = {}
+    last: dict[UUID, datetime] = {}
+    allocations: dict[UUID, dict[int, int]] = {key: {} for key in by_id}
+    cursor = starts_at.astimezone(UTC)
+    rounded = cursor.replace(minute=0, second=0, microsecond=0)
+    cursor = rounded if rounded == cursor else rounded + timedelta(hours=1)
+    used_by_week: dict[int, int] = {}
+    next_index = 0
+    positions = {item.step.step_id: index for index, item in enumerate(ordered)}
+    waiting = {item.step.step_id: {
+        key for key in item.step.prerequisite_step_ids
+        if key not in by_id or by_id[key].step.state != 'COMPLETED'
+    } for item in ordered}
+    dependents: dict[UUID, set[UUID]] = {}
+    for key, prerequisites in waiting.items():
+        for prerequisite in prerequisites:
+            dependents.setdefault(prerequisite, set()).add(key)
+    ready = deque(key for key in remaining if not waiting[key])
+    hours_left = sum(remaining.values())
+    while hours_left:
+        local = cursor.astimezone(timezone)
+        week = (local.date() - start).days // 7 + 1
+        if week in rests or used_by_week.get(week, 0) >= weekly:
+            next_monday = start + timedelta(weeks=week)
+            cursor = datetime.combine(next_monday, datetime.min.time(), timezone).astimezone(UTC)
+            continue
+        # Broken/missing source dependencies must remain visible and produce warnings,
+        # rather than hanging the scheduler or silently dropping activities.
+        if not ready:
+            ready.append(next(key for key, hours in remaining.items() if hours))
+        key = ready.popleft()
+        next_index = (positions[key] + 1) % len(ordered)
+        end = cursor + timedelta(hours=1)
+        first.setdefault(key, cursor)
+        last[key] = end
+        allocations[key][week] = allocations[key].get(week, 0) + 1
+        remaining[key] -= 1
+        hours_left -= 1
+        if remaining[key]:
+            ready.append(key)
+        else:
+            for dependent in dependents.get(key, ()):
+                waiting[dependent].discard(key)
+                if not waiting[dependent] and remaining[dependent] and dependent not in ready:
+                    ready.append(dependent)
+            ready = deque(sorted(ready, key=lambda key: (positions[key] - next_index) % len(ordered)))
+        used_by_week[week] = used_by_week.get(week, 0) + 1
+        cursor = end
+    return {key: _Scheduled(first[key], last[key], tuple(
+        WeeklyPlanAllocation(week=week, hours=hours) for week, hours in weeks.items()
+    )) for key, weeks in allocations.items()}
 
 
 def _has_solver_dates(item: PlanStepInput) -> bool:
@@ -83,19 +139,19 @@ def _has_solver_dates(item: PlanStepInput) -> bool:
 
 
 def _dates(
-    item: PlanStepInput, start: date, packed: Mapping[UUID, tuple[int, int]],
+    item: PlanStepInput, packed: Mapping[UUID, _Scheduled],
     timezone: ZoneInfo, *, use_solver: bool,
 ) -> tuple[date, date]:
     step = item.step
     if use_solver and _has_solver_dates(item):
         assert step.planned_start is not None and step.planned_end is not None
         return step.planned_start.astimezone(timezone).date(), step.planned_end.astimezone(timezone).date()
-    first, last = packed[step.step_id]
-    return start + timedelta(weeks=first - 1), start + timedelta(weeks=last - 1, days=6)
+    schedule = packed[step.step_id]
+    return schedule.starts_at.astimezone(timezone).date(), schedule.ends_at.astimezone(timezone).date()
 
 
 def _unmet(
-    item: PlanStepInput, by_id: Mapping[UUID, PlanStepInput], positions: Mapping[UUID, int],
+    item: PlanStepInput, by_id: Mapping[UUID, PlanStepInput], schedules: Mapping[UUID, _Scheduled],
     *, use_solver: bool,
 ) -> tuple[UUID, ...]:
     unmet: list[UUID] = []
@@ -109,7 +165,7 @@ def _unmet(
             assert item.step.planned_start is not None and prerequisite.step.planned_end is not None
             if prerequisite.step.planned_end > item.step.planned_start:
                 unmet.append(prerequisite_id)
-        elif positions[prerequisite_id] >= positions[item.step.step_id]:
+        elif schedules[prerequisite_id].ends_at > schedules[item.step.step_id].starts_at:
             unmet.append(prerequisite_id)
     return tuple(unmet)
 
@@ -130,19 +186,20 @@ def build_weekly_plan(
             and all(overrides.hours.get(str(item.step.step_id), _hours(context, item))
                     == _hours(context, item) for item in recommended)):
         overrides = None
-    positions = {item.step.step_id: i for i, item in enumerate(ordered, 1)}
     recommended_positions = {item.step.step_id: i for i, item in enumerate(recommended, 1)}
     weekly = overrides.weekly_hours if overrides else context.recommended_weekly_hours
     rests = tuple(sorted(overrides.rest_weeks)) if overrides else ()
     solver_starts = tuple(item.step.planned_start for item in recommended
                           if _has_solver_dates(item) and item.step.planned_start is not None)
-    start = min(solver_starts, default=context.created_at).astimezone(timezone).date()
+    starts_at = min(solver_starts, default=context.created_at)
+    start = starts_at.astimezone(timezone).date()
     start -= timedelta(days=start.weekday())
-    packed = _pack(context, ordered, overrides)
-    recommended_packed = _pack(context, recommended, None)
-    recommended_dates = tuple(_dates(item, start, recommended_packed, timezone, use_solver=True)
-                              for item in recommended)
     missing_dates = tuple(item.step.step_id for item in recommended if not _has_solver_dates(item))
+    recommended_packed = _pack(context, recommended, None, starts_at, start, timezone) if missing_dates else {}
+    packed = (_pack(context, ordered, overrides, starts_at, start, timezone)
+              if overrides else recommended_packed)
+    recommended_dates = tuple(_dates(item, recommended_packed, timezone, use_solver=True)
+                              for item in recommended)
     warnings: list[WeeklyPlanWarning] = []
     if missing_dates:
         warnings.append(WeeklyPlanWarning(
@@ -156,8 +213,8 @@ def build_weekly_plan(
         level = meta.ncs_level if meta else None
         recommended_hours = _hours(context, item)
         hours = overrides.hours.get(str(item.step.step_id), recommended_hours) if overrides else recommended_hours
-        first_date, last_date = _dates(item, start, packed, timezone, use_solver=overrides is None)
-        unmet = _unmet(item, by_id, positions, use_solver=overrides is None)
+        first_date, last_date = _dates(item, packed, timezone, use_solver=overrides is None)
+        unmet = _unmet(item, by_id, packed, use_solver=overrides is None)
         if unmet:
             warnings.append(WeeklyPlanWarning(
                 code='PREREQUISITE_VIOLATION',
@@ -185,6 +242,8 @@ def build_weekly_plan(
             prerequisite_step_ids=item.step.prerequisite_step_ids,
             unmet_prerequisite_step_ids=unmet,
             completion_criteria=tuple(value for value in item.step.criteria if isinstance(value, str)),
+            week_allocations=packed[item.step.step_id].allocations
+            if overrides is not None or not _has_solver_dates(item) else (),
         ))
     completion = max((step.end_date for step in result), default=start)
     days_past_target = max(0, (completion - context.target_date).days) if context.target_date else 0

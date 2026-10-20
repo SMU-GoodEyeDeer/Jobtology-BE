@@ -81,10 +81,15 @@ Google 이름을 받기 위해 기존 Google Cloud 클라이언트를 교체할 
 - `weekly_hours`: 1~60 정수. `rest_weeks`: 중복 없는 1~104주 정수 배열.
 - `order`: 모든 단계 ID의 정확한 순열. `hours`: 단계 ID 일부와 1~400 정수 시간.
   추천 시간과 같은 값은 별도 수정으로 보지 않습니다.
+  순서는 실행 가능한 활동 간의 우선순위이며 새 선행 관계를 만들지 않습니다. 실제 선행 단계가
+  완료되어야 후속 단계를 시작하고, 독립 활동은 같은 주의 시간 예산을 나누어 배치합니다.
 - `schedule_source`: `SOLVER`는 저장된 원본 날짜, `CUSTOM`은 사용자 설정으로 계산한 주간 일정,
   `FALLBACK`은 원본 날짜가 없는 단계의 추정 일정입니다.
 - `steps[].start_date/end_date`: 솔버 모드에서는 저장된 정확한 날짜입니다. 주차 표시에 맞춰
   월요일·일요일로 덮어쓰지 마세요. 시간대는 목표의 IANA 시간대입니다.
+- `steps[].week_allocations`: 사용자 설정/추정 일정의 정확한 주차별 `{week, hours}` 배분입니다.
+  브라우저에서 전체 시간을 다시 직렬 배분하지 마세요. 원본 시간 슬롯이 저장되지 않은 솔버
+  일정에서는 빈 배열일 수 있으며, 원본 날짜 범위를 기준으로 표시합니다.
 - `steps[].title`과 `completion_criteria`는 저장된 활동과 완료 기준입니다. 포트폴리오 활동의
   프로젝트 결과물·README 기준을 상세 화면에 표시하세요. `name`은 관련 역량 이름입니다.
 - `steps[].prerequisite_step_ids`: 저장된 실제 선행 단계입니다. NCS 수준으로 선행 관계를 추측하지 않습니다.
@@ -523,11 +528,41 @@ API 또는 저장된 사용자 데이터를 대체하지 않습니다. 두 모�
 | `JOBTOLOGY_ENABLE_FIXTURES` | `true`이면 `/api/v1/dev` 레거시 프리뷰 라우트 활성화 |
 | `JOBTOLOGY_ENABLE_FE_MOCK_SAMPLES` | `true`이면 `/api/v1/dev/mock/samples` mock 샘플 라우트 활성화 |
 | `JOBTOLOGY_CORS_ORIGINS` | 허용 프론트엔드 origin 목록(JSON 배열 문자열) |
-| `JOBTOLOGY_AUTH_ENABLED` | Google 로그인 활성화 여부. 현재는 `false`로 유지하며, 비활성 상태의 제품 라우트는 fail-closed `401`을 반환 |
+| `JOBTOLOGY_AUTH_ENABLED` | Google 로그인 활성화 여부. 운영은 `true`와 Google OAuth 설정을 사용합니다. 비활성 상태의 제품 라우트는 fail-closed `401`을 반환 |
 | `JOBTOLOGY_ENVIRONMENT` | `development` / `test` / `production` |
 
 환경 변수 전체 목록과 최신 기본값은 `.env.example` 과
 [settings.py](../src/jobtology_be/settings.py) 를 참고하세요.
+
+### 프로필·역량·기본 경로 조건
+
+- `PUT /api/v1/me/profile`은 전체 필드를 대체합니다. `major_raw: ""`는 전공 미입력/초기화를
+  뜻하며, 선택 필드는 `null`로 지울 수 있습니다. 표시용 `미입력`을 실제 전공으로 저장하지 않습니다.
+  FE의 졸업 연도/2월·8월 선택은 해당 월 말일로 전달하며, 기존 날짜는 사용자가 변경하지 않으면 보존합니다.
+- 역량 생성/수정/삭제 응답은 식별자와 `profile_version`입니다. 생성 응답을 전체 역량 상세로
+  간주하지 마세요. 생성된 내용을 즉시 표시하거나 상세/목록을 다시 읽고, 이후 쓰기는 최신 버전을 사용합니다.
+- `GET /api/v1/me/capabilities`와 단건 GET은 소유자의 `ACTIVE` 역량만 반환합니다.
+  삭제는 `REVOKED` 처리이며, 삭제된 단건 조회는 `404`입니다. 분석 입력에서도 제외됩니다.
+- 기존 계정에 경로 조건 행이 없으면 `GET /api/v1/me/route-preferences`는 `200`과 분석 기본값을
+  반환합니다: 주당 10시간, `budget_mode=REGULAR`, 예산 상한 `null`, 세 가지 선호 `false`,
+  `availability_source=DEFAULT`, 현재 `profile_version`. 읽기는 행을 만들거나 버전을 올리지 않습니다.
+  프로필이 없는 사용자는 계속 `404`입니다.
+- 프로필/역량/선호 변경은 현재 분석을 갱신하기 위한 재계산을 예약하지만 기존 활성 로드맵을
+  덮어쓰지 않습니다. 임의의 스펙 문장은 카탈로그와 연결되지 않으면 미확인으로 남을 수 있습니다.
+
+### 그래프 노드에서 실제 자료 열기
+
+`GET /api/v2/roles/{occupation_id}/evidence-graph`의 노드는 선택적 구조화 필드를 제공합니다.
+`ncs_category`는 NCS 직무/공고 집계 노드의 공고 목록 필터, `ncs_base_code`는 능력단위 탐색,
+`qualification_code`는 자격 시험 일정 조회에 사용합니다. `requirement_key`는 현재 승인된 직무
+메타데이터와 일치할 때만 제공되며, 원본 그래프 노드라는 이유만으로 분석 요구사항으로 간주하지 않습니다.
+공고 집계 노드 ID는 실제 개별 공고 ID가 아닙니다. 먼저 필터된 공고 목록을 조회하고 실제
+`posting_id`로 상세를 여세요. 원본 ID나 표시 문자열을 분해해 제품 요구사항을 추정하지 마세요.
+
+NCS 1–8수준 설명은 [공식 수준체계](https://www.ncs.go.kr/mobile/rm01/TH10200103.do)를
+참고합니다. 학력/자격의 대략적인 비유는 응시 자격, 학력 동등성, 개인 숙련도 판정이 아닙니다.
+
+전체 기능 제한과 다음 작업은 [제품 기능 현황](plan.md#verified-functionality-limits-2026-10-20)을 참고하세요.
 
 ## 문서 링크 모음
 

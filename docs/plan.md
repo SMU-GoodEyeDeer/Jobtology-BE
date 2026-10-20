@@ -2,11 +2,11 @@
 
 ## Status and document authority
 
-The current worktree implements the local-JSON M1–M5 product flow and the additive, read-only
-native `/api/v2` catalog. Remote deployment, Google sign-in, remote publication/revocation
-integration, and native editorial analysis or route planning remain pending or intentionally
-unsupported. This document defines the current architecture and product requirements; it is not a
-remote-release certification.
+The current worktree implements the M1–M5 product flow, Google-only account/session management,
+and a read-only native `/api/v2` catalog. Product-role planning uses approved, versioned NCS
+inputs projected into the planning corpus; an arbitrary native graph relationship is not a
+reviewed learning requirement or prerequisite. Production deployment exists, while the broader
+architecture requirements below also describe work that is not implemented yet.
 
 - The served `/api/openapi.json` is the field-level contract for an implemented deployment.
 - [The Korean frontend integration guide](fe-integration.md) is the single wheel-backed source for
@@ -15,6 +15,23 @@ remote-release certification.
   privacy boundaries.
 - [The verification record](neo4j-verification.md) preserves dated historical QA evidence; it is
   not a substitute for a new release gate.
+
+### Verified functionality limits (2026-10-20)
+
+| Area | Current behavior | Next useful addition |
+|---|---|---|
+| Money | Product-role self-study activities have modeled cost ₩0. A hard budget therefore does not distinguish these routes; zero is not a verified course, material, or exam price. | Versioned provider/exam prices, currencies, price dates, and explicit unknown-cost behavior before advertising cheapest routes. |
+| Time | OR-Tools CP-SAT already selects activities and hourly slots subject to weekly capacity, known prerequisites, and the goal deadline. Weekly customizations share that capacity among independent activities and report real deadline overruns. | User-selected study days/times, holidays, recurring commitments, fixed exam/application dates, and joint capacity across multiple plans. Current availability is flexible, can include night hours, and is not a personal calendar. |
+| Effort | Pinned source activity effort is preserved; product roles use linked official training hours where available and a 20-hour estimate otherwise. | Calibrated effort by existing proficiency, learning format, and observed completion time. NCS level describes task complexity/responsibility, not measured user mastery or a duration formula. |
+| Certifications | Linked qualification names and collected examination sessions can be viewed; linked minimum training hours can inform effort. | Explicit certification/exam activities with eligibility, registration windows, fees, preparation, retakes, and verified achievement. A linked qualification is not proof the user holds it. |
+| Personal profile | Education fields persist. Active capabilities are normalized against catalog identities/aliases and used by analysis; arbitrary unmatched text may remain unresolved. | Rework skill input together with onboarding, using supported catalog choices, evidence, and proficiency. Major/year/graduation fields currently do not themselves grant competencies or determine a roadmap deadline. |
+| Reanalysis | Profile, capability, and preference writes bump the shared version and enqueue recomputation when a usable context exists. A manual analysis action can initialize/refresh the context. | Review/apply a new proposal against an existing active roadmap, with a visible diff and preserved completion history. Reanalysis currently preserves an existing active roadmap rather than silently replacing it. |
+| Graph structure | NCS classifications, qualification links, and posting evidence explain recommendations. Generated product study templates currently have no reviewed prerequisite edges. | Curated learning prerequisites and alternative activities; feed verified edges into the existing solver rather than treating classification or co-occurrence as a learning dependency. |
+| Job postings | Collected posting metadata, filtering, and original-source links can be viewed. Data may be historical or incomplete; graph aggregate counts are not current open-position counts. | Timely ingestion, expired-posting handling, richer descriptions, personalized matching, saved postings/application tracking. |
+
+Priority after the current fixes: skill/onboarding identity mapping; proposal diff/apply;
+real study availability and fixed events; calibrated activity effort; certification activities;
+then pricing. Automatic degree/license equivalence and employment guarantees are not supported.
 
 ## Product objective and scope
 

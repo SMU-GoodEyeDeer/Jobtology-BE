@@ -192,6 +192,7 @@ def create_app(
         role_evidence_graph = Neo4jRoleEvidenceGraph(
             policy=ProductRolePolicy.model_validate_json(policy_path.read_text()),
             client=neo4j_client,
+            requirement_metadata=role_holder,
         )
     if settings.auth_enabled and session_store is None:
         if database is None:

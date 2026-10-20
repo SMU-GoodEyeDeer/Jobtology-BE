@@ -1,7 +1,6 @@
-from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import ClassVar, Final
+from typing import ClassVar
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -10,6 +9,7 @@ from sqlalchemy import select
 
 from jobtology_be.application.services.analyses import AnalysisRequestCommand
 from jobtology_be.application.services.analysis_context import AnalysisContextInputs
+from jobtology_be.application.services.preferences import DEFAULT_ROUTE_PREFERENCES
 from jobtology_be.contracts import CapabilityInput
 from jobtology_be.infrastructure.persistence.contracts import (
     MissingRecordError,
@@ -32,18 +32,6 @@ class _CapabilityDetails(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="ignore", frozen=True)
 
     experience_codes: tuple[str, ...] = ()
-
-
-# Route conditions are optional (onboarding no longer asks for them); users without saved
-# preferences are planned with these conservative defaults until they set their own.
-DEFAULT_ROUTE_PREFERENCES: Final[Mapping[str, object]] = {
-    "available_hours_per_week": 10,
-    "budget_mode": "REGULAR",
-    "max_out_of_pocket_krw": None,
-    "fastest_path": False,
-    "needs_portfolio": False,
-    "career_switch": False,
-}
 
 
 class AnalysisContextInputsUnavailableError(Exception):

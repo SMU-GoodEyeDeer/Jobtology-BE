@@ -1,8 +1,10 @@
+import re
 from dataclasses import dataclass, field
 from typing import ClassVar, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from jobtology_be.application.requirement_metadata import RequirementMetadataLookup
 from jobtology_be.corpus.neo4j_client import Neo4jQueryResult, Neo4jReadClient, Neo4jReadQuery
 from jobtology_be.corpus.neo4j_queries import (
     ROLE_EVIDENCE_NCS_FIELDS,
@@ -108,6 +110,10 @@ class EvidenceNode(BaseModel):
     label: str
     detail: str | None = None
     weight: int | None = None
+    ncs_category: str | None = None
+    ncs_base_code: str | None = None
+    requirement_key: str | None = None
+    qualification_code: str | None = None
 
 
 class EvidenceEdge(BaseModel):
@@ -142,6 +148,7 @@ def build_role_evidence_graph(
     role: RolePolicy,
     ncs_rows: tuple[_NcsOccupationRow, ...],
     onet_rows: tuple[_OnetOccupationRow, ...],
+    requirement_metadata: RequirementMetadataLookup | None = None,
 ) -> RoleEvidenceGraph:
     root = f"role:{role.occupation_id}"
     graph = _GraphBuilder({root: EvidenceNode(id=root, kind="role", label=role.name)})
@@ -150,6 +157,7 @@ def build_role_evidence_graph(
         graph.link(root, EvidenceNode(
             id=ncs.id, kind="ncs_occupation", label=ncs.name,
             detail=f"NCS {ncs.code} · 연결 공고 {ncs.postings:,}건", weight=ncs.postings,
+            ncs_category=ncs.code,
         ), EvidenceEdge(source=root, target=ncs.id, kind="MAPPED_TO"))
         if ncs.postings > 0:
             posting_id = f"postings:{ncs.code}"
@@ -157,12 +165,22 @@ def build_role_evidence_graph(
             graph.link(ncs.id, EvidenceNode(
                 id=posting_id, kind="posting_evidence", label=f"공고 {ncs.postings:,}건",
                 detail="\n".join(titles) or None, weight=ncs.postings,
+                ncs_category=ncs.code,
             ), EvidenceEdge(source=ncs.id, target=posting_id, kind="EVIDENCED_BY", weight=ncs.postings))
         for unit in ncs.competencies:
             reviewed = f" · 검토된 공고 연결 {unit.links}건" if unit.links else ""
+            match = re.fullmatch(r"([0-9]{10})(?:_[A-Za-z0-9.]+)?", unit.code)
+            base_code = match[1] if match else None
+            candidate_key = f"{role.occupation_id}:{base_code}" if base_code else None
+            metadata = requirement_metadata.lookup(candidate_key) if (
+                requirement_metadata is not None and candidate_key is not None
+            ) else None
             graph.link(ncs.id, EvidenceNode(
                 id=unit.id, kind="ncs_competency", label=unit.name,
                 detail=f"NCS 능력단위 {unit.code}{reviewed}", weight=unit.links,
+                ncs_base_code=base_code,
+                requirement_key=candidate_key if metadata is not None
+                and metadata.ncs_base_code == base_code else None,
             ), EvidenceEdge(source=ncs.id, target=unit.id, kind="HAS_COMPETENCY"))
         for qualification in ncs.qualifications:
             graph.link(ncs.id, _qualification_node(qualification), EvidenceEdge(
@@ -193,6 +211,7 @@ def _qualification_node(qualification: _Qualification) -> EvidenceNode:
         id=qualification.id, kind="qualification", label=qualification.name,
         detail=f"Q-Net 자격 {qualification.code} · 이 직무 능력단위 {qualification.units}개 포함{schedule}",
         weight=qualification.units,
+        qualification_code=qualification.code,
     )
 
 
@@ -225,6 +244,7 @@ def _records[RowT: _Row](
 class Neo4jRoleEvidenceGraph:
     policy: ProductRolePolicy
     client: Neo4jReadClient = field(repr=False)
+    requirement_metadata: RequirementMetadataLookup | None = field(default=None, repr=False)
 
     async def graph(self, occupation_id: str) -> RoleEvidenceGraph | None:
         role = next((r for r in self.policy.roles if r.occupation_id == occupation_id), None)
@@ -254,4 +274,4 @@ class Neo4jRoleEvidenceGraph:
             onet_rows = _records(
                 onet_result, ROLE_EVIDENCE_ONET_FIELDS, _OnetOccupationRow, len(onet_codes)
             )
-        return build_role_evidence_graph(role, ncs_rows, onet_rows)
+        return build_role_evidence_graph(role, ncs_rows, onet_rows, self.requirement_metadata)

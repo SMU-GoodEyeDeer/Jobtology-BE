@@ -367,6 +367,87 @@ def test_role_projection_still_rejects_unknown_explicit_capability_ids(
         assert result['error_code'] == 'INVALID_INPUT'
 
 
+def test_profile_can_clear_optional_education_fields_without_inventing_a_major(
+    acceptance_database_url: str, catalog_path: Path,
+) -> None:
+    with TestClient(_app(acceptance_database_url, catalog_path)) as client:
+        saved = client.put("/api/v1/me/profile", json={
+            "expected_profile_version": 1, "major_raw": "Computer science",
+            "major_concept_id": "computer-science", "year": 3,
+            "enrollment_status": "ENROLLED", "expected_graduation_on": "2028-02-29",
+        })
+        assert saved.status_code == 200
+        cleared = client.put("/api/v1/me/profile", json={
+            "expected_profile_version": saved.json()["profile_version"], "major_raw": "",
+            "major_concept_id": None, "year": None,
+            "enrollment_status": None, "expected_graduation_on": None,
+        })
+        assert cleared.status_code == 200, cleared.text
+        profile = client.get("/api/v1/me/profile").json()
+        assert profile["major_raw"] == ""
+        assert profile["profile_version"] == cleared.json()["profile_version"]
+        for field in ("major_concept_id", "year", "enrollment_status", "expected_graduation_on"):
+            assert profile[field] is None
+        stale = client.put("/api/v1/me/profile", json={
+            "expected_profile_version": saved.json()["profile_version"], "major_raw": "stale",
+        })
+        assert stale.status_code == 409
+        assert client.get("/api/v1/me/profile").json() == profile
+
+
+def test_added_and_deleted_capability_persists_and_changes_current_analysis(
+    acceptance_database_url: str, catalog_path: Path,
+) -> None:
+    with TestClient(_app(acceptance_database_url, catalog_path)) as client:
+        created_goal = client.post("/api/v1/me/goals", json=_goal_payload(1))
+        assert created_goal.status_code == 201
+        goal_id = created_goal.json()["goal_id"]
+
+        def analyze_status() -> str:
+            request_id = _analyse(client, goal_id)
+            anyio.run(_drain, acceptance_database_url, catalog_path)
+            result = client.get(f"/api/v1/recomputations/{request_id}").json()
+            assert result["state"] == "COMPLETED", result
+            analysis = client.get(f"/api/v1/analyses/{result['analysis_id']}").json()
+            return analysis["results"]["requirements"][0]["status"]
+
+        assert analyze_status() == "UNMET"
+        created = client.post("/api/v1/me/capabilities", json={
+            "expected_profile_version": _version(client),
+            "category": "LANGUAGE_TOOL", "raw_text": "backend",
+        })
+        assert created.status_code == 201
+        capability_id = created.json()["capability_id"]
+        detail_url = f"/api/v1/me/capabilities/{capability_id}"
+        detail = client.get(detail_url).json()
+        assert detail["raw_text"] == "backend"
+        assert detail["category"] == "LANGUAGE_TOOL"
+        assert detail["lifecycle"] == "ACTIVE"
+        assert client.get("/api/v1/me/capabilities").json()["items"] == [detail]
+        assert analyze_status() == "SATISFIED"
+
+        deleted = client.request("DELETE", detail_url, json={
+            "expected_profile_version": _version(client),
+        })
+        assert deleted.status_code == 200
+        assert deleted.json()["profile_version"] == _version(client)
+        assert client.get("/api/v1/me/capabilities").json()["items"] == []
+        assert client.get(detail_url).status_code == 404
+        assert analyze_status() == "UNMET"
+
+        async def lifecycle() -> str:
+            database = Database.create(acceptance_database_url)
+            try:
+                async with database.sessions() as session:
+                    return await session.scalar(select(s.user_capabilities.c.lifecycle).where(
+                        s.user_capabilities.c.id == UUID(capability_id),
+                    ))
+            finally:
+                await database.dispose()
+
+        assert anyio.run(lifecycle) == "REVOKED"
+
+
 def test_timezone_edit_carries_local_calendar_when_analysis_reuses_pending_request(
     acceptance_database_url: str, catalog_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
