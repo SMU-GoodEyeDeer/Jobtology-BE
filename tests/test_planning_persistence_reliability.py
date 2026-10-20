@@ -64,7 +64,8 @@ async def _create_goal(database: Database) -> tuple[UUID, UUID]:
 async def _ready_proposal(database: Database) -> tuple[UUID, UUID, WorkerPublication]:
     user_id, goal_id = await _create_goal(database)
     publication = await process_recompute(
-        str(database.engine.url), user_id, 2, goal_id,
+        # str(URL) masks passwords and cannot be reused as a connection string.
+        database.engine.url.render_as_string(hide_password=False), user_id, 2, goal_id,
         target_by=datetime.now(UTC) + timedelta(days=30),
     )
     return user_id, goal_id, publication
