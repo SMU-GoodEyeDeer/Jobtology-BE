@@ -282,7 +282,8 @@ def test_plan_recovers_a_partial_route_when_the_first_solve_times_out(monkeypatc
             candidate("small", frozenset({"small"}), estimated_hours=1),
         ),
         required=frozenset({"big", "small"}),
-        slots=calendar(3),
+        slots=calendar(3, 3),
+        availability=(CandidateAvailability('big', REFERENCE_TIME, REFERENCE_TIME + timedelta(hours=2)),),
     )
 
     result = CpSatRoutePlanner().plan(request)
@@ -325,3 +326,26 @@ def test_long_horizon_route_keeps_all_required_effort_without_overlap() -> None:
     effort = sum(candidate.estimated_hours for candidate in candidates)
     assert len(allocations) == len(set(allocations)) == effort
     assert max(step.planned_end_at for step in result.scheduled_steps) == request.calendar[effort - 1].ends_at
+
+
+def test_capacity_preflight_skips_impossible_full_model_and_keeps_partial_status(monkeypatch):
+    builds = []
+    actual = cp_sat_planner.build_route_model
+
+    def build(request, candidates, *, require_required_coverage):
+        builds.append(require_required_coverage)
+        return actual(request, candidates, require_required_coverage=require_required_coverage)
+
+    monkeypatch.setattr(cp_sat_planner, 'build_route_model', build)
+    result = CpSatRoutePlanner().plan(problem(
+        (candidate('big', frozenset({'big'}), estimated_hours=3),
+         candidate('small', frozenset({'small'}))),
+        required=frozenset({'big', 'small'}), slots=calendar(3),
+    ))
+    assert builds == [False]
+    assert result.feasibility is RouteFeasibility.PARTIAL
+    assert result.trace.solver_runs[0].skipped_reason == 'REQUIRED_EFFORT_EXCEEDS_CALENDAR_CAPACITY'
+    assert result.trace.solver_runs[0].status == 'INFEASIBLE'
+    assert result.trace.solver_runs[1].phase == 'PARTIAL'
+    assert result.trace.solver_runs[1].status == 'OPTIMAL'
+    assert result.trace.solver_runs[1].objective_value == result.trace.solver_runs[1].best_objective_bound

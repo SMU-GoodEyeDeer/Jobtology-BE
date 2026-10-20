@@ -1,7 +1,8 @@
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, FastAPI, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from jobtology_be.api.accounts import router as accounts_router
@@ -30,6 +31,21 @@ class HealthResponse(BaseModel):
 def liveness() -> HealthResponse:
     """Process liveness only; this does not assert database readiness."""
     return HealthResponse(status="ok")
+
+
+@router.get(
+    "/health/ready",
+    response_model=HealthResponse,
+    responses={503: {"model": HealthResponse}},
+    tags=["health"],
+    summary="Check service readiness",
+    description="Checks database access, the configured role catalog and background worker progress.",
+)
+async def readiness(request: Request) -> JSONResponse:
+    state = getattr(request.app.state, "readiness", None)
+    ready = state is not None and await state.ready()
+    return JSONResponse({"status": "ok" if ready else "unavailable"},
+                        status_code=200 if ready else 503)
 
 
 def create_api_shell(

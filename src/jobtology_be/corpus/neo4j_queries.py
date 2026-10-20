@@ -21,6 +21,9 @@ OCCUPATION_FIELDS: Final = (
     "name",
     "name_source_record_id",
     "name_source_run_id",
+    "scheme_id",
+    "source_release_id",
+    "source_uri",
 )
 PUBLICATION_FIELDS: Final = ("id", "publication_id", "postings", "state")
 ALIGNMENT_FIELDS: Final = (
@@ -53,9 +56,13 @@ ENRICHMENT_FIELDS: Final = (
 
 _OCCUPATIONS_STATEMENT: Final = (
     "MATCH (occupation:entity:occupation) WHERE NOT occupation:ontologyObject "
+    "AND (NOT occupation:onetCatalogObject OR occupation.current = true) "
     "RETURN occupation.id AS id, occupation.code AS code, occupation.kind AS kind, "
     "occupation.name AS name, occupation.name_source_record_id AS name_source_record_id, "
-    "occupation.name_source_run_id AS name_source_run_id "
+    "occupation.name_source_run_id AS name_source_run_id, "
+    "CASE WHEN occupation:onetCatalogObject THEN 'ONET' ELSE 'NCS' END AS scheme_id, "
+    "CASE WHEN occupation:onetCatalogObject THEN occupation.release_id END AS source_release_id, "
+    "CASE WHEN occupation:onetCatalogObject THEN occupation.source_uri END AS source_uri "
     "ORDER BY occupation.code, occupation.id SKIP $offset LIMIT $limit"
 )
 _PUBLICATIONS_STATEMENT: Final = (
@@ -108,6 +115,8 @@ ROLE_EVIDENCE_NCS_FIELDS: Final = (
     "competencies",
     "onet",
     "qualifications",
+    "evidence_sources",
+    "excluded_associations",
 )
 ROLE_EVIDENCE_ONET_FIELDS: Final = ("id", "code", "name", "skills", "technologies")
 
@@ -117,9 +126,11 @@ ROLE_EVIDENCE_ONET_FIELDS: Final = ("id", "code", "name", "skills", "technologie
 # qualifications covering the most of its units with their exam sessions.
 _ROLE_EVIDENCE_NCS_STATEMENT: Final = (
     "MATCH (o:entity:occupation) WHERE o.code IN $codes AND NOT o:ontologyObject "
-    "CALL (o) { OPTIONAL MATCH (o)<-[:INFERRED_NCS_OCCUPATION]-(p:jobPosting) "
+    "CALL (o) { OPTIONAL MATCH (o)<-[r:INFERRED_NCS_OCCUPATION]-(p:jobPosting) "
+    "WHERE r.job_run_id = p.source_run_id AND r.ncs_run_id = o.source_run_id "
     "RETURN count(DISTINCT p) AS postings } "
-    "CALL (o) { MATCH (o)<-[:INFERRED_NCS_OCCUPATION]-(p:jobPosting) "
+    "CALL (o) { MATCH (o)<-[r:INFERRED_NCS_OCCUPATION]-(p:jobPosting) "
+    "WHERE r.job_run_id = p.source_run_id AND r.ncs_run_id = o.source_run_id "
     "WITH p ORDER BY p.source_created_at DESC, p.id LIMIT $posting_limit "
     "RETURN collect({id: p.id, title: p.title, source_id: p.source_id}) AS sample_postings } "
     "CALL (o) { MATCH (c:entity:ncsCompetency)-[:CLASSIFIED_AS]->(o) "
@@ -131,10 +142,20 @@ _ROLE_EVIDENCE_NCS_STATEMENT: Final = (
     "WITH latest, count(a) AS links ORDER BY links DESC, latest.code LIMIT $competency_limit "
     "RETURN collect({id: latest.id, code: latest.code, name: latest.name, links: links}) "
     "AS competencies } "
-    "CALL (o) { MATCH (o)<-[:INFERRED_NCS_OCCUPATION]-(p:jobPosting)"
-    "-[:INFERRED_ONET_OCCUPATION]->(x:onetCatalogObject:occupation) "
-    "WITH x, count(DISTINCT p) AS shared ORDER BY shared DESC, x.code LIMIT $onet_limit "
-    "RETURN collect({id: x.id, code: x.code, name: x.name, shared: shared}) AS onet } "
+    "CALL (o) { MATCH (o)<-[r:INFERRED_NCS_OCCUPATION]-(p:jobPosting)"
+    "-[a:INFERRED_ONET_OCCUPATION]->(x:onetCatalogObject:occupation) "
+    "WHERE r.job_run_id = p.source_run_id AND r.ncs_run_id = o.source_run_id "
+    "AND a.source_facts_sha256 = p.source_facts_sha256 "
+    "AND a.occupation_content_hash = x.content_hash AND x.current = true "
+    "WITH x, count(DISTINCT p) AS shared, "
+    "collect(DISTINCT coalesce(a.review_status, 'UNREVIEWED')) AS review_statuses, "
+    "collect(DISTINCT coalesce(a.stage, 'STAGING')) AS stages, "
+    "collect(DISTINCT p.source_run_id)[..$provenance_limit] AS source_run_ids, "
+    "collect(DISTINCT a.release_id)[..$provenance_limit] AS catalog_pins "
+    "ORDER BY shared DESC, x.code LIMIT $onet_limit "
+    "RETURN collect({id: x.id, code: x.code, name: x.name, shared: shared, "
+    "review_statuses: review_statuses, stages: stages, source_run_ids: source_run_ids, "
+    "catalog_pins: catalog_pins}) AS onet } "
     "CALL (o) { MATCH (c:entity:ncsCompetency)-[:CLASSIFIED_AS]->(o) WHERE NOT c:ontologyObject "
     "MATCH (c)-[:QUALIFICATION_MAPPING]->(q:entity:qualification) "
     "WITH q, count(DISTINCT left(c.code, 10)) AS units "
@@ -145,13 +166,28 @@ _ROLE_EVIDENCE_NCS_STATEMENT: Final = (
     "ORDER BY units DESC, q.code "
     "RETURN collect({id: q.id, code: q.code, name: q.name, units: units, sessions: sessions, "
     "latest_session: latest_session}) AS qualifications } "
+    "CALL (o) { MATCH (o)<-[r:INFERRED_NCS_OCCUPATION]-(p:jobPosting) "
+    "WITH p.source_id AS source_id, r.job_run_id AS source_run_id, r.ncs_run_id AS catalog_run_id, "
+    "coalesce(r.job_run_id = p.source_run_id, false) AS source_current, "
+    "coalesce(r.ncs_run_id = o.source_run_id, false) AS catalog_current, "
+    "coalesce(r.review_status, 'UNREVIEWED') AS review_status, "
+    "coalesce(r.stage, 'STAGING') AS stage, coalesce(r.accepted, false) AS accepted, "
+    "count(DISTINCT p) AS postings "
+    "WITH * ORDER BY source_id, source_run_id, catalog_run_id, review_status "
+    "RETURN collect({source_id: source_id, source_run_id: source_run_id, catalog_run_id: catalog_run_id, "
+    "source_current: source_current, catalog_current: catalog_current, review_status: review_status, "
+    "stage: stage, accepted: accepted, postings: postings})[..$provenance_limit] AS evidence_sources } "
+    "CALL (o) { OPTIONAL MATCH (o)<-[r:INFERRED_NCS_OCCUPATION]-(p:jobPosting) "
+    "WHERE NOT coalesce(r.job_run_id = p.source_run_id AND r.ncs_run_id = o.source_run_id, false) "
+    "RETURN count(r) AS excluded_associations } "
     "RETURN o.id AS id, o.code AS code, o.name AS name, postings, sample_postings, "
-    "competencies, onet, qualifications ORDER BY o.code LIMIT $limit"
+    "competencies, onet, qualifications, evidence_sources, excluded_associations "
+    "ORDER BY o.code LIMIT $limit"
 )
 # Per O*NET occupation: most important essential skills and hot technologies
 # (in-demand first, then those hot across the most occupations).
 _ROLE_EVIDENCE_ONET_STATEMENT: Final = (
-    "MATCH (x:onetCatalogObject:occupation) WHERE x.code IN $codes "
+    "MATCH (x:onetCatalogObject:occupation) WHERE x.id IN $ids AND x.current = true "
     "CALL (x) { MATCH (x)-[r:ONET_ESSENTIAL_SKILL]->(e:onetDetail) "
     "WHERE r.scale_name = 'Importance' "
     "WITH e, r ORDER BY r.data_value DESC, e.element_name LIMIT $skill_limit "

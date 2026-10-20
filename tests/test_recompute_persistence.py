@@ -10,7 +10,7 @@ import anyio
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import insert, text
+from sqlalchemy import insert, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -21,7 +21,7 @@ from jobtology_be.infrastructure.persistence.contracts import (
     UserCreate,
 )
 from jobtology_be.infrastructure.persistence.database import Database
-from jobtology_be.infrastructure.persistence.schema import user_state_events
+from jobtology_be.infrastructure.persistence.schema import recompute_requests, user_state_events
 from jobtology_be.infrastructure.persistence.store import PostgresApplicationStore
 
 ACCEPTANCE_DATABASE_URL_ENV: Final = "JOBTOLOGY_ACCEPTANCE_DATABASE_URL"
@@ -273,7 +273,14 @@ async def _exercise_recompute_lifecycle(database_url: str) -> None:
         reclaimed_work_items = await store.claim_recompute_work(limit=1)
         assert len(reclaimed_work_items) == 1
         reclaimed_work_item = reclaimed_work_items[0]
-        await store.fail_recompute(reclaimed_work_item, "SOLVER_TIMEOUT")
+        await store.fail_recompute(reclaimed_work_item, "SOLVER_TIMEOUT", failure_details={
+            'solver_seed': 20260904, 'solver_runs': [{'phase': 'FULL', 'status': 'UNKNOWN'}],
+        })
+        async with database.sessions() as session:
+            details = await session.scalar(select(recompute_requests.c.failure_details).where(
+                recompute_requests.c.id == reclaimed_work_item.request_id,
+            ))
+        assert details['solver_runs'][0]['status'] == 'UNKNOWN'
         async with database.sessions() as session:
             request_row = (
                 await session.execute(

@@ -18,6 +18,7 @@ from jobtology_be.planning.solver_models import (
     RouteRejection,
     ScheduledRouteStep,
     SlotAllocation,
+    SolverRunTelemetry,
     StepSelectionReason,
     objective_snapshot,
 )
@@ -94,6 +95,7 @@ def planning_result(
     scheduled_steps: tuple[ScheduledRouteStep, ...],
     rejections: tuple[RouteRejection, ...],
     diagnostic: PartialRouteDiagnostic | None,
+    solver_runs: tuple[SolverRunTelemetry, ...] = (),
 ) -> PlanningResult:
     trace = RoutePlanningTrace(
         analysis_id=problem.analysis_id,
@@ -116,6 +118,7 @@ def planning_result(
         optimization_status=status,
         rejections=rejections,
         partial_route_diagnostic=diagnostic,
+        solver_runs=solver_runs,
         planning_policy_version=problem.planning_policy_version,
         planning_policy_decisions=problem.planning_policy_decisions,
         foundational_priority_action_ids=tuple(sorted(problem.foundational_priority_action_ids)),

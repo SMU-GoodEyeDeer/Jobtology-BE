@@ -1,5 +1,5 @@
 from hashlib import sha256
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 from pydantic import (
     BaseModel,
@@ -89,7 +89,22 @@ class Neo4jCatalogNode(_SourceRecord):
 
 
 class Neo4jOccupationNode(Neo4jCatalogNode):
-    pass
+    # O*NET has release/URI provenance rather than ingestion-record name lineage.
+    # Keep the NCS contract strict instead of synthesizing ingestion IDs for it.
+    name_source_record_id: StrictStr | None = Field(default=None, exclude=True, repr=False)
+    name_source_run_id: StrictStr | None = Field(default=None, exclude=True, repr=False)
+    scheme_id: Literal["NCS", "ONET"] = "NCS"
+    source_release_id: StrictStr | None = None
+    source_uri: StrictStr | None = None
+
+    @model_validator(mode="after")
+    def require_source_provenance(self) -> "Neo4jOccupationNode":
+        if self.scheme_id == "NCS":
+            if not self.name_source_record_id or not self.name_source_run_id:
+                raise ValueError("NCS occupation name lineage is required")
+        elif not self.source_release_id or not self.source_uri:
+            raise ValueError("O*NET occupation release and source URI are required")
+        return self
 
 
 class Neo4jNcsCompetencyNode(Neo4jCatalogNode):

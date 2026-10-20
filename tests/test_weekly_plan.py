@@ -452,9 +452,10 @@ def test_editing_a_widely_interleaved_solver_schedule_staggers_activities_but_re
     assert max(step.end_week - step.start_week for step in result.steps) < 10
     original = weekly_plan.build_weekly_plan(context(), inputs)
     assert sum(step.start_week == 1 for step in original.steps) == 10
-    assert all(step.end_week >= 21 for step in original.steps)
+    assert all(step.end_week >= 20 for step in original.steps)
     assert original.schedule_source == 'SOLVER'
-    assert original.steps[0].end_date == inputs[0].step.planned_end.astimezone(ZoneInfo('Asia/Seoul')).date()
+    assert original.steps[0].end_date == (inputs[0].step.planned_end - timedelta(microseconds=1)).astimezone(ZoneInfo('Asia/Seoul')).date()
+    assert original.steps[0].planned_end_at == inputs[0].step.planned_end
 
 
 def _spaced_solver_inputs(start_hours, *, weekly_hours=4):
@@ -538,3 +539,83 @@ def test_weekly_plan_exposes_persisted_project_title_and_completion_criteria():
     assert step.title == project.step.title
     assert step.completion_criteria == criteria
     assert step.name == '개발자 환경 구축'
+
+
+def test_solver_hour_allocations_are_projected_exactly_even_when_interleaved():
+    steps = solver_steps()
+    original = context()
+    start = min(step.step.planned_start for step in steps)
+    proposal = replace(original, step_hours={steps[0].step.step_key: 3, steps[1].step.step_key: 2},
+                       step_allocations={
+                           steps[0].step.step_key: (start, start + timedelta(hours=2), start + timedelta(days=7)),
+                           steps[1].step.step_key: (start + timedelta(hours=1), start + timedelta(days=7, hours=1)),
+                       })
+    plan = weekly_plan.build_weekly_plan(proposal, steps)
+    assert [(item.week, item.hours) for item in plan.steps[0].week_allocations] == [(1, 2), (2, 1)]
+    assert [(item.week, item.hours) for item in plan.steps[1].week_allocations] == [(1, 1), (2, 1)]
+
+
+def test_custom_reschedule_retains_completed_history_and_schedules_remaining_work_in_future():
+    steps = production_steps()[:2]
+    original = context()
+    old = weekly_plan.PlanOverrides(weekly_hours=5, rest_weeks=(), order=(), hours={},
+                                    saved_at=datetime(2026, 10, 19, tzinfo=UTC))
+    old_plan = weekly_plan.build_weekly_plan(original, steps, old)
+    completed_steps = (replace(steps[0], step=replace(steps[0].step, state='COMPLETED')), steps[1])
+    changed = weekly_plan.PlanOverrides(weekly_hours=12, rest_weeks=(1,), order=(), hours={},
+                                        saved_at=datetime(2026, 12, 1, tzinfo=UTC),
+                                        step_schedules={str(item.step_id): item for item in old_plan.steps})
+    plan = weekly_plan.build_weekly_plan(original, completed_steps, changed)
+    before, after = old_plan.steps[0], plan.steps[0]
+    assert (before.start_date, before.end_date, before.hours, before.week_allocations) == (
+        after.start_date, after.end_date, after.hours, after.week_allocations)
+    assert plan.steps[1].start_date >= date(2026, 12, 1)
+    # GET does not silently shift a saved plan as the wall clock advances.
+    later = weekly_plan.build_weekly_plan(replace(original, as_of=datetime(2027, 1, 1, tzinfo=UTC)), completed_steps, changed)
+    assert later == plan
+
+
+def test_exclusive_midnight_end_does_not_inflate_completion_day_or_week():
+    local = ZoneInfo('Asia/Seoul')
+    starts = datetime(2026, 10, 25, 23, tzinfo=local)
+    ends = datetime(2026, 10, 26, 0, tzinfo=local)
+    item = production_steps()[0]
+    item = replace(item, step=replace(item.step, planned_start=starts, planned_end=ends))
+    proposal = replace(context(), target_date=date(2026, 10, 25),
+                       step_hours={item.step.step_key: 1}, step_allocations={item.step.step_key: (starts,)})
+    plan = weekly_plan.build_weekly_plan(proposal, (item,))
+    assert plan.completion_date == date(2026, 10, 25)
+    assert plan.steps[0].start_week == plan.steps[0].end_week == 1
+    assert not plan.deadline_exceeded
+    assert plan.steps[0].planned_end_at == ends
+    assert [(part.week, part.hours) for part in plan.steps[0].week_allocations] == [(1, 1)]
+
+
+def test_new_custom_schedule_starts_in_future_even_without_completed_tasks():
+    original = context()
+    now = datetime(2026, 12, 1, tzinfo=UTC)
+    overrides = weekly_plan.PlanOverrides(weekly_hours=12, rest_weeks=(), order=(), hours={}, saved_at=None)
+    plan = weekly_plan.build_weekly_plan(replace(original, as_of=now), production_steps()[:2], overrides)
+    assert min(step.planned_start_at for step in plan.steps) >= now
+    assert min(step.start_date for step in plan.steps) >= now.astimezone(ZoneInfo('Asia/Seoul')).date()
+    recommended = weekly_plan.build_weekly_plan(replace(original, as_of=now), production_steps()[:2])
+    assert min(step.start_date for step in recommended.steps) < date(2026, 12, 1)
+
+
+def test_completed_solver_hours_still_consume_capacity_in_the_current_week():
+    local = ZoneInfo('Asia/Seoul')
+    start = datetime(2026, 10, 19, 8, tzinfo=local)
+    first, second = production_steps()[:2]
+    first = replace(first, step=replace(first.step, state='COMPLETED', planned_start=start,
+                                       planned_end=start + timedelta(hours=5)))
+    second = replace(second, step=replace(second.step, planned_start=start + timedelta(hours=5),
+                                         planned_end=start + timedelta(days=7, hours=5)))
+    proposal = replace(context(), recommended_weekly_hours=12, as_of=start + timedelta(hours=5),
+                       step_hours={first.step.step_key: 5, second.step.step_key: 10},
+                       step_allocations={first.step.step_key: tuple(start + timedelta(hours=i) for i in range(5))})
+    overrides = weekly_plan.PlanOverrides(weekly_hours=10, rest_weeks=(), order=(), hours={},
+                                          saved_at=start + timedelta(hours=5))
+    plan = weekly_plan.build_weekly_plan(proposal, (first, second), overrides)
+    assert [(part.week, part.hours) for part in plan.steps[0].week_allocations] == [(1, 5)]
+    assert [(part.week, part.hours) for part in plan.steps[1].week_allocations] == [(1, 5), (2, 5)]
+    assert sum(part.hours for step in plan.steps for part in step.week_allocations if part.week == 1) == 10

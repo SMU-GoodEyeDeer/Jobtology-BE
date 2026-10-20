@@ -95,6 +95,7 @@ def test_list_occupations_rejects_duplicate_source_identities() -> None:
                         "First source label",
                         "source-record-1",
                         "source-run-1",
+                        "NCS", None, None,
                     ),
                     (
                         "occupation-node-1",
@@ -103,6 +104,7 @@ def test_list_occupations_rejects_duplicate_source_identities() -> None:
                         "Second source label",
                         "source-record-2",
                         "source-run-2",
+                        "NCS", None, None,
                     ),
                 ),
                 query_type="r",

@@ -208,6 +208,30 @@ async def _exercise_atomic_submission(database_url: str) -> None:
         )
         assert retried.request_id != request.request_id
         assert retried.state == "PENDING"
+        async with database.sessions.begin() as session:
+            await session.execute(text("UPDATE recompute_requests SET state = 'READY' WHERE id = :id"),
+                                  {"id": retried.request_id})
+        reused = await store.submit_analysis_recompute(replace(submission, dedupe_key='reuse-ready'))
+        assert reused.request_id == retried.request_id
+        refreshed = await store.submit_analysis_recompute(replace(
+            submission, dedupe_key='manual-refresh', payload={'source': 'analysis-api', 'refresh': True},
+        ))
+        assert refreshed.request_id != retried.request_id
+        repeated_refresh = await store.submit_analysis_recompute(replace(
+            submission, dedupe_key='repeat-manual-refresh', payload={'source': 'analysis-api', 'refresh': True},
+        ))
+        assert repeated_refresh.request_id == refreshed.request_id
+        release_context = dict(submission.context)
+        release_context['snapshot_selection'] = dict(release_context['snapshot_selection'], release_id='new-release')
+        changed_release = await store.submit_analysis_recompute(replace(
+            submission, dedupe_key='new-release', context=release_context,
+        ))
+        assert changed_release.request_id != refreshed.request_id
+        expired_context = dict(release_context, reference_at='2026-09-23T12:00:00+00:00')
+        expired = await store.submit_analysis_recompute(replace(
+            submission, dedupe_key='next-reference-day', context=expired_context,
+        ))
+        assert expired.request_id != changed_release.request_id
     finally:
         await database.dispose()
 

@@ -42,6 +42,12 @@ class ProductRoleDraft:
         snapshots = TypeAdapter(list[dict[str, JsonValue]]).validate_json(self._snapshot_json)
         release_id = f"product-roles-v1-{self.digest}"
         for snapshot in snapshots:
+            requirements = snapshot.get("requirements", [])
+            keys = {item["requirement_key"] for item in requirements if isinstance(item, dict)}
+            snapshot["requirement_metadata"] = TypeAdapter(dict[str, JsonValue]).validate_python({
+                key: TypeAdapter(RequirementMetadata).dump_python(value, mode="json")
+                for key, value in self.metadata.items() if key in keys
+            })
             snapshot["release"] = {
                 "release_id": release_id, "state": "PUBLISHED",
                 "reviewed_at": approval.reviewed_at.isoformat(),

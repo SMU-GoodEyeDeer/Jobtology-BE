@@ -105,6 +105,7 @@ def _pack(
     starts_at: datetime,
     start: date,
     timezone: ZoneInfo,
+    fixed: Mapping[UUID, _Scheduled] | None = None,
 ) -> dict[UUID, _Scheduled]:
     """Stagger ready activities in a small rolling window, sharing real hourly slots.
 
@@ -116,16 +117,25 @@ def _pack(
     weekly = overrides.weekly_hours if overrides else context.recommended_weekly_hours
     rests = frozenset(overrides.rest_weeks) if overrides else frozenset()
     by_id = {item.step.step_id: item for item in ordered}
+    fixed = fixed or {}
     remaining = {item.step.step_id: overrides.hours.get(str(item.step.step_id), _hours(context, item))
-                 if overrides else _hours(context, item) for item in ordered}
+                 if overrides else _hours(context, item) for item in ordered
+                 if item.step.step_id not in fixed}
     first: dict[UUID, datetime] = {}
     last: dict[UUID, datetime] = {}
-    allocations: dict[UUID, dict[int, int]] = {key: {} for key in by_id}
+    allocations: dict[UUID, dict[int, int]] = {key: {} for key in remaining}
     preferred_starts = _preferred_start_offsets(context, ordered, overrides, starts_at, timezone)
-    cursor = starts_at.astimezone(UTC)
+    reschedule_at = overrides.saved_at if overrides and overrides.saved_at else context.as_of
+    reschedule_future = bool(fixed) or (overrides is not None and context.as_of is not None)
+    future_start = max(starts_at, reschedule_at or starts_at,
+                       max((item.ends_at for item in fixed.values()), default=starts_at)) if reschedule_future else starts_at
+    cursor = future_start.astimezone(UTC)
     rounded = cursor.replace(minute=0, second=0, microsecond=0)
     cursor = rounded if rounded == cursor else rounded + timedelta(hours=1)
     used_by_week: dict[int, int] = {}
+    for schedule in fixed.values():
+        for allocation in schedule.allocations:
+            used_by_week[allocation.week] = used_by_week.get(allocation.week, 0) + allocation.hours
     positions = {item.step.step_id: index for index, item in enumerate(ordered)}
     waiting = {item.step.step_id: {
         key for key in item.step.prerequisite_step_ids
@@ -180,9 +190,9 @@ def _pack(
             ready = deque(sorted(ready, key=positions.__getitem__))
         used_by_week[week] = used_by_week.get(week, 0) + 1
         cursor = end
-    return {key: _Scheduled(first[key], last[key], tuple(
+    return {**fixed, **{key: _Scheduled(first[key], last[key], tuple(
         WeeklyPlanAllocation(week=week, hours=hours) for week, hours in weeks.items()
-    )) for key, weeks in allocations.items()}
+    )) for key, weeks in allocations.items()}}
 
 
 def _has_solver_dates(item: PlanStepInput) -> bool:
@@ -198,9 +208,11 @@ def _dates(
     step = item.step
     if use_solver and _has_solver_dates(item):
         assert step.planned_start is not None and step.planned_end is not None
-        return step.planned_start.astimezone(timezone).date(), step.planned_end.astimezone(timezone).date()
+        return (step.planned_start.astimezone(timezone).date(),
+                _last_occupied_date(step.planned_start, step.planned_end, timezone))
     schedule = packed[step.step_id]
-    return schedule.starts_at.astimezone(timezone).date(), schedule.ends_at.astimezone(timezone).date()
+    return (schedule.starts_at.astimezone(timezone).date(),
+            _last_occupied_date(schedule.starts_at, schedule.ends_at, timezone))
 
 
 def _unmet(
@@ -228,6 +240,10 @@ def build_weekly_plan(
 ) -> WeeklyPlanResponse:
     """Retain immutable solver dates and progress; validate customizations explicitly."""
     timezone = ZoneInfo(context.timezone)
+    version = overrides.version if overrides else 0
+    snapshots = overrides.step_schedules if overrides else {}
+    if overrides is not None and not overrides.is_customized:
+        overrides = None
     recommended = tuple(sorted(steps, key=lambda item: (item.step.position, str(item.step.step_id))))
     by_id = {item.step.step_id: item for item in recommended}
     custom_order = tuple(UUID(key) for key in overrides.order) if overrides else ()
@@ -249,8 +265,26 @@ def build_weekly_plan(
     start -= timedelta(days=start.weekday())
     missing_dates = tuple(item.step.step_id for item in recommended if not _has_solver_dates(item))
     recommended_packed = _pack(context, recommended, None, starts_at, start, timezone) if missing_dates else {}
-    packed = (_pack(context, ordered, overrides, starts_at, start, timezone)
-              if overrides else recommended_packed)
+    fixed: dict[UUID, _Scheduled] = {}
+    for item in recommended:
+        if item.step.state != 'COMPLETED':
+            continue
+        snapshot = snapshots.get(str(item.step.step_id))
+        if snapshot is not None:
+            fixed[item.step.step_id] = _Scheduled(
+                snapshot.planned_start_at or datetime.combine(snapshot.start_date, datetime.min.time(), timezone),
+                snapshot.planned_end_at or datetime.combine(snapshot.end_date + timedelta(days=1), datetime.min.time(), timezone),
+                snapshot.week_allocations,
+            )
+        elif _has_solver_dates(item):
+            assert item.step.planned_start is not None and item.step.planned_end is not None
+            fixed[item.step.step_id] = _Scheduled(
+                item.step.planned_start, item.step.planned_end, _exact_allocations(context, item, start, timezone),
+            )
+        else:
+            fixed[item.step.step_id] = recommended_packed[item.step.step_id]
+    packed = (_pack(context, ordered, overrides, starts_at, start, timezone, fixed=fixed)
+              if overrides else {**recommended_packed, **fixed})
     recommended_dates = tuple(_dates(item, recommended_packed, timezone, use_solver=True)
                               for item in recommended)
     warnings: list[WeeklyPlanWarning] = []
@@ -265,15 +299,26 @@ def build_weekly_plan(
         meta = item.metadata
         level = meta.ncs_level if meta else None
         recommended_hours = _hours(context, item)
-        hours = overrides.hours.get(str(item.step.step_id), recommended_hours) if overrides else recommended_hours
-        first_date, last_date = _dates(item, packed, timezone, use_solver=overrides is None)
-        unmet = _unmet(item, by_id, packed, use_solver=overrides is None)
+        snapshot = snapshots.get(str(item.step.step_id)) if item.step.state == 'COMPLETED' else None
+        hours = (snapshot.hours if snapshot is not None else
+                 overrides.hours.get(str(item.step.step_id), recommended_hours) if overrides else recommended_hours)
+        if item.step.step_id in fixed:
+            schedule = fixed[item.step.step_id]
+            first_date, last_date = (schedule.starts_at.astimezone(timezone).date(),
+                                     _last_occupied_date(schedule.starts_at, schedule.ends_at, timezone))
+        else:
+            first_date, last_date = _dates(item, packed, timezone, use_solver=overrides is None)
+        unmet = () if item.step.state == 'COMPLETED' else _unmet(item, by_id, packed, use_solver=overrides is None)
         if unmet:
             warnings.append(WeeklyPlanWarning(
                 code='PREREQUISITE_VIOLATION',
                 message=f'{_identity(item)[1]} 단계가 필요한 선행 단계보다 먼저 배치됐어요. 순서를 조정해 주세요.',
                 step_ids=(item.step.step_id,), prerequisite_step_ids=unmet,
             ))
+        if item.step.step_id in packed:
+            exact_start, exact_end = packed[item.step.step_id].starts_at, packed[item.step.step_id].ends_at
+        else:
+            exact_start, exact_end = item.step.planned_start, item.step.planned_end
         key, name = _identity(item)
         basis = meta.hours_basis if meta and meta.hours_basis else 'ESTIMATED'
         if meta and meta.estimated_hours is not None and recommended_hours != meta.estimated_hours:
@@ -299,8 +344,10 @@ def build_weekly_plan(
             prerequisite_step_ids=item.step.prerequisite_step_ids,
             unmet_prerequisite_step_ids=unmet,
             completion_criteria=tuple(value for value in item.step.criteria if isinstance(value, str)),
-            week_allocations=packed[item.step.step_id].allocations
-            if overrides is not None or not _has_solver_dates(item) else (),
+            planned_start_at=exact_start, planned_end_at=exact_end,
+            week_allocations=(snapshot.week_allocations if snapshot is not None else
+                packed[item.step.step_id].allocations if overrides is not None or not _has_solver_dates(item)
+                else _exact_allocations(context, item, start, timezone)),
         ))
     completion = max((step.end_date for step in result), default=start)
     days_past_target = max(0, (completion - context.target_date).days) if context.target_date else 0
@@ -311,7 +358,7 @@ def build_weekly_plan(
                     f'{days_past_target}일 늦어요. 이 일정은 목표 기한을 충족하지 않아요.',
         ))
     return WeeklyPlanResponse(
-        roadmap_id=context.roadmap_id, start_date=start, target_date=context.target_date,
+        version=version, roadmap_id=context.roadmap_id, start_date=start, target_date=context.target_date,
         weekly_hours=weekly, recommended_weekly_hours=context.recommended_weekly_hours,
         rest_weeks=rests, is_customized=overrides is not None,
         saved_at=overrides.saved_at.astimezone(timezone) if overrides and overrides.saved_at else None,
@@ -324,3 +371,19 @@ def build_weekly_plan(
         has_dependency_violations=any(step.unmet_prerequisite_step_ids for step in result),
         warnings=tuple(warnings), steps=tuple(result),
     )
+
+
+def _exact_allocations(context: PlanContext, item: PlanStepInput, start: date,
+                       timezone: ZoneInfo) -> tuple[WeeklyPlanAllocation, ...]:
+    counts: dict[int, int] = {}
+    for value in context.step_allocations.get(item.step.step_key, ()):
+        week = (value.astimezone(timezone).date() - start).days // 7 + 1
+        counts[week] = counts.get(week, 0) + 1
+    return tuple(WeeklyPlanAllocation(week=week, hours=hours) for week, hours in sorted(counts.items()))
+
+
+def _last_occupied_date(starts_at: datetime, ends_at: datetime, timezone: ZoneInfo) -> date:
+    # Solver and packer intervals are [start, end). Midnight belongs to the next
+    # interval, not an extra learning day/week in the user-facing projection.
+    occupied = ends_at - timedelta(microseconds=1) if ends_at > starts_at else ends_at
+    return occupied.astimezone(timezone).date()

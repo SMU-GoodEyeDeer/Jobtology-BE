@@ -179,6 +179,7 @@ class PostgresAnalysisContextInputSource:
             calendar=calendar,
             candidate_availability=(),
             solver_settings=SolverSettings(),
+            calendar_policy="FLEXIBLE_WEEKLY_V1",
         )
 
 

@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from hashlib import sha256
 from typing import Literal, Protocol
 from uuid import UUID, uuid4
 
@@ -16,6 +15,7 @@ class AnalysisRequestCommand:
     expected_profile_version: int
     basis_type: Literal["EDITORIAL"]
     idempotency_key: str | None = None
+    refresh: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,18 +54,17 @@ class PersistentAnalysisService:
 
     async def request(self, user_id: UUID, command: AnalysisRequestCommand) -> AnalysisRequestResult:
         context = await self._context_factory.create_context(user_id, command)
-        dedupe_key = (
-            f"analysis:{uuid4()}"
-            if command.idempotency_key is None
-            else f"analysis:{sha256(f'{user_id}:{command.idempotency_key}'.encode()).hexdigest()}"
-        )
+        # HTTP idempotency owns the 24-hour response replay. Its key must not
+        # become a permanent outbox uniqueness key after that replay expires.
+        dedupe_key = f"analysis:{uuid4()}"
         request = await self._submitter.submit_analysis_recompute(
             AnalysisRecomputeSubmission(
                 user_id=user_id,
                 goal_id=command.goal_id,
                 expected_profile_version=command.expected_profile_version,
                 dedupe_key=dedupe_key,
-                payload={"basis_type": command.basis_type, "source": "analysis-api"},
+                payload={"basis_type": command.basis_type, "source": "analysis-api",
+                         **({"refresh": True} if command.refresh else {})},
                 context=context.model_dump(mode="json"),
             )
         )

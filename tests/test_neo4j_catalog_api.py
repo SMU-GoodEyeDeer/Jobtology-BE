@@ -172,6 +172,7 @@ def test_native_catalog_routes_expose_only_safe_source_fields() -> None:
             "code": "OCC-001",
             "kind": "occupation",
             "name": "Source occupation",
+            "scheme_id": "NCS", "source_release_id": None, "source_uri": None,
         }
     ]
     assert publications.status_code == 200

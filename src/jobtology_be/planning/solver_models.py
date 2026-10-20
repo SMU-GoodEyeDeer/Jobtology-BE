@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import StrEnum
+from math import isfinite
 from typing import Final, Literal, assert_never, override
 
 from jobtology_be.planning.candidate_models import (
@@ -98,8 +99,9 @@ class SolverSettings:
     time_limit_seconds: float = DEFAULT_SOLVER_TIME_LIMIT_SECONDS
 
     def __post_init__(self) -> None:
-        if self.time_limit_seconds < 0:
-            raise InvalidPlanningProblemError(reason="solver time limit cannot be negative")
+        if (not isinstance(self.time_limit_seconds, (int, float)) or isinstance(self.time_limit_seconds, bool)
+                or not isfinite(self.time_limit_seconds) or self.time_limit_seconds < 0):
+            raise InvalidPlanningProblemError(reason="solver time limit must be finite and nonnegative")
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,9 +179,21 @@ class RouteRejection:
 
 
 @dataclass(frozen=True, slots=True)
+class SolverRunTelemetry:
+    phase: Literal["FULL", "PARTIAL"]
+    status: str
+    time_limit_seconds: float
+    wall_time_seconds: float = field(compare=False)
+    objective_value: float | None = None
+    best_objective_bound: float | None = None
+    skipped_reason: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class PartialRouteDiagnostic:
     unmet_required_requirement_keys: tuple[str, ...]
     scheduled_steps: tuple[ScheduledRouteStep, ...]
+    solver_run: SolverRunTelemetry | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,6 +216,7 @@ class RoutePlanningTrace:
     optimization_status: OptimizationStatus
     rejections: tuple[RouteRejection, ...]
     partial_route_diagnostic: PartialRouteDiagnostic | None
+    solver_runs: tuple[SolverRunTelemetry, ...] = ()
     planning_policy_version: str | None = None
     planning_policy_decisions: tuple[str, ...] = ()
     foundational_priority_action_ids: tuple[str, ...] = ()

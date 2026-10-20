@@ -63,8 +63,15 @@ def test_occupations_query_requires_source_entity_and_excludes_ontology_object()
 
     # Then: a mixed-label ontology node cannot enter the source catalog.
     assert source_match == (
-        "MATCH (occupation:entity:occupation) WHERE NOT occupation:ontologyObject"
+        "MATCH (occupation:entity:occupation) WHERE NOT occupation:ontologyObject "
+        "AND (NOT occupation:onetCatalogObject OR occupation.current = true)"
     )
+
+
+def test_onet_graph_details_remain_pinned_to_selected_current_revision_ids() -> None:
+    statement = NEO4J_CORPUS_READ_QUERY_CATALOG.resolve(ROLE_EVIDENCE_ONET_QUERY_ID).statement
+    assert "x.id IN $ids AND x.current = true" in statement
+    assert "x.code IN $codes" not in statement
 
 
 def test_alignments_query_requires_source_competency_and_excludes_ontology_object() -> None:

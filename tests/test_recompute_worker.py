@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
@@ -149,11 +150,13 @@ class LostLeaseFinalizer:
 class RecordingFailureFinalizer:
     def __init__(self) -> None:
         self.failed: list[tuple[RecomputeWorkItem, str]] = []
+        self.failure_details: list[Mapping[str, JsonValue] | None] = []
 
     async def fail_recompute(
-        self, work_item: RecomputeWorkItem, error_code: str
+        self, work_item: RecomputeWorkItem, error_code: str, *, failure_details=None,
     ) -> None:
         self.failed.append((work_item, error_code))
+        self.failure_details.append(failure_details)
 
 
 class StaticContextPayloadReader:
@@ -199,7 +202,7 @@ class ExecutableWorkerStore:
             updated_latest_analysis=True,
         )
 
-    async def fail_recompute(self, work_item: RecomputeWorkItem, error_code: str) -> None:
+    async def fail_recompute(self, work_item: RecomputeWorkItem, error_code: str, *, failure_details=None) -> None:
         _ = work_item
         self.failure_codes.append(error_code)
 
@@ -358,7 +361,11 @@ async def test_recompute_worker_finalizes_pinned_analysis_and_route_atomically()
     assert len(finalizer.artifacts) == 1
     artifacts = finalizer.artifacts[0]
     assert artifacts.analysis.release_id == "release-reviewed-v1"
-    assert artifacts.analysis.results == {
+    persisted_results = dict(artifacts.analysis.results)
+    route = persisted_results.pop('route')
+    assert route['trace']['solver_runs'][0]['status'] == 'OPTIMAL'
+    assert route['trace']['solver_worker_count'] == 1
+    assert persisted_results == {
         "analysis_id": str(artifacts.analysis.analysis_id),
         "analysis_status": "READY",
         "basis_version": "reviewed-v1",
@@ -389,6 +396,7 @@ async def test_recompute_worker_finalizes_pinned_analysis_and_route_atomically()
         },
         "requirements": (
             {
+                "metadata": None,
                 "label": "API implementation",
                 "necessity": "REQUIRED",
                 "provenance": ("SELF_REPORTED",),
@@ -534,6 +542,11 @@ async def test_leased_recompute_worker_terminalizes_cp_sat_timeout_without_publi
     assert results == ()
     assert publication.artifacts == []
     assert failures.failed == [(_work_item(), RecomputeFailureCode.SOLVER_TIMEOUT.value)]
+    details = failures.failure_details[0]
+    assert details['solver_seed'] > 0
+    assert details['solver_worker_count'] == 1
+    assert [run['phase'] for run in details['solver_runs']] == ['FULL', 'PARTIAL']
+    assert all(run['status'] == 'UNKNOWN' for run in details['solver_runs'])
 
 
 @pytest.mark.anyio

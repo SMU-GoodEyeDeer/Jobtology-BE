@@ -75,43 +75,72 @@ def preflight(path: Path) -> None:
 
 
 def visible_docx(path: Path) -> tuple[Path, bool]:
-    """Remove explicit hidden/deleted runs, including hidden character/paragraph styles."""
+    """Resolve visibility per run, including inherited styles and explicit overrides."""
     w = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
     removed = False
+
+    def properties(node):
+        if node is None:
+            return {}
+        return {name: child.get(f'{w}val', 'true').lower() not in {'0', 'false', 'off'}
+                for name in ('vanish', 'webHidden')
+                if (child := node.find(f'{w}{name}')) is not None}
+
     with zipfile.ZipFile(path) as source:
-        hidden_styles = set()
+        styles_by_id = {}
+        default_styles = {}
+        defaults = {}
         if 'word/styles.xml' in source.namelist():
             styles = ET.fromstring(source.read('word/styles.xml'))
-            base = {}
+            defaults = properties(styles.find(f'{w}docDefaults/{w}rPrDefault/{w}rPr'))
             for style in styles.findall(f'{w}style'):
                 identity = style.get(f'{w}styleId')
                 parent = style.find(f'{w}basedOn')
-                base[identity] = parent.get(f'{w}val') if parent is not None else None
-                if any(node.get(f'{w}val', 'true') not in {'0', 'false', 'off'}
-                       for node in style.iter() if node.tag in {f'{w}vanish', f'{w}webHidden'}):
-                    hidden_styles.add(identity)
-            for _ in range(len(base)):
-                previous = len(hidden_styles)
-                hidden_styles.update(key for key, parent in base.items() if parent in hidden_styles)
-                if previous == len(hidden_styles):
-                    break
+                styles_by_id[identity] = (
+                    parent.get(f'{w}val') if parent is not None else None,
+                    properties(style.find(f'{w}rPr')),
+                )
+                if style.get(f'{w}default', '').lower() in {'1', 'true', 'on'}:
+                    default_styles[style.get(f'{w}type')] = identity
+
+        def style_properties(identity, seen=frozenset()):
+            if identity is None or identity in seen or identity not in styles_by_id:
+                return {}
+            parent, own = styles_by_id[identity]
+            return style_properties(parent, seen | {identity}) | own
+
+        def selected_style(node, style_type):
+            style = node.find(f'{w}pPr/{w}pStyle' if style_type == 'paragraph'
+                              else f'{w}rPr/{w}rStyle')
+            identity = style.get(f'{w}val') if style is not None else default_styles.get(style_type)
+            return style_properties(identity)
+
+        def remove_hidden(parent, paragraph_properties):
+            nonlocal removed
+            for child in list(parent):
+                if child.tag in {f'{w}del', f'{w}moveFrom'}:
+                    parent.remove(child)
+                    removed = True
+                    continue
+                inherited = paragraph_properties
+                if child.tag == f'{w}p':
+                    inherited = defaults | selected_style(child, 'paragraph')
+                if child.tag == f'{w}r':
+                    effective = (inherited | selected_style(child, 'character')
+                                 | properties(child.find(f'{w}rPr')))
+                    if any(effective.values()):
+                        parent.remove(child)
+                        removed = True
+                        continue
+                remove_hidden(child, inherited)
+
         destination = path.with_name('visible.docx')
         with zipfile.ZipFile(destination, 'w', zipfile.ZIP_DEFLATED) as target:
             for item in source.infolist():
                 data = source.read(item)
                 if item.filename == 'word/document.xml':
                     root = ET.fromstring(data)
-                    for parent in root.iter():
-                        for child in list(parent):
-                            style_path = f'{w}pPr/{w}pStyle' if child.tag == f'{w}p' else f'{w}rPr/{w}rStyle'
-                            style_ids = {node.get(f'{w}val') for node in child.findall(style_path)}
-                            explicit = any(node.get(f'{w}val', 'true') not in {'0', 'false', 'off'}
-                                           for node in child.iter() if node.tag in {f'{w}vanish', f'{w}webHidden'})
-                            if child.tag in {f'{w}del', f'{w}moveFrom'} or (
-                                child.tag in {f'{w}r', f'{w}p'} and (
-                                    style_ids & hidden_styles or child.tag == f'{w}r' and explicit)):
-                                parent.remove(child)
-                                removed = True
+                    remove_hidden(root, defaults)
                     data = ET.tostring(root, encoding='utf-8', xml_declaration=True)
                 target.writestr(item, data)
     return destination, removed

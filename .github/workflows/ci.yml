@@ -10,6 +10,22 @@ permissions:
 jobs:
   checks:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: jobtology
+          POSTGRES_PASSWORD: acceptance-only
+          POSTGRES_DB: jobtology
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U jobtology -d jobtology"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      JOBTOLOGY_ACCEPTANCE_DATABASE_URL: postgresql+asyncpg://jobtology:acceptance-only@localhost:5432/jobtology
     defaults:
       run:
         working-directory: Jobtology-BE
@@ -91,14 +107,15 @@ jobs:
           done
           echo "Deployment timed out (last status: ${status})"
           exit 1
-      - name: Verify product role release is loaded
+      - name: Verify runtime readiness and product role release
         if: steps.head.outputs.current == 'true'
         run: |
           for _ in $(seq 1 12); do
             code=$(curl -sS -o /dev/null -w '%{http_code}' https://jobtology.yeongmin.net/api/v1/occupations || true)
-            if [ "$code" = "200" ]; then echo "Occupations available"; exit 0; fi
-            echo "GET /api/v1/occupations -> ${code}; retrying"
+            ready=$(curl -sS -o /dev/null -w '%{http_code}' https://jobtology.yeongmin.net/api/v1/health/ready || true)
+            if [ "$code" = "200" ] && [ "$ready" = "200" ]; then echo "Runtime ready; occupations available"; exit 0; fi
+            echo "Occupations ${code}; readiness ${ready}; retrying"
             sleep 10
           done
-          echo "::error::Product role release did not load (occupations ${code}). Check the app log for 'Product role release not loaded'; a changed catalog needs a new approval in config/product_roles/approvals/."
+          echo "::error::Runtime not ready (occupations ${code}; readiness ${ready}). Check database migrations, worker logs and exact product-role artifact approval."
           exit 1

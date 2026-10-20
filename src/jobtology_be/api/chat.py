@@ -89,7 +89,12 @@ async def chat_status(
         "(`suggestions`), and capability candidates restricted to the active goal's "
         "approved requirements, each with a verbatim user quote. Candidates are not saved; "
         "after the user confirms, save one with `POST /api/v1/me/capabilities` "
-        "(`category: \"chat\"`, `raw_text`: candidate label, `details.evidence_quote`)."
+        "with a supported `category` (`skill`, `certification`, `test`, `project`, `experience`), "
+        "`raw_text`: candidate label, explicit user-confirmed `proficiency`, and "
+        "`details: {competency_ids: [candidate.entity_id], evidence: candidate.evidence_quote, "
+        "source: \"LLM_ASSISTED\"}`. Evidence must contain at least 20 characters for planning "
+        "credit; the user must expand a shorter quote with truthful detail. Record credential "
+        "issue/expiry dates when applicable. Neither a candidate nor a saved title grants credit."
     ),
 )
 async def send_chat_messages(

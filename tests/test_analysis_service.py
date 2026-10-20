@@ -98,3 +98,16 @@ def test_persistent_analysis_service_creates_a_context_bound_recompute_request()
     assert submitter.submission.payload == {"basis_type": "EDITORIAL", "source": "analysis-api"}
     assert submitter.submission.context == context.model_dump(mode="json")
     assert submitter.submission.dedupe_key.startswith("analysis:")
+
+
+def test_executed_refresh_does_not_bind_an_expired_http_key_to_old_outbox_work():
+    submitter = RecordingAnalysisSubmitter()
+    service = PersistentAnalysisService(StaticContextFactory(_context_document()), submitter)
+    command = AnalysisRequestCommand(GOAL_ID, 3, 'EDITORIAL', idempotency_key='reusable-after-ttl', refresh=True)
+    anyio.run(service.request, USER_ID, command)
+    first_key = submitter.submission.dedupe_key
+    # Reaching the operation again means the HTTP replay has expired; active work
+    # remains deduplicated by the repository's semantic context fingerprint.
+    anyio.run(service.request, USER_ID, command)
+    assert submitter.submission.dedupe_key != first_key
+    assert submitter.submission.payload['refresh'] is True

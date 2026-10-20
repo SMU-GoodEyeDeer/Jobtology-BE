@@ -39,6 +39,7 @@ uv run uvicorn jobtology_be.main:app --reload
 - OpenAPI: http://localhost:8000/api/openapi.json
 - Korean FE integration guide: http://localhost:8000/api/guide (source: [docs/fe-integration.md](docs/fe-integration.md))
 - Liveness: `/api/v1/health/live` (not database readiness)
+- Readiness: `/api/v1/health/ready` (database, required role catalog and worker)
 
 To enable explicitly labeled FE fixtures:
 

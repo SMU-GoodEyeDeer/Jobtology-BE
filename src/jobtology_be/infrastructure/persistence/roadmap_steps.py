@@ -32,9 +32,11 @@ from jobtology_be.infrastructure.persistence.schema import (
 
 
 class RoadmapStepRepository(OutboxRepository):
-    def __init__(self, database: Database) -> None:
+    def __init__(self, database: Database, *, capability_list_authoritative: bool = False) -> None:
         super().__init__(database)
-        self._recompute = ConfiguredRecomputeRepository(database)
+        self._recompute = ConfiguredRecomputeRepository(
+            database, capability_list_authoritative=capability_list_authoritative,
+        )
 
     async def mutate_step_state(self, request: StepStateMutation) -> RoadmapSnapshot:
         async with self._database.sessions.begin() as session:
@@ -150,18 +152,15 @@ class RoadmapStepRepository(OutboxRepository):
                             constraint="user_capabilities_completion_entity_key"
                         )
                     )
-            if event_kind in {"STEP_COMPLETED", "STEP_COMPLETION_REVERSED"}:
-                await self._recompute.enqueue_for_goal(
-                    session,
-                    request.user_id,
-                    request.expected_profile_version + 1,
-                    event_id,
-                    roadmap_row.goal_id,
-                )
-            else:
-                await self._enqueue_recompute(
-                    session, request.user_id, request.expected_profile_version + 1, event_id
-                )
+            # Every transition advances the profile version, so each follow-up
+            # needs the same pinned context, including TODO/IN_PROGRESS changes.
+            await self._recompute.enqueue_for_goal(
+                session,
+                request.user_id,
+                request.expected_profile_version + 1,
+                event_id,
+                roadmap_row.goal_id,
+            )
         return RoadmapSnapshot(
             roadmap_id=request.roadmap_id,
             version=request.expected_roadmap_version + 1,

@@ -20,7 +20,7 @@ Example shape (not a credential):
 JOBTOLOGY_CATALOG_DATABASE_URL=postgresql+asyncpg://jobtology_catalog_reader:<secret>@<host>/<database>
 ```
 
-The reader role must have only the five catalog function EXECUTE grants and no
+The reader role must have only the documented catalog function EXECUTE grants and no
 `ontology` schema access. The API never calls the approval function and cannot
 open the analytics gate. Its dedicated pool is limited to four connections,
 five-second acquisition/connect/command timeouts, and one read-only,
@@ -83,8 +83,11 @@ outcomes are inventory status, not semantic review or employment metrics.
 
 ## Live source feed (separate from the sealed release)
 
-Authenticated `/api/v2/live/*` reads the **newest READY ingestion run per source**,
-not the approved, sealed catalog release. Data can change between requests and
+Authenticated `/api/v2/live/*` reads READY ingestion observations independently
+of the approved, sealed catalog release. JobKorea is a delta feed: the reader
+retains the latest accepted observation of each native posting across READY
+non-SMOKE runs, rather than deleting postings omitted from a later delta.
+JOB-ALIO and Nara use their latest complete paired source runs. Data can change between requests and
 pages; `sources` identifies each contributing `source_id`, `run_id`, and
 `data_as_of`. A live source record is not an editorial decision, eligibility
 assessment, recommendation, or product occupation. It uses the same restricted
@@ -99,6 +102,8 @@ run, requests fail closed with 503; unauthenticated requests return 401.
 | `/api/v2/live/ncs-units/{base_code}` | exactly 10 ASCII digits (`^[0-9]{10}$`); no query parameters | `contract_version: hop-live-source-v1`, `sources`, `item: {base_code, code, name, level, definition}` |
 | `/api/v2/live/exam-sessions` | `qualification`, `from=YYYY-MM-DD`, `to=YYYY-MM-DD`, `limit=20` (1–100), `offset=0` (nonnegative) | `contract_version`, `sources`, `filters`, `limit`, `offset`, `total`, `items` |
 | `/api/v2/live/ncs-demand` | `ncs_prefix` (2–8 digits), `limit=20` (1–100), `offset=0` (nonnegative) | reviewed NCS linkage inventory (`contract_version`, `sources`, `review`, `filters`, `limit`, `offset`, `total`, `items`) |
+| `/api/v2/live/occupation-context` | optional comma-separated `occupation_codes` (NCS or O*NET, at most 100), `limit=20` (1–100), `offset=0` | inferred posting associations, freshness/review metadata, summary counts and public posting previews |
+| `/api/v2/roles/{occupation_id}/posting-context` | `limit=20` (1–100), `offset=0` | the same inferred context filtered by the server's role-to-NCS mapping |
 
 `contract_version` is `hop-live-source-v1`. Posting items expose `posting_id`, optional
 `source_id` (null with an older catalog reader),
@@ -114,11 +119,19 @@ posting returns 404; source/driver/validation failures return 503. Errors use
 the standard envelope without private database messages. There is no
 eligibility, preference, selection, or disqualification text in these responses.
 
-The multi-source posting reader includes JobKorea and JOB-ALIO, selecting each
-source's latest READY run. It orders JobKorea before JOB-ALIO **before** pagination;
+The multi-source posting reader includes JobKorea, JOB-ALIO and Nara. It orders
+JobKorea, JOB-ALIO, then Nara **before** pagination;
 the frontend preserves that order. JobKorea IDs are `jobkorea:<native posting ID>`;
-existing JOB-ALIO IDs stay unchanged. Detail responses identify only the selected
-posting's source/run. JobKorea listing metadata is displayed only from selected,
+existing JOB-ALIO IDs stay unchanged, and Nara IDs use `nara_job:<native ID>`.
+Each item includes `source_provenance` with its actual `source_id`, `run_id` and
+`data_as_of`; retained JobKorea details identify that observation's run.
+Posting fields also expose `source_status`, `deadline_kind`, `deadline_basis`,
+`ongoing_basis`, `application_start_date`, `application_start_at`, and `deadline_at`.
+`open_on` excludes explicitly CLOSED postings, respects valid source dates and
+Korean-local instant boundaries, and leaves unknown dates unknown. A JobKorea
+rolling deadline inferred from missing dates is labeled `USER_POLICY`, separately
+from source-stated `UNTIL_FILLED` or fixed deadlines.
+JobKorea listing metadata is displayed only from selected,
 accepted records; missing descriptions, employer identities and dates stay missing.
 An inferred occupation match is not a source-provided NCS category, so the NCS
 filter can exclude JobKorea listings without such a source field. `sources.data_as_of`
@@ -127,11 +140,24 @@ reports run completion/import time, not an independently verified scrape time.
 JobKorea visibility requires the catalog database's multi-source reader SQL upgrade
 [`031_multi_source_live_postings.sql`](https://github.com/SMU-GoodEyeDeer/Jobtology-DB/blob/feat/functionality-improvements/hop/ontology/sql/031_multi_source_live_postings.sql)
 from Jobtology-DB. On an already compatible catalog, apply only this additive SQL
-file as its existing owner/administrator. Application Alembic migrations do not
+file as its existing owner/administrator. Also apply
+[`032_inferred_occupation_context.sql`](https://github.com/SMU-GoodEyeDeer/Jobtology-DB/blob/feat/functionality-improvements/hop/ontology/sql/032_inferred_occupation_context.sql)
+for the inferred-context routes. On a compatible installation these two scripts
+preserve existing reader grants and grant the new public context function to an
+existing `jobtology_catalog_reader`. Application Alembic migrations do not
 install catalog readers.
 The additive `source_id` response field alone does not change the installed SQL's
 source selection. Install the catalog upgrade before expecting JobKorea results;
 existing grants and public function signatures are preserved.
+
+Occupation context uses `jobtology-inferred-occupation-context-v1` with
+`basis=METADATA_INFERRED`, `assertion_kind=MODEL_INFERRED` and
+`competency_evidence=false`. Items retain actual review/staging status,
+`confidence=null` / `UNASSESSED`, source/catalog pins and separate freshness
+states. Summaries distinguish fully current, stale and unknown associations.
+Historical associations remain visible as history; they are not promoted to
+current evidence. Inferred occupation categories do not become source NCS fields,
+competency requirements, user credit or approved product-role inputs.
 
 NCS unit detail calls `catalog.live_ncs_unit_v1(text)` on the same restricted pool.
 `code` includes the selected live version; `level` and `definition` may be null.

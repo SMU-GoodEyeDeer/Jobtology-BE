@@ -95,7 +95,9 @@ class PostgresApplicationStore(OutboxRepository, WorkerRepository):
         self._goal_deletion = GoalDeletionRepository(
             database, capability_list_authoritative=capability_list_authoritative,
         )
-        self._roadmap_steps = RoadmapStepRepository(database)
+        self._roadmap_steps = RoadmapStepRepository(
+            database, capability_list_authoritative=capability_list_authoritative,
+        )
         self._recompute_requests = RecomputeRequestRepository(database)
 
     async def create_user(self, request: UserCreate) -> ProfileSnapshot:

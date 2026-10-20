@@ -41,6 +41,12 @@ def _ncs_row(code: str, name: str, onet_code: str) -> tuple[JsonValue, ...]:
         [{"id": f"onet:{onet_code}", "code": onet_code, "name": f"O*NET {onet_code}", "shared": 7}],
         [{"id": "qnet:qualification:C290", "code": "C290", "name": "정보처리산업기사", "units": 7,
           "sessions": 3, "latest_session": "2026년 정기 기사 3회"}],
+        [{"source_id": "jobkorea", "source_run_id": "run-jk", "catalog_run_id": "ncs-current",
+          "source_current": True, "catalog_current": True, "review_status": "UNREVIEWED",
+          "stage": "STAGING", "accepted": False, "postings": 12},
+         {"source_id": "jobkorea", "source_run_id": "run-old", "catalog_run_id": "ncs-old",
+          "source_current": False, "catalog_current": False, "review_status": "ASSISTANT_REVIEWED",
+          "stage": "STAGING", "accepted": True, "postings": 3}], 3,
     )
 
 
@@ -84,7 +90,7 @@ def test_role_graph_links_policy_ncs_codes_through_postings_to_onet_details() ->
     # Then
     assert graph is not None
     assert client.queries[0].parameters["codes"] == ["20010202", "20010204"]
-    assert client.queries[1].parameters["codes"] == ["15-1242.00", "15-1252.00"]
+    assert client.queries[1].parameters["ids"] == ["onet:15-1242.00", "onet:15-1252.00"]
     kinds = {node.id: node.kind for node in graph.nodes}
     assert kinds["role:BACKEND_DEVELOPER"] == "role"
     assert kinds["ncs:occupation:20010202"] == "ncs_occupation"
@@ -108,6 +114,22 @@ def test_role_graph_links_policy_ncs_codes_through_postings_to_onet_details() ->
     assert ("onet:15-1252.00", "tech:python", "HOT_TECHNOLOGY") in targets
 
 
+def test_graph_never_links_details_from_another_revision_of_the_same_onet_code() -> None:
+    client = _backend_client()
+    current = _onet_row("15-1252.00")
+    client.onet_rows = (("onet:old-revision", *current[1:]),)
+
+    graph = anyio.run(Neo4jRoleEvidenceGraph(policy=POLICY, client=client).graph,
+                      "BACKEND_DEVELOPER")
+
+    assert graph is not None
+    node_ids = {node.id for node in graph.nodes}
+    assert "onet:15-1252.00" in node_ids
+    assert "onet:old-revision" not in node_ids
+    assert all(edge.source in node_ids and edge.target in node_ids for edge in graph.edges)
+    assert not any(edge.kind in {"ESSENTIAL_SKILL", "HOT_TECHNOLOGY"} for edge in graph.edges)
+
+
 def test_graph_deep_link_requirement_uses_verified_role_metadata() -> None:
     class Metadata:
         def lookup(self, requirement_key: str) -> RequirementMetadata | None:
@@ -125,6 +147,22 @@ def test_graph_deep_link_requirement_uses_verified_role_metadata() -> None:
     nodes = {node.id: node for node in graph.nodes}
     assert nodes["ncs:unit:2001020201_23v1"].requirement_key == "BACKEND_DEVELOPER:2001020201"
     assert nodes["ncs:unit:2001020401_23v1"].requirement_key is None
+
+
+def test_graph_discloses_historical_inference_without_counting_it_as_current_evidence() -> None:
+    graph = anyio.run(Neo4jRoleEvidenceGraph(policy=POLICY, client=_backend_client()).graph,
+                      "BACKEND_DEVELOPER")
+    assert graph is not None
+    node = next(node for node in graph.nodes if node.id == "ncs:occupation:20010202")
+    assert node.excluded_associations == 3
+    assert node.evidence_sources[1].catalog_current is False
+    assert node.evidence_sources[1].review_status == "ASSISTANT_REVIEWED"
+    edge = next(edge for edge in graph.edges if edge.kind == "EVIDENCED_BY")
+    assert edge.basis == "METADATA_INFERRED"
+    assert len(edge.evidence_sources) == 1
+    assert edge.evidence_sources[0].review_status == "UNREVIEWED"
+    assert edge.evidence_sources[0].accepted is False
+    assert edge.evidence_sources[0].confidence is None
 
 
 def test_unknown_role_returns_none_without_querying_neo4j() -> None:

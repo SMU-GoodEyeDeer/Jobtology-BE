@@ -68,6 +68,7 @@ def test_list_occupations_parses_observed_rows_and_binds_only_pagination() -> No
                     "Source label",
                     "source-record-1",
                     "source-run-1",
+                    "NCS", None, None,
                 ),
             ),
             query_type="r",
@@ -97,6 +98,22 @@ def test_list_occupations_parses_observed_rows_and_binds_only_pagination() -> No
     assert len(executed_queries) == 1
     assert executed_queries[0].query_id == LIST_OCCUPATIONS_QUERY_ID
     assert executed_queries[0].parameters == {"limit": 20, "offset": 10}
+
+
+def test_mixed_ncs_onet_page_preserves_each_catalogs_real_provenance() -> None:
+    client = _StaticReadClient(
+        result=Neo4jQueryResult(fields=OCCUPATION_FIELDS, rows=(
+            ("ncs:occupation:20010202", "20010202", "occupation", "응용SW엔지니어링",
+             "record-1", "run-1", "NCS", None, None),
+            ("urn:jobtology:onet:occupation:15-1252.00", "15-1252.00", "occupation", "Software Developers",
+             None, None, "ONET", "onet-31", "https://www.onetonline.org/link/summary/15-1252.00"),
+        ), query_type="r"), queries=[],
+    )
+    records = anyio.run(Neo4jCorpusRepository(client=client, max_rows=10).list_occupations)
+    assert records[0].name_source_run_id == "run-1"
+    assert records[1].scheme_id == "ONET"
+    assert records[1].source_release_id == "onet-31"
+    assert records[1].name_source_record_id is None
 
 
 def test_list_publications_preserves_distinct_source_identifiers_and_state() -> None:

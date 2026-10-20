@@ -1,11 +1,13 @@
 import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Final, Literal, Protocol
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from jobtology_be.application.queries import CapabilityView, GoalView
-from jobtology_be.application.specs import SpecCategory
+from jobtology_be.application.specs import SpecCategory, capability_inputs
 from jobtology_be.corpus.snapshot import PublishedCorpusSnapshot
 from jobtology_be.infrastructure.persistence.contracts import JsonValue
 from jobtology_be.llm.client import LlmClient, LlmMessage
@@ -109,19 +111,14 @@ class ChatReply:
     suggestions: tuple[str, ...] = ()
 
 
-def _normalize(text: str) -> str:
-    return re.sub(r"\s+", " ", text).strip().casefold()
-
-
 def allowed_capabilities(
-    snapshot: PublishedCorpusSnapshot, owned_raw_texts: frozenset[str]
+    snapshot: PublishedCorpusSnapshot, satisfied_entity_ids: frozenset[str]
 ) -> tuple[AllowedCapability, ...]:
     aliases = {entry.entity_id: entry.aliases for entry in snapshot.capability_entries}
-    owned = {_normalize(text) for text in owned_raw_texts}
     allowed: list[AllowedCapability] = []
     for requirement in snapshot.requirements:
         entity_aliases = aliases.get(requirement.entity_id, frozenset())
-        if any(_normalize(alias) in owned for alias in entity_aliases | {requirement.label}):
+        if requirement.entity_id in satisfied_entity_ids:
             continue
         code = requirement.entity_id.rsplit(":", 1)[-1]
         hints = tuple(
@@ -146,7 +143,7 @@ def select_candidates(
     if not isinstance(raw, list):
         return ()
     by_code = {item.code: item for item in allowed}
-    spoken = [_normalize(text) for text in user_texts]
+    spoken = tuple(user_texts)
     selected: dict[str, ChatCandidate] = {}
     for item in raw:
         if not isinstance(item, dict):
@@ -155,18 +152,17 @@ def select_candidates(
         if not isinstance(code, str) or not isinstance(quote, str):
             continue
         capability = by_code.get(code.strip())
-        normalized_quote = _normalize(quote)
         if (
             capability is None
-            or not normalized_quote
+            or not quote.strip()
             or len(quote) > MAX_QUOTE_LENGTH
-            or not any(normalized_quote in text for text in spoken)
+            or not any(quote in text for text in spoken)
         ):
             continue
         selected.setdefault(
             capability.entity_id,
             ChatCandidate(
-                entity_id=capability.entity_id, label=capability.label, evidence_quote=quote.strip(),
+                entity_id=capability.entity_id, label=capability.label, evidence_quote=quote,
                 category=item.get('category') if item.get('category') in
                 {'skill', 'certification', 'test', 'project', 'experience'} else None,
             ),
@@ -226,10 +222,20 @@ class ChatCapabilityService:
             )
             allowed = tuple({item.entity_id: item for item in all_allowed}.values())
         elif snapshot is not None:
+            goal_timezone = next((goal.timezone for goal in goals
+                                  if goal.status == "ACTIVE" and goal.occupation_id == occupation_id), "UTC")
+            today = datetime.now(ZoneInfo(goal_timezone)).date()
             owned = frozenset(
-                capability.raw_text
+                item.entity_id
                 for capability in await self.queries.list_capabilities(user_id)
                 if capability.lifecycle == "ACTIVE"
+                for item in capability_inputs(
+                    raw_text=capability.raw_text, entity_id=capability.entity_id,
+                    category=capability.category, proficiency=capability.proficiency,
+                    details=capability.details,
+                    completed=capability.source_completion_event_id is not None, today=today,
+                )
+                if item.entity_id is not None and item.credit >= 1.0
             )
             allowed = allowed_capabilities(snapshot, owned)
         instructions = INSTRUCTIONS.format(

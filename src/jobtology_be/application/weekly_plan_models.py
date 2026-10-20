@@ -1,12 +1,14 @@
 """Typed weekly plan boundaries; independent of persistence and HTTP."""
 
+from __future__ import annotations
+
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import ClassVar, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from jobtology_be.application.queries import RoadmapStepView
 from jobtology_be.application.requirement_metadata import RequirementMetadata
@@ -20,6 +22,9 @@ class PlanContext:
     target_date: date | None = None
     timezone: str = 'Asia/Seoul'
     step_hours: Mapping[str, int] = field(default_factory=dict)
+    step_allocations: Mapping[str, tuple[datetime, ...]] = field(default_factory=dict)
+    requirement_metadata: Mapping[str, RequirementMetadata | None] = field(default_factory=dict)
+    as_of: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,14 +35,6 @@ class PlanStepInput:
 
 class PlanModel(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra='forbid', frozen=True, strict=True)
-
-
-class PlanOverrides(PlanModel):
-    weekly_hours: int
-    rest_weeks: tuple[int, ...]
-    order: tuple[str, ...]
-    hours: dict[str, int]
-    saved_at: datetime | None
 
 
 class WeeklyPlanAllocation(PlanModel):
@@ -71,6 +68,19 @@ class WeeklyPlanStep(PlanModel):
     unmet_prerequisite_step_ids: tuple[UUID, ...]
     completion_criteria: tuple[str, ...] = ()
     week_allocations: tuple[WeeklyPlanAllocation, ...] = ()
+    planned_start_at: datetime | None = None
+    planned_end_at: datetime | None = None
+
+
+class PlanOverrides(PlanModel):
+    weekly_hours: int
+    rest_weeks: tuple[int, ...]
+    order: tuple[str, ...]
+    hours: dict[str, int]
+    saved_at: datetime | None
+    version: int = 0
+    is_customized: bool = True
+    step_schedules: dict[str, WeeklyPlanStep] = Field(default_factory=dict)
 
 
 class WeeklyPlanWarning(PlanModel):
@@ -81,6 +91,7 @@ class WeeklyPlanWarning(PlanModel):
 
 
 class WeeklyPlanResponse(PlanModel):
+    version: int = 0
     roadmap_id: UUID
     start_date: date
     target_date: date | None

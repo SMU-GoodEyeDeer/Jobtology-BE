@@ -137,6 +137,7 @@ def test_public_occupation_whitelists_only_catalog_fields() -> None:
     # Then: identifiers/labels are preserved without private provenance or synthetic mapping.
     assert response.model_dump() == {
         "id": "ncs-1", "code": "NCS-CODE", "kind": "occupation", "name": "Source label",
+        "scheme_id": "NCS", "source_release_id": None, "source_uri": None,
     }
     with pytest.raises(ValidationError) as failure:
         Neo4jOccupationResponse.model_validate({**response.model_dump(), "reviewer": "private"})
@@ -156,6 +157,20 @@ def test_source_competency_keeps_its_label_distinct_from_occupation() -> None:
     # Then: it remains a competency type, not an occupation instance.
     assert node.name == "Source label"
     assert not isinstance(node, Neo4jOccupationNode)
+
+
+def test_catalog_specific_provenance_is_required_for_each_occupation_scheme() -> None:
+    identity = {"id": "occupation-1", "code": "15-1252.00", "kind": "occupation", "name": "Developer"}
+    with pytest.raises(ValidationError):
+        Neo4jOccupationNode.model_validate({**identity, "scheme_id": "NCS"})
+    with pytest.raises(ValidationError):
+        Neo4jOccupationNode.model_validate({**identity, "scheme_id": "ONET"})
+    node = Neo4jOccupationNode.model_validate({**identity, "scheme_id": "ONET",
+        "source_release_id": "onet-31", "source_uri": "https://www.onetonline.org/"})
+    public = Neo4jOccupationResponse.from_source(node).model_dump()
+    assert public["scheme_id"] == "ONET"
+    assert public["source_release_id"] == "onet-31"
+    assert "name_source_record_id" not in public
 
 
 def test_public_alignment_exposes_safe_source_context_without_private_decision_details() -> None:

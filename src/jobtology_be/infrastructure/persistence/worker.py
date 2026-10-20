@@ -225,7 +225,8 @@ class WorkerRepository:
             updated_latest_analysis=pointer.rowcount == 1,
         )
 
-    async def fail_recompute(self, work_item: RecomputeWorkItem, error_code: str) -> None:
+    async def fail_recompute(self, work_item: RecomputeWorkItem, error_code: str, *,
+                             failure_details: Mapping[str, JsonValue] | None = None) -> None:
         now = datetime.now(UTC)
         async with self._database.sessions.begin() as session:
             # Serialize with account erasure before taking job locks or inserting
@@ -293,7 +294,8 @@ class WorkerRepository:
                     recompute_requests.c.id == work_item.request_id,
                     recompute_requests.c.state == "RUNNING",
                 )
-                .values(state="FAILED", error_code=error_code, updated_at=now)
+                .values(state="FAILED", error_code=error_code, updated_at=now,
+                        failure_details=dict(failure_details) if failure_details is not None else None)
             )
             if failed_request.rowcount != 1:
                 raise PersistenceConflictError(resource="recompute request")

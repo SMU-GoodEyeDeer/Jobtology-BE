@@ -24,6 +24,7 @@ from jobtology_be.api.neo4j_catalog import Neo4jCatalogQueries, require_neo4j_ca
 from jobtology_be.api.preferences import require_preferences_service
 from jobtology_be.api.product_queries import require_product_queries
 from jobtology_be.api.profiles import require_profile_service
+from jobtology_be.api.readiness import RuntimeReadiness
 from jobtology_be.api.roadmap_plan import require_weekly_plan_store
 from jobtology_be.api.roadmaps import require_roadmap_service
 from jobtology_be.api.role_evidence_graph import (
@@ -59,6 +60,7 @@ from jobtology_be.editorial.reader import DraftReadService
 from jobtology_be.infrastructure.persistence.database import Database
 from jobtology_be.infrastructure.persistence.live_source_feed import LiveSourceFeed
 from jobtology_be.infrastructure.persistence.rate_limit import AccountRateLimiter
+from jobtology_be.infrastructure.persistence.retention import cleanup_loop
 from jobtology_be.infrastructure.persistence.source_catalog import (
     CatalogQueries,
     PostgresSourceCatalog,
@@ -91,6 +93,8 @@ OPENAPI_TAGS = [
     {"name": "editorial drafts", "description": "명시적으로 설정한 미검토 초안 읽기입니다."},
 ]
 
+CATALOG_RETRY_DELAY_SECONDS = 3
+
 
 @asynccontextmanager
 async def lifespan(
@@ -101,15 +105,23 @@ async def lifespan(
     role_holder: ProductRoleHolder | None = None,
     inprocess_worker: InProcessRecomputeLoop | None = None,
     resume_service: ResumeService | None = None,
+    *,
+    role_catalog_required: bool = False,
+    worker_required: bool = False,
 ) -> AsyncIterator[None]:
+    _app.state.readiness = RuntimeReadiness(
+        database, role_holder, inprocess_worker, role_catalog_required, worker_required,
+    )
     try:
         if role_holder is not None:
             _ = await role_holder.load()
         async with anyio.create_task_group() as tasks:
+            if database is not None:
+                tasks.start_soon(cleanup_loop, database)
             if resume_service is not None:
                 tasks.start_soon(resume_service.cleanup_loop)
-            if role_holder is not None and role_holder.available and inprocess_worker is not None:
-                _ = tasks.start_soon(inprocess_worker.run)
+            if role_holder is not None:
+                tasks.start_soon(_run_product_worker, role_holder, inprocess_worker)
             try:
                 yield
             finally:
@@ -127,6 +139,20 @@ async def lifespan(
                     await source_catalog.dispose()
 
 
+async def _run_product_worker(
+    holder: ProductRoleHolder, worker: InProcessRecomputeLoop | None,
+) -> None:
+    while not holder.available:
+        # Approval/content errors require operator review. Database retries
+        # always pass through the exact approval check again.
+        if not holder.retryable_load_failure:
+            return
+        await anyio.sleep(CATALOG_RETRY_DELAY_SECONDS)
+        await holder.load()
+    if worker is not None:
+        await worker.run()
+
+
 def database_lifespan(
     database: Database | None,
     corpus_source: ConfiguredCorpusSource | None = None,
@@ -134,8 +160,14 @@ def database_lifespan(
     role_holder: ProductRoleHolder | None = None,
     inprocess_worker: InProcessRecomputeLoop | None = None,
     resume_service: ResumeService | None = None,
+    *,
+    role_catalog_required: bool = False,
+    worker_required: bool = False,
 ) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
-    return lambda app: lifespan(app, database, corpus_source, source_catalog, role_holder, inprocess_worker, resume_service)
+    return lambda app: lifespan(
+        app, database, corpus_source, source_catalog, role_holder, inprocess_worker, resume_service,
+        role_catalog_required=role_catalog_required, worker_required=worker_required,
+    )
 
 
 def configured_analysis_context_factory(

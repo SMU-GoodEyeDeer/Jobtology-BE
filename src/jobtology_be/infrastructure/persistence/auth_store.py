@@ -2,7 +2,7 @@ from datetime import timedelta
 from uuid import UUID, uuid4
 
 from pydantic import SecretStr
-from sqlalchemy import Interval, bindparam, delete, func, insert, select, update
+from sqlalchemy import Interval, bindparam, delete, func, insert, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,17 +26,30 @@ from jobtology_be.infrastructure.persistence.schema import (
 OAUTH_LOGIN_ATTEMPT_LIFETIME = timedelta(minutes=10)
 
 
+async def prune_auth_records(session: AsyncSession, *, limit: int = 1000) -> None:
+    """Delete unusable credentials in bounded batches without locking active sessions."""
+    await session.execute(delete(auth_sessions).where(auth_sessions.c.id.in_(
+        select(auth_sessions.c.id)
+        .where(or_(auth_sessions.c.expires_at <= func.current_timestamp(),
+                   auth_sessions.c.revoked_at.is_not(None)))
+        .order_by(auth_sessions.c.expires_at, auth_sessions.c.id)
+        .limit(limit).with_for_update(skip_locked=True)
+    )))
+    await session.execute(delete(oauth_login_attempts).where(oauth_login_attempts.c.state_hash.in_(
+        select(oauth_login_attempts.c.state_hash)
+        .where(oauth_login_attempts.c.expires_at <= func.current_timestamp())
+        .order_by(oauth_login_attempts.c.expires_at, oauth_login_attempts.c.state_hash)
+        .limit(limit).with_for_update(skip_locked=True)
+    )))
+
+
 class PostgresAuthStore:
     def __init__(self, database: Database) -> None:
         self._database = database
 
     async def create_oauth_login_attempt(self, attempt: OAuthLoginAttempt) -> None:
         async with self._database.sessions.begin() as session:
-            await session.execute(
-                delete(oauth_login_attempts).where(
-                    oauth_login_attempts.c.expires_at <= func.current_timestamp()
-                )
-            )
+            await prune_auth_records(session)
             await session.execute(
                 insert(oauth_login_attempts).values(
                     state_hash=attempt.state_hash,
@@ -78,6 +91,7 @@ class PostgresAuthStore:
 
     async def create_google_session(self, login: GoogleLogin) -> IssuedSession | None:
         async with self._database.sessions.begin() as session:
+            await prune_auth_records(session)
             user_id = await self._active_user_id(session, login.google_subject)
             if user_id is None:
                 candidate_user_id = uuid4()

@@ -1,10 +1,11 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 from uuid import UUID
 
 import anyio
 
+from jobtology_be.application.requirement_metadata import RequirementMetadata
 from jobtology_be.application.services.analyses import AnalysisRequestCommand
 from jobtology_be.application.services.analysis_context import (
     AnalysisContextInputs,
@@ -183,7 +184,9 @@ def test_snapshot_backed_context_factory_pins_current_inputs_and_release() -> No
     )
     factory = SnapshotBackedAnalysisContextFactory(
         source=StaticInputSource(inputs, expected_reference_at=REFERENCE_AT),
-        snapshot_reader=StaticSnapshotReader(_snapshot()),
+        snapshot_reader=StaticSnapshotReader(replace(_snapshot(), requirement_metadata={
+            'api': RequirementMetadata(4, 50, 8, 'OFFICIAL'),
+        })),
         configuration=ContextSnapshotConfiguration(
             basis_version="reviewed-v1",
             release_id="release-reviewed-v1",
@@ -200,6 +203,9 @@ def test_snapshot_backed_context_factory_pins_current_inputs_and_release() -> No
     context = anyio.run(factory.create_context, USER_ID, command)
 
     # Then
+    assert context.requirement_metadata['api'].demand_pct == 50
+    restored = RecomputeContextDocument.model_validate_json(context.model_dump_json()).to_context()
+    assert restored.requirement_metadata['api'].estimated_hours == 8
     assert context.user_id == USER_ID
     assert context.profile_version == 3
     assert context.goal_id == GOAL_ID

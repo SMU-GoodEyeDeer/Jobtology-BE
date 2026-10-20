@@ -1,7 +1,7 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import Literal, Protocol
 from uuid import UUID
 
 from jobtology_be.application.services.analyses import AnalysisRequestCommand
@@ -36,6 +36,7 @@ class AnalysisContextInputs:
     calendar: tuple[PlanningSlot, ...]
     candidate_availability: tuple[CandidateAvailability, ...]
     solver_settings: SolverSettings
+    calendar_policy: Literal["EXPLICIT", "FLEXIBLE_WEEKLY_V1"] = "EXPLICIT"
 
 
 class AnalysisContextInputSource(Protocol):
@@ -72,6 +73,7 @@ class SnapshotBackedAnalysisContextFactory:
         _ = snapshot.baseline_for_recompute(allow_fixture=self.configuration.allow_fixture)
         document = RecomputeContextDocument.model_validate(
             {
+                "requirement_metadata": dict(snapshot.requirement_metadata),
                 "user_id": user_id,
                 "profile_version": command.expected_profile_version,
                 "goal_id": command.goal_id,
@@ -97,6 +99,7 @@ class SnapshotBackedAnalysisContextFactory:
                 "constraints": inputs.constraints,
                 "reference_at": reference_at,
                 "planning_started_at": reference_at,
+                "calendar_policy": inputs.calendar_policy,
                 "calendar": tuple(
                     {
                         "starts_at": slot.starts_at,
