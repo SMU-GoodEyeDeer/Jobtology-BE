@@ -1,3 +1,4 @@
+import re
 from datetime import date
 from typing import Annotated, Final
 
@@ -9,6 +10,7 @@ from jobtology_be.api.live_source_models import (
     ExamSessionsResponse,
     NcsDemandResponse,
     NcsUnitResponse,
+    OccupationContextResponse,
     PostingResponse,
     PostingsResponse,
 )
@@ -32,6 +34,28 @@ def _allowed_query(request: Request, allowed: frozenset[str]) -> None:
     params = request.query_params
     if set(params) - allowed or any(len(params.getlist(key)) != 1 for key in params):
         raise HTTPException(status_code=422)
+
+
+@router.get("/occupation-context", response_model=OccupationContextResponse, responses=_RESPONSES)
+async def occupation_context(
+    request: Request,
+    _: Annotated[AuthenticatedPrincipal, Depends(require_authenticated_principal)],
+    feed: Annotated[LiveSourceFeed, Depends(require_live_source_feed)],
+    occupation_codes: Annotated[str | None, Query(max_length=1500)] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> OccupationContextResponse:
+    """Inferred occupation exposure with exact source/review pins; never competency credit."""
+    _allowed_query(request, frozenset({"occupation_codes", "limit", "offset"}))
+    codes = occupation_codes.split(",") if occupation_codes is not None else None
+    if codes is not None and (len(codes) > 100 or any(
+        re.fullmatch(r"(?:[0-9]{8}|[0-9]{2}-[0-9]{4}\.[0-9]{2})", code) is None for code in codes
+    )):
+        raise HTTPException(status_code=422)
+    try:
+        return await feed.occupation_context(codes, limit, offset)
+    except LiveSourceReadError as error:
+        raise HTTPException(status_code=error.status_code) from None
 
 
 @router.get("/postings", response_model=PostingsResponse, responses=_RESPONSES)

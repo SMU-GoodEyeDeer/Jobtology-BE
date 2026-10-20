@@ -63,6 +63,7 @@ def carry_forward_recompute_context(
         if not calendar:
             raise ContextCarryforwardError()
         payload: Mapping[str, JsonValue] = {
+            "requirement_metadata": previous.model_dump(mode="json")["requirement_metadata"],
             "user_id": str(input.user_id),
             "profile_version": input.profile_version,
             "goal_id": str(input.goal_id),
@@ -79,6 +80,7 @@ def carry_forward_recompute_context(
             "constraints": constraints.model_dump(mode="json"),
             "reference_at": input.now.isoformat(),
             "planning_started_at": input.now.isoformat(),
+            "calendar_policy": "FLEXIBLE_WEEKLY_V1",
             "calendar": calendar,
             "candidate_availability": tuple(
                 {

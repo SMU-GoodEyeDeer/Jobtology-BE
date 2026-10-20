@@ -37,6 +37,7 @@ class Names:
 
 
 class Metadata:
+    release_id = "r1"
     def lookup(self, requirement_key: str) -> RequirementMetadata | None:
         return {
             'required': RequirementMetadata(ncs_level=4, demand_pct=32,

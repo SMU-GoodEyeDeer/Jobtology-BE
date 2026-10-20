@@ -7,6 +7,7 @@ from typing import ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from jobtology_be.application.requirement_metadata import RequirementMetadata
 from jobtology_be.corpus.snapshot import (
     PublishedCorpusSnapshot,
     PublishedSnapshotSelection,
@@ -77,6 +78,7 @@ class _SnapshotJson(_JsonModel):
     allowed_experience_codes: frozenset[str]
     requirements: tuple[_RequirementJson, ...]
     templates: tuple[_TemplateJson, ...]
+    requirement_metadata: dict[str, RequirementMetadata] = Field(default_factory=dict)
 
     def to_snapshot(self) -> PublishedCorpusSnapshot:
         return PublishedCorpusSnapshot(
@@ -88,6 +90,7 @@ class _SnapshotJson(_JsonModel):
                 reviewed_at=self.release.reviewed_at,
             ),
             is_fixture=self.is_fixture,
+            requirement_metadata=dict(self.requirement_metadata),
             capability_entries=tuple(
                 CapabilityCatalogEntry(entity_id=entry.entity_id, aliases=entry.aliases)
                 for entry in self.capability_entries

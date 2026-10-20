@@ -1,6 +1,7 @@
 import logging
 from importlib.resources.abc import Traversable
 
+import anyio
 from pydantic import ValidationError
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -26,6 +27,7 @@ from jobtology_be.product_roles.models import ArtifactApproval, ProductRoleInput
 
 _logger = logging.getLogger(__name__)
 _UNAVAILABLE = "Product role release not loaded; occupations, checklist and analysis return 503"
+ROLE_LOAD_TIMEOUT_SECONDS = 10
 
 
 class ProductRoleHolder:
@@ -40,6 +42,7 @@ class ProductRoleHolder:
         self.approval_path: Traversable | None = approval_path
         self._built: BuiltProductRoles | None = None
         self._draft: ProductRoleDraft | None = None
+        self.retryable_load_failure: bool = False
 
     @property
     def draft(self) -> ProductRoleDraft | None:
@@ -58,15 +61,17 @@ class ProductRoleHolder:
     async def load(self) -> bool:
         self._built = None
         self._draft = None
+        self.retryable_load_failure = False
         try:
             policy = ProductRolePolicy.model_validate_json(self.policy_path.read_text())
-            async with self.engine.connect() as connection, connection.begin():
-                _ = await connection.execute(text("SET TRANSACTION ISOLATION LEVEL READ COMMITTED, READ ONLY"))
-                result = await connection.execute(
-                    text("SELECT CAST(catalog.product_role_inputs_v1(CAST(:codes AS text[])) AS text)"),
-                    {"codes": list(policy.requested_occupation_codes)},
-                )
-                payload = result.scalar_one()
+            with anyio.fail_after(ROLE_LOAD_TIMEOUT_SECONDS):
+                async with self.engine.connect() as connection, connection.begin():
+                    _ = await connection.execute(text("SET TRANSACTION ISOLATION LEVEL READ COMMITTED, READ ONLY"))
+                    result = await connection.execute(
+                        text("SELECT CAST(catalog.product_role_inputs_v1(CAST(:codes AS text[])) AS text)"),
+                        {"codes": list(policy.requested_occupation_codes)},
+                    )
+                    payload = result.scalar_one()
             if not isinstance(payload, str):
                 _logger.warning("%s: catalog returned no product role inputs", _UNAVAILABLE)
                 return False
@@ -86,9 +91,13 @@ class ProductRoleHolder:
                 )
                 return False
             self._built = self._draft.publish(approval)
-        except (SQLAlchemyError, ValidationError, ProductRoleBuildError,
+        except (SQLAlchemyError, TimeoutError, OSError) as error:
+            self.retryable_load_failure = True
+            _logger.warning("%s: load failed (%s)", _UNAVAILABLE, type(error).__name__, exc_info=True)
+            return False
+        except (ValidationError, ProductRoleBuildError,
                 CorpusSnapshotError, EditorialBaselineError, CandidateTemplateError,
-                OSError, TimeoutError, ValueError) as error:
+                ValueError) as error:
             _logger.warning("%s: load failed (%s)", _UNAVAILABLE, type(error).__name__, exc_info=True)
             return False
         return True
@@ -100,6 +109,12 @@ class ProductRoleHolder:
 
     def display_name(self, occupation_id: str) -> str | None:
         return self._built.names.get(occupation_id) if self._built is not None else None
+
+    @property
+    def release_id(self) -> str | None:
+        if self._built is None or not self._built.reader.snapshots:
+            return None
+        return self._built.reader.snapshots[0].release.release_id
 
     def lookup(self, requirement_key: str) -> RequirementMetadata | None:
         return self._built.metadata.get(requirement_key) if self._built is not None else None

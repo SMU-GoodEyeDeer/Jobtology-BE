@@ -8,7 +8,10 @@ from sqlalchemy import insert, update
 from sqlalchemy.engine import make_url
 
 from jobtology_be.application.weekly_plan_models import PlanOverrides
-from jobtology_be.infrastructure.persistence.contracts import MissingRecordError
+from jobtology_be.infrastructure.persistence.contracts import (
+    MissingRecordError,
+    PersistenceConflictError,
+)
 from jobtology_be.infrastructure.persistence.database import Database
 from jobtology_be.infrastructure.persistence.schema import (
     analyses,
@@ -68,6 +71,8 @@ async def exercise_store(database_url):
                     {'estimated_hours': 3},
                     None, ['invalid-step'], 'invalid-step',
                     {'step_key': 'another-valid-study', 'estimated_hours': 11},
+                    {'step_key': 'invalid-allocation', 'estimated_hours': 1,
+                     'slot_allocations': [{'starts_at': 'broken', 'ends_at': 'also broken'}]},
                 ], decision_trace_id=trace,
             ))
             await session.execute(insert(roadmaps).values(
@@ -79,14 +84,15 @@ async def exercise_store(database_url):
         context = await store.get_context(owner, roadmap)
         missing = await store.get(owner, roadmap)
         first = await store.upsert(owner, roadmap, plan)
-        changed = await store.upsert(owner, roadmap, plan.model_copy(update={'weekly_hours': 20}))
+        changed = await store.upsert(owner, roadmap, plan.model_copy(update={'weekly_hours': 20, 'version': 1}))
         persisted = await store.get(owner, roadmap)
         # Then
         assert context.created_at == created
         assert context.recommended_weekly_hours == 12
         assert context.target_date.isoformat() == '2027-04-15'
         assert context.timezone == 'Asia/Seoul'
-        assert context.step_hours == {'pinned-study': 7, 'another-valid-study': 11}
+        assert context.step_hours == {'pinned-study': 7, 'another-valid-study': 11, 'invalid-allocation': 1}
+        assert 'invalid-allocation' not in context.step_allocations
         assert missing is None
         assert first.weekly_hours == 12
         assert changed == persisted
@@ -100,11 +106,31 @@ async def exercise_store(database_url):
             with pytest.raises(MissingRecordError):
                 await store.upsert(other, roadmap, plan)
             with pytest.raises(MissingRecordError):
-                await store.delete(other, roadmap)
+                await store.delete(other, roadmap, 0)
         assert await store.get(owner, roadmap) == changed
-        await store.delete(owner, roadmap)
-        assert await store.get(owner, roadmap) is None
-        await store.delete(owner, roadmap)
+        with pytest.raises(PersistenceConflictError):
+            await store.upsert(owner, roadmap, plan)
+        reset = await store.delete(owner, roadmap, changed.version)
+        assert reset.version == 3 and not reset.is_customized
+        assert await store.get(owner, roadmap) == reset
+        with pytest.raises(PersistenceConflictError):
+            await store.delete(owner, roadmap, changed.version)
+        second_reset = await store.delete(owner, roadmap, reset.version)
+        assert second_reset.version == 4
+        successes, conflicts = [], []
+        async def competing_save(weekly_hours):
+            try:
+                successes.append(await store.upsert(owner, roadmap, second_reset.model_copy(update={
+                    'weekly_hours': weekly_hours, 'is_customized': True,
+                })))
+            except PersistenceConflictError as error:
+                conflicts.append(error)
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(competing_save, 15)
+            tasks.start_soon(competing_save, 20)
+        assert len(successes) == len(conflicts) == 1
+        assert successes[0].version == 5
+        assert await store.get(owner, roadmap) == successes[0]
         async with database.sessions.begin() as session:
             await session.execute(update(route_proposals).where(route_proposals.c.id == proposal)
                                   .values(constraints_snapshot={}))

@@ -67,10 +67,11 @@ Google 이름을 받기 위해 기존 Google Cloud 클라이언트를 교체할 
 | `DELETE /api/v1/roadmaps/{roadmap_id}/plan` | 설정을 삭제하고 원본 솔버 일정을 반환합니다. |
 
 모두 인증이 필요하며 POST/PUT/DELETE에는 `X-CSRF-Token`을 전송하세요.
-타인 소유·없는 로드맵은 `404 NOT_FOUND`입니다. 설정 본문은 아래 네 필드가 필수입니다.
+타인 소유·없는 로드맵은 `404 NOT_FOUND`입니다. 설정 본문은 아래 다섯 필드가 필수입니다.
 
 ```json
 {
+  "expected_version": 0,
   "weekly_hours": 12,
   "rest_weeks": [10, 11],
   "order": ["로드맵의 모든 step_id를 원하는 순서로 나열"],
@@ -78,6 +79,12 @@ Google 이름을 받기 위해 기존 Google Cloud 클라이언트를 교체할 
 }
 ```
 
+- 모든 응답의 `version`은 설정 전용 버전입니다(처음 0). PUT/미리보기는 마지막으로 읽은 값을
+  `expected_version`에, DELETE는 `?expected_version=...`에 보냅니다. 저장/초기화는 버전을 올리며,
+  오래된 저장/초기화는 `409`이므로 최신 플랜을 읽은 후 사용자가 변경을 다시 적용해야 합니다.
+  미리보기는 버전을 올리지 않습니다. 초기화 후에도 버전은 0으로 돌아가지 않습니다.
+- 완료 단계의 시간 변경은 `422`입니다. 저장/초기화는 완료 단계의 기존 날짜·시간 배분을 유지하고,
+  새 사용자 일정의 미완료 활동만 현재 시점 이후로 다시 배치합니다.
 - `weekly_hours`: 1~60 정수. `rest_weeks`: 중복 없는 1~104주 정수 배열.
 - `order`: 모든 단계 ID의 정확한 순열. `hours`: 단계 ID 일부와 1~400 정수 시간.
   추천 시간과 같은 값은 별도 수정으로 보지 않습니다.
@@ -92,8 +99,11 @@ Google 이름을 받기 위해 기존 Google Cloud 클라이언트를 교체할 
 - `schedule_source`: `SOLVER`는 저장된 원본 날짜, `CUSTOM`은 사용자 설정으로 계산한 주간 일정,
   `FALLBACK`은 원본 날짜가 없는 단계의 추정 일정입니다.
 - `steps[].start_date/end_date`: 솔버 모드에서는 저장된 정확한 날짜입니다. 주차 표시에 맞춰
-  월요일·일요일로 덮어쓰지 마세요. 시간대는 목표의 IANA 시간대입니다.
-- `steps[].week_allocations`: 사용자 설정/추정 일정의 정확한 주차별 `{week, hours}` 배분입니다.
+  월요일·일요일로 덮어쓰지 마세요. 시간대는 목표의 IANA 시간대입니다. `planned_start_at`과
+  `planned_end_at`은 정확한 `[시작, 종료)` 구간입니다. 날짜/주차의 종료는 마지막 점유일이므로
+  자정 종료를 다음 날의 학습으로 표시하지 않습니다.
+- `steps[].week_allocations`: 저장된 솔버 시간 슬롯 또는 사용자 설정/추정 일정의 정확한 주차별
+  `{week, hours}` 배분입니다.
   브라우저에서 전체 시간을 다시 직렬 배분하지 마세요. 원본 시간 슬롯이 저장되지 않은 솔버
   일정에서는 빈 배열일 수 있으며, 원본 날짜 범위를 기준으로 표시합니다.
 - `steps[].title`과 `completion_criteria`는 저장된 활동과 완료 기준입니다. 포트폴리오 활동의
@@ -293,8 +303,11 @@ Idempotency-Key: <클라이언트 생성 UUID>
 { "goal_id": "...", "expected_profile_version": 3, "basis_type": "EDITORIAL" }
 ```
 
-- 같은 목표·같은 프로필 버전으로 진행 중이거나 완료된 계산이 있으면 새로 계산하지 않고 그 요청을
-  그대로 돌려줍니다. 화면 진입 시에는 먼저 `GET /api/v1/dashboard?goal_id=...`의
+- 동일한 목표·프로필·코퍼스 release·입력 인정치·조건·기준일·주간 캘린더 용량이면 진행 중인
+  요청을 공유합니다. 완료 결과는 같은 유효 컨텍스트일 때만 재사용합니다. 기준일이나 release,
+  유효기간에 따른 인정치가 바뀌면 새 요청을 생성합니다. 완료 후 수동 재분석에는 `refresh: true`를
+  추가하세요. 이 경우에도 같은 입력으로 진행 중인 작업은 공유하며, 같은 `Idempotency-Key`는
+  첫 응답을 재생합니다. 새 재분석에는 새 키를 사용하세요. 화면 진입 시에는 먼저 `GET /api/v1/dashboard?goal_id=...`의
   `state`/`analysis_id`로 저장된 결과를 조회하고, 결과가 없을 때만 분석을 요청하세요.
   프로필·역량·조건이 바뀌면 서버가 자동으로 재계산합니다.
 - 성공 시 `202 Accepted`와 함께 `{recompute_request_id, state, status_url}`을
@@ -339,6 +352,8 @@ Idempotency-Key: <클라이언트 생성 UUID>
 | `qualifications` | 승인된 입력의 **선택된 NCS 버전**에 연결된 Q-Net 자격 `{code, name, display_name, kind}` 배열. `name`은 원본(null 가능), `display_name`은 화면용 이름(항상 제공), `kind`는 `NATIONAL_TECHNICAL`(국가기술자격) / `WORK_LEARNING`(일학습병행자격) / null. 일학습병행은 `SW개발_L5_25V2` → `SW개발 5수준`처럼 풀고, 같은 이름·수준은 최신 기준 하나만 남깁니다. 국가기술자격이 먼저 정렬됩니다 |
 
 자격 연결이 없거나 메타데이터를 사용할 수 없으면 `qualifications`는 `[]`입니다.
+신규 분석의 수요·NCS 수준·자격·학습 시간은 결과에 고정됩니다. 과거 결과는 release ID가 정확히
+일치하는 메타데이터만 보충하며, 다른 release의 현재 메타데이터를 섞지 않습니다.
 메타데이터가 없을 때는 `ncs_base_code`, `ncs_level`, `estimated_hours`, `hours_basis`가
 모두 null이지만 `requirement_key`와 `status`는 저장값을 유지합니다. null을 0으로
 치환하거나 자격 연결을 취득 자격·응시 적격성으로 해석하지 마세요.
@@ -363,8 +378,14 @@ nara_job, 중복 제거) 중 이 역량을 요구한 공고의 비율(0–100 �
   질문으로 답합니다(기본 `"counsel"`).
 - 후보는 활성 목표 직무의 승인된 요구 역량 중 아직 보유하지 않은 것만, 사용자 발화를 글자 그대로
   인용한 근거와 함께 나옵니다. **자동 저장하지 않습니다.**
-- 사용자가 확인하면 `POST /api/v1/me/capabilities`로 `category: "chat"`, `raw_text: label`,
-  `details: {"source": "chat", "evidence_quote": ...}`를 저장합니다. 원문 대신 근거 문장만 남깁니다.
+- 사용자가 확인하면 `POST /api/v1/me/capabilities`로 실제 분류(`skill`, `certification`, `test`,
+  `project`, `experience`)와 `raw_text: label`, 명시적으로 선택한 `proficiency`,
+  `details: {"source": "LLM_ASSISTED", "competency_ids": [entity_id], "evidence": evidence_quote}`를
+  저장합니다. 인정에는 20자 이상의 구체적 근거가 필요하므로 인용이 짧으면 사용자가 사실에 맞게
+  보충해야 합니다. 자격/시험의 발급·만료일도 확인합니다. 후보나 제목만으로는 인정되지 않습니다.
+- 후보 제외는 분석과 같은 활성 상태·확인 역량 ID·근거·경험 수준·유효기간 규칙에 따른 완전 인정
+  역량에만 적용합니다. 부분 인정 기록은 보완할 수 있습니다. 인용은 대소문자·공백·문장부호까지
+  사용자 발화의 정확한 부분 문자열이어야 합니다.
 - LLM 미설정·실패 시 `503`, 사용자당 분당 20회를 넘으면 `429`입니다.
 
 ### 4. 로드맵 제안 확인

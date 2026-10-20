@@ -11,22 +11,25 @@ from jobtology_be.api.live_source_models import (
     ExamSessionsResponse,
     NcsDemandResponse,
     NcsUnitResponse,
+    OccupationContextResponse,
     PostingResponse,
     PostingsResponse,
 )
 
-type LiveOperation = Literal["postings", "posting", "exam_sessions", "ncs_demand", "ncs_unit"]
+type LiveOperation = Literal["postings", "posting", "exam_sessions", "ncs_demand", "ncs_unit", "occupation_context"]
 _FUNCTIONS: Final = {
     "postings": "SELECT CAST(catalog.live_postings_v1(:q, :ncs_category, :region, CAST(:open_on AS date), :limit, :offset) AS text)",
     "posting": "SELECT CAST(catalog.live_posting_v1(:posting_id) AS text)",
     "ncs_unit": "SELECT CAST(catalog.live_ncs_unit_v1(:base_code) AS text)",
     "exam_sessions": "SELECT CAST(catalog.live_exam_sessions_v1(:qualification, CAST(:from_date AS date), CAST(:to_date AS date), :limit, :offset) AS text)",
     "ncs_demand": "SELECT CAST(catalog.live_ncs_demand_v1(:ncs_prefix, :limit, :offset) AS text)",
+    "occupation_context": "SELECT CAST(catalog.inferred_occupation_context_v1(CAST(:codes AS text[]), :limit, :offset) AS text)",
 }
 _ERROR_STATUS: Final = {
     "LIVE_SOURCE_UNAVAILABLE": 503,
     "INVALID_LIVE_PAGE": 422,
     "INVALID_LIVE_FILTER": 422,
+    "INVALID_OCCUPATION_CONTEXT_FILTER": 422,
     "LIVE_POSTING_NOT_FOUND": 404,
 }
 
@@ -48,6 +51,10 @@ def live_source_error_status(error: DBAPIError) -> int:
 
 
 class LiveSourceFeed(Protocol):
+    async def occupation_context(
+        self, codes: list[str] | None, limit: int, offset: int,
+    ) -> OccupationContextResponse: ...
+
     async def postings(
         self, q: str | None, ncs_category: str | None, region: str | None,
         open_on: date | None, limit: int, offset: int,
@@ -72,7 +79,7 @@ class PostgresLiveSourceFeed:
     engine: AsyncEngine
 
     async def _read[T: BaseModel](
-        self, operation: LiveOperation, params: dict[str, str | int | date | None], model: type[T],
+        self, operation: LiveOperation, params: dict[str, str | int | date | list[str] | None], model: type[T],
     ) -> T:
         try:
             async with self.engine.connect() as connection, connection.begin():
@@ -96,6 +103,13 @@ class PostgresLiveSourceFeed:
             "open_on": open_on,
             "limit": limit, "offset": offset,
         }, PostingsResponse)
+
+    async def occupation_context(
+        self, codes: list[str] | None, limit: int, offset: int,
+    ) -> OccupationContextResponse:
+        return await self._read("occupation_context", {
+            "codes": codes, "limit": limit, "offset": offset,
+        }, OccupationContextResponse)
 
     async def posting(self, posting_id: str) -> PostingResponse:
         return await self._read("posting", {"posting_id": posting_id}, PostingResponse)

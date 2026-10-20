@@ -22,6 +22,7 @@ class NcsCategory(LiveRead):
 
 class PostingItem(LiveRead):
     posting_id: str
+    source_id: str | None = None
     title: str | None
     organization_code: str | None
     organization_name: str | None
@@ -35,6 +36,89 @@ class PostingItem(LiveRead):
     ncs_categories: list[NcsCategory]
     headcount: int | None
     source_url: str | None
+    source_status: str | None = None
+    deadline_kind: str | None = None
+    deadline_basis: str | None = None
+    ongoing_basis: str | None = None
+    application_start_date: DateText | None = None
+    application_start_at: str | None = None
+    deadline_at: str | None = None
+    source_provenance: LiveSource | None = None
+
+
+class AssociationCounts(LiveRead):
+    associations: int = Field(ge=0)
+    postings: int = Field(ge=0)
+    current_associations: int = Field(ge=0)
+    source_current_associations: int = Field(default=0, ge=0)
+    catalog_current_associations: int = Field(default=0, ge=0)
+
+
+class AssociationSourceCounts(AssociationCounts):
+    source_id: str
+
+
+class AssociationOccupationCounts(AssociationCounts):
+    occupation_scheme: Literal["NCS", "ONET"]
+    occupation_code: str
+    occupation_name: str | None
+
+
+class OccupationContextSummary(AssociationCounts):
+    stale_associations: int = Field(default=0, ge=0)
+    unknown_associations: int = Field(default=0, ge=0)
+    by_source: list[AssociationSourceCounts]
+    by_occupation: list[AssociationOccupationCounts] = Field(default_factory=list)
+
+
+class AssociationSourcePins(LiveRead):
+    run_id: str | None = None
+    source_hash: str | None = None
+    normalized_hash: str | None = None
+    source_facts_sha256: str | None = None
+
+
+class AssociationCatalogPins(LiveRead):
+    pin: str | None = None
+    catalog_hash: str | None = None
+
+
+class OccupationAssociation(LiveRead):
+    posting_key: str
+    posting_identity: str
+    source_id: str
+    occupation_scheme: Literal["NCS", "ONET"]
+    occupation_code: str
+    occupation_name: str | None
+    association_id: str
+    basis: Literal["METADATA_INFERRED"]
+    assertion_kind: Literal["MODEL_INFERRED"]
+    review_status: Literal["UNREVIEWED", "ASSISTANT_REVIEWED", "HUMAN_REVIEWED"]
+    stage: str
+    confidence: None = None
+    confidence_state: Literal["UNASSESSED"]
+    source_freshness: Literal["CURRENT", "STALE", "UNKNOWN"]
+    catalog_freshness: Literal["CURRENT", "STALE", "UNKNOWN"]
+    source_pins: AssociationSourcePins
+    catalog_pins: AssociationCatalogPins
+    posting: PostingItem | None = None
+
+
+class OccupationContextFilters(LiveRead):
+    occupation_codes: list[str] | None
+
+
+class OccupationContextResponse(LiveRead):
+    contract_version: Literal["jobtology-inferred-occupation-context-v1"]
+    basis: Literal["METADATA_INFERRED"]
+    assertion_kind: Literal["MODEL_INFERRED"]
+    competency_evidence: Literal[False]
+    filters: OccupationContextFilters
+    limit: int = Field(ge=1, le=100)
+    offset: int = Field(ge=0)
+    total: int = Field(ge=0)
+    summary: OccupationContextSummary
+    items: list[OccupationAssociation]
 
 
 class PostingFilters(LiveRead):

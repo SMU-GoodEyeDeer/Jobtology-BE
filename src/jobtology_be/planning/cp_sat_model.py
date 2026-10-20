@@ -1,3 +1,4 @@
+from collections import Counter
 from dataclasses import dataclass
 from typing import assert_never
 
@@ -56,6 +57,11 @@ def build_route_model(
     }
     for candidate in candidates:
         assignments = assignments_by_action[candidate.action_id]
+        available_capacity = sum(min(count, problem.constraints.available_hours_per_week)
+                                 for count in Counter(slot.capacity_week_key for slot in problem.calendar
+                                                      if _is_available(slot, availability.get(candidate.action_id))).values())
+        if candidate.estimated_hours > available_capacity:
+            model.add(selected_by_action[candidate.action_id] == 0)
         model.add(sum(assignments) == candidate.estimated_hours * selected_by_action[candidate.action_id])
         for slot_index, assignment in enumerate(assignments):
             if not _is_available(problem.calendar[slot_index], availability.get(candidate.action_id)):

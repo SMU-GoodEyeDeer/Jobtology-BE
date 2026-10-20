@@ -299,6 +299,10 @@ roadmap_plan_overrides = Table(
     Column("rest_weeks", JSONB, nullable=False),
     Column("step_order", JSONB, nullable=False),
     Column("step_hours", JSONB, nullable=False),
+    Column("version", INTEGER, nullable=False, server_default=text("1")),
+    Column("is_customized", BOOLEAN, nullable=False, server_default=text("true")),
+    Column("step_schedules", JSONB, nullable=False, server_default=text("'{}'::jsonb")),
+    CheckConstraint("version >= 1", name="roadmap_plan_overrides_version_check"),
     Column("updated_at", DateTime(timezone=True), nullable=False, server_default=UTC_NOW),
     CheckConstraint("weekly_hours BETWEEN 1 AND 60", name="roadmap_plan_overrides_capacity_check"),
 )
@@ -373,6 +377,7 @@ recompute_requests = Table(
     Column("proposal_id", UUID(as_uuid=True), ForeignKey("route_proposals.id")),
     Column("auto_roadmap_pending", BOOLEAN, nullable=False, server_default=text("false")),
     Column("error_code", String(128)),
+    Column("failure_details", JSONB),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=UTC_NOW),
     Column("updated_at", DateTime(timezone=True), nullable=False, server_default=UTC_NOW),
     UniqueConstraint(

@@ -77,7 +77,8 @@ def test_allowed_capabilities_excludes_requirements_the_user_already_has() -> No
     snapshot = _snapshot()
 
     assert [item.label for item in allowed_capabilities(snapshot, frozenset())] == [CAPABILITY_LABEL]
-    assert allowed_capabilities(snapshot, frozenset({CAPABILITY_LABEL.upper()})) == ()
+    assert allowed_capabilities(snapshot, frozenset({CAPABILITY_ENTITY_ID})) == ()
+    assert allowed_capabilities(snapshot, frozenset({CAPABILITY_LABEL.upper()}))
 
 
 class FakeQueries:
@@ -263,3 +264,39 @@ def test_onboarding_mode_asks_about_uncovered_capabilities_instead_of_counseling
 
     assert "온보딩 질문" in llm.instructions
     assert "상담 답변" not in llm.instructions
+
+
+def test_quotes_must_preserve_case_whitespace_and_punctuation_exactly():
+    spoken = 'Spring Boot로  API를 만들었습니다.'
+    for changed in ('spring Boot로  API를 만들었습니다.', 'Spring Boot로 API를 만들었습니다.',
+                    'Spring Boot로  API를 만들었습니다!'):
+        assert select_candidates([{'code': ALLOWED[0].code, 'evidence_quote': changed}], ALLOWED, [spoken]) == ()
+    selected = select_candidates([{'code': ALLOWED[0].code, 'evidence_quote': spoken}], ALLOWED, [spoken])
+    assert selected[0].evidence_quote == spoken
+
+
+@pytest.mark.parametrize('category,proficiency,details,suppressed', [
+    ('skill', 'PRODUCTION', {}, False),
+    ('skill', 'PRODUCTION', {'competency_ids': ['ncs:unit:2001020211'], 'evidence': '짧음'}, False),
+    ('skill', 'GUIDED', {'competency_ids': ['ncs:unit:2001020211'], 'evidence': 'API를 직접 구현하고 배포한 결과물과 상세 역할을 설명합니다.'}, False),
+    ('skill', 'PRODUCTION', {'competency_ids': ['ncs:unit:2001020211'], 'evidence': 'API를 직접 구현하고 배포한 결과물과 상세 역할을 설명합니다.'}, True),
+    ('certification', 'PRODUCTION', {'competency_ids': ['ncs:unit:2001020211'], 'evidence': '자격증 취득 과정에서 API 구현 및 배포를 실습했습니다.', 'expires_on': '2020-01-01'}, False),
+])
+def test_chat_ownership_uses_the_same_credit_rules_as_analysis(category, proficiency, details, suppressed):
+    from dataclasses import replace
+
+    snapshot = _snapshot()
+    entity_id = 'ncs:unit:2001020211'
+    snapshot = replace(snapshot, requirements=tuple(replace(item, entity_id=entity_id)
+                                                   for item in snapshot.requirements))
+    capability = CapabilityView(USER_ID, category, CAPABILITY_LABEL, entity_id, proficiency,
+                                'SELF_REPORTED', 'ACTIVE', details, None, NOW, NOW)
+
+    class Queries(FakeQueries):
+        async def list_capabilities(self, user_id):
+            return (capability,)
+
+    llm = FakeLlm({'reply': '확인했어요.', 'candidates': [], 'suggestions': []})
+    service = ChatCapabilityService(llm, Queries('BACKEND_DEVELOPER'), lambda: (snapshot,), lambda _: '백엔드')
+    anyio.run(service.respond, USER_ID, (LlmMessage('user', '내 기록을 확인해 주세요.'),))
+    assert ('- 2001020211:' not in llm.instructions) is suppressed

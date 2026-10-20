@@ -17,7 +17,10 @@ from jobtology_be.api.product_queries import require_product_queries
 from jobtology_be.application.queries import RoadmapView
 from jobtology_be.application.weekly_plan_models import PlanOverrides
 from jobtology_be.infrastructure.persistence.auth_contracts import SessionPrincipal
-from jobtology_be.infrastructure.persistence.contracts import MissingRecordError
+from jobtology_be.infrastructure.persistence.contracts import (
+    MissingRecordError,
+    PersistenceConflictError,
+)
 from jobtology_be.main import create_app
 from jobtology_be.modules.auth.session import issue_session_credentials
 from jobtology_be.modules.auth.session_cookies import SESSION_COOKIE_NAME
@@ -45,10 +48,11 @@ class Queries:
         if roadmap_id != ROADMAP:
             raise MissingRecordError(resource='roadmap')
         return RoadmapView(ROADMAP, 1, 'ACTIVE', UUID(int=201), UUID(int=202), '로드맵',
-                           1, None, {}, tuple(s.step for s in production_steps()))
+                           1, 'test-release', {}, tuple(s.step for s in production_steps()))
 
 
 class Metadata:
+    release_id = "test-release"
     def lookup(self, requirement_key):
         return next((s.metadata for s in production_steps()
                      if requirement_key == f'BACKEND_DEVELOPER:{s.step.step_key}'), None)
@@ -69,12 +73,17 @@ class Store:
 
     async def upsert(self, user_id, roadmap_id, plan):
         await self.get_context(user_id, roadmap_id)
-        self.saved = plan
-        return plan
+        if plan.version != (self.saved.version if self.saved else 0):
+            raise PersistenceConflictError(resource='weekly plan')
+        self.saved = plan.model_copy(update={'version': plan.version + 1})
+        return self.saved
 
-    async def delete(self, user_id, roadmap_id):
+    async def delete(self, user_id, roadmap_id, expected_version):
         await self.get_context(user_id, roadmap_id)
-        self.saved = None
+        return await self.upsert(user_id, roadmap_id, PlanOverrides(
+            weekly_hours=10, rest_weeks=(), order=(), hours={}, saved_at=None,
+            version=expected_version, is_customized=False,
+        ))
 
 
 def app_with_store(store, metadata=True):
@@ -87,7 +96,7 @@ def app_with_store(store, metadata=True):
 
 
 def payload():
-    return {'weekly_hours': 12, 'rest_weeks': [11, 10],
+    return {'expected_version': 0, 'weekly_hours': 12, 'rest_weeks': [11, 10],
             'order': [str(s.step.step_id) for s in production_steps()],
             'hours': {str(UUID(int=10)): 24, str(UUID(int=1)): 15}}
 
@@ -100,7 +109,7 @@ def test_plan_get_put_get_delete_round_trip():
         recommended = client.get(PATH)
         saved = client.put(PATH, json=payload())
         fetched = client.get(PATH)
-        reset = client.delete(PATH)
+        reset = client.delete(PATH, params={'expected_version': fetched.json()['version']})
     # Then
     assert recommended.status_code == saved.status_code == fetched.status_code == reset.status_code == 200
     assert recommended.json()['completion_date'] == '2027-04-12'
@@ -108,7 +117,7 @@ def test_plan_get_put_get_delete_round_trip():
     assert saved.json()['rest_weeks'] == [10, 11]
     assert saved.json()['is_customized'] is True
     assert datetime.fromisoformat(saved.json()['saved_at']).utcoffset().total_seconds() == 32400
-    assert reset.json() == recommended.json()
+    assert reset.json() == recommended.json() | {'version': 2}
 
 
 def test_put_stores_only_different_hours():
@@ -132,7 +141,7 @@ def test_preview_uses_same_schedule_as_save_without_persisting_overrides():
         original = client.post(f'{PATH}/preview', json=None)
         fetched = client.get(PATH)
     assert preview.status_code == saved.status_code == original.status_code == 200
-    assert preview.json() == saved.json() | {'saved_at': None}
+    assert preview.json() == saved.json() | {'saved_at': None, 'version': 0}
     assert fetched.json() == saved.json()
     assert original.json()['is_customized'] is False
     assert original.json()['saved_at'] is None
@@ -168,13 +177,14 @@ def test_preview_null_and_reset_return_exact_original_solver_dates():
         original = client.get(PATH)
         customized = client.put(PATH, json=inputs)
         preview = client.post(f'{PATH}/preview', json=None)
-        reset = client.delete(PATH)
+        reset = client.delete(PATH, params={'expected_version': customized.json()['version']})
     assert original.status_code == customized.status_code == preview.status_code == reset.status_code == 200
     assert original.json()['completion_date'] == '2026-10-20'
     assert original.json()['schedule_source'] == 'SOLVER'
     assert customized.json()['schedule_source'] == 'CUSTOM'
     assert customized.json()['recommended_completion_date'] == '2026-10-20'
-    assert original.json() == preview.json() == reset.json()
+    assert original.json() | {'version': 1} == preview.json()
+    assert original.json() | {'version': 2} == reset.json()
 
 
 def test_preview_validates_request_without_saving():
@@ -192,10 +202,10 @@ def test_put_recommendation_values_removes_old_customization():
         original = client.get(PATH)
         client.put(PATH, json=payload())
         assert store.saved is not None
-        response = client.put(PATH, json=original_inputs)
+        response = client.put(PATH, json=original_inputs | {'expected_version': 1})
     assert response.status_code == 200
-    assert response.json() == original.json()
-    assert store.saved is None
+    assert response.json() == original.json() | {'version': 2}
+    assert store.saved is not None and not store.saved.is_customized
 
 
 def test_preview_requires_authentication():
@@ -228,7 +238,7 @@ def test_missing_roadmap_returns_not_found(method):
     client = TestClient(app_with_store(Store()))
     # When
     response = client.request(method, f'/api/v1/roadmaps/{UUID(int=999)}/plan',
-                              json=payload() if method == 'put' else None)
+                              json=payload() if method == 'put' else None, params={'expected_version': 0})
     # Then
     assert response.status_code == 404
     assert response.json()['error']['code'] == 'NOT_FOUND'
@@ -250,7 +260,7 @@ def test_plan_requires_authentication(method):
     # Given
     client = TestClient(create_app(Settings()))
     # When
-    response = client.request(method, PATH, json=payload() if method == 'put' else None)
+    response = client.request(method, PATH, json=payload() if method == 'put' else None, params={'expected_version': 0})
     # Then
     assert response.status_code == 401
 
@@ -272,8 +282,61 @@ def test_mutations_require_session_csrf_and_trusted_origin(method, path):
                                  headers={'Origin': 'https://attacker.example',
                                           'X-CSRF-Token': credentials.csrf_token})
         accepted = client.request(method, path, json=payload() if method in ('put', 'post') else None,
-                                  headers={'Origin': FRONTEND_ORIGIN,
+                                  params={'expected_version': 0}, headers={'Origin': FRONTEND_ORIGIN,
                                            'X-CSRF-Token': credentials.csrf_token})
     # Then
     assert missing.status_code == hostile.status_code == 403
     assert accepted.status_code == 200
+
+
+def test_stale_weekly_plan_save_and_reset_conflict_including_after_reset():
+    with TestClient(app_with_store(Store())) as client:
+        assert client.get(PATH).json()['version'] == 0
+        first = client.put(PATH, json=payload())
+        assert first.json()['version'] == 1
+        assert client.put(PATH, json=payload()).status_code == 409
+        assert client.delete(PATH, params={'expected_version': 0}).status_code == 409
+        reset = client.delete(PATH, params={'expected_version': 1})
+        assert reset.json()['version'] == 2 and not reset.json()['is_customized']
+        assert client.put(PATH, json=payload()).status_code == 409
+        assert client.put(PATH, json=payload() | {'expected_version': 2}).json()['version'] == 3
+
+
+def test_completed_dependent_with_todo_prerequisite_supports_get_put_and_preview():
+    class CompletedDependentQueries(Queries):
+        async def get_roadmap(self, user_id, roadmap_id):
+            roadmap = await super().get_roadmap(user_id, roadmap_id)
+            first, second = roadmap.steps[:2]
+            second = replace(second, state='COMPLETED', prerequisite_step_ids=(first.step_id,))
+            return replace(roadmap, steps=(first, second))
+
+    store = Store()
+    store.saved = PlanOverrides(weekly_hours=12, rest_weeks=(), order=(), hours={},
+                                saved_at=None, version=1)
+    app = app_with_store(store)
+    app.dependency_overrides[require_product_queries] = lambda: CompletedDependentQueries()
+    request = {'expected_version': 1, 'weekly_hours': 12, 'rest_weeks': [],
+               'order': [str(UUID(int=1)), str(UUID(int=2))], 'hours': {}}
+    with TestClient(app) as client:
+        fetched = client.get(PATH)
+        previewed = client.post(f'{PATH}/preview', json=request)
+        saved = client.put(PATH, json=request)
+        reloaded = client.get(PATH)
+    for response in (fetched, previewed, saved, reloaded):
+        assert response.status_code == 200
+        assert [step['state'] for step in response.json()['steps']] == ['TODO', 'COMPLETED']
+        assert response.json()['total_hours'] == 35
+
+
+def test_completed_hours_cannot_be_changed_by_an_override():
+    class CompletedQueries(Queries):
+        async def get_roadmap(self, user_id, roadmap_id):
+            roadmap = await super().get_roadmap(user_id, roadmap_id)
+            return replace(roadmap, steps=tuple(replace(step, state='COMPLETED')
+                                                if step.step_id == UUID(int=1) else step for step in roadmap.steps))
+
+    app = app_with_store(Store())
+    app.dependency_overrides[require_product_queries] = lambda: CompletedQueries()
+    with TestClient(app) as client:
+        response = client.put(PATH, json=payload() | {'hours': {str(UUID(int=1)): 99}})
+    assert response.status_code == 422

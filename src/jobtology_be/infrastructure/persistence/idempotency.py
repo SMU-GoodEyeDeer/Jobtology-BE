@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,9 +15,23 @@ from jobtology_be.infrastructure.persistence.contracts import (
 from jobtology_be.infrastructure.persistence.schema import idempotency_records
 
 
+async def prune_idempotency_records(session: AsyncSession, *, limit: int = 1000) -> None:
+    # Incomplete records are deliberately retained: their mutation outcome may
+    # be ambiguous, so expiry alone must never authorize a duplicate mutation.
+    identity = (idempotency_records.c.user_id, idempotency_records.c.method,
+                idempotency_records.c.path, idempotency_records.c.key)
+    expired = (select(*identity)
+               .where(idempotency_records.c.response_status.is_not(None),
+                      idempotency_records.c.expires_at <= func.current_timestamp())
+               .order_by(idempotency_records.c.expires_at, *identity)
+               .limit(limit).with_for_update(skip_locked=True))
+    await session.execute(delete(idempotency_records).where(tuple_(*identity).in_(expired)))
+
+
 async def acquire_idempotency(
     session: AsyncSession, request: IdempotencyAcquire
 ) -> IdempotencySnapshot:
+    await prune_idempotency_records(session)
     await session.execute(
         delete(idempotency_records).where(
             idempotency_records.c.user_id == request.user_id,

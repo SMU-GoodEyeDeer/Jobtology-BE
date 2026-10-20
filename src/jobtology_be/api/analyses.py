@@ -3,7 +3,7 @@ from typing import Annotated, ClassVar, Literal, assert_never
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, StrictInt, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, StrictBool, StrictInt, TypeAdapter
 from starlette.responses import JSONResponse
 
 from jobtology_be.api.errors import ErrorResponse
@@ -47,6 +47,7 @@ class AnalysisRequest(BaseModel):
     goal_id: UUID
     expected_profile_version: StrictInt = Field(ge=1)
     basis_type: Literal["EDITORIAL"]
+    refresh: StrictBool = False
 
 
 class AnalysisRequestResponse(BaseModel):
@@ -165,7 +166,10 @@ def _analysis_response(
         results=TypeAdapter(dict[str, JsonValue]).validate_python(result.results)
         if result.results is not None else None,
         result=AnalysisResultResponse.model_validate(summary, from_attributes=True)
-        if (summary := build_analysis_summary(result.results, metadata_lookup)) else None,
+        if (summary := build_analysis_summary(
+            result.results, metadata_lookup if result.release_id is not None
+            and getattr(metadata_lookup, "release_id", None) == result.release_id else None
+        )) else None,
     )
 
 
@@ -175,6 +179,7 @@ def _analysis_command(request: AnalysisRequest, idempotency_key: str | None) -> 
         expected_profile_version=request.expected_profile_version,
         basis_type=request.basis_type,
         idempotency_key=idempotency_key,
+        refresh=request.refresh,
     )
 
 
@@ -187,6 +192,8 @@ def _analysis_command(request: AnalysisRequest, idempotency_key: str | None) -> 
         "Creates an asynchronous recomputation request. Poll the returned `status_url` until the "
         "recompute reaches a terminal state, then use the resulting analysis or proposal identifier. "
         "Requires an active targeted goal with a selected occupation. "
+        "Identical active work is reused. Set `refresh: true` to rerun completed work; "
+        "otherwise a matching result is reused only for the same reference day and input context. "
         "An `Idempotency-Key` replays the first accepted response for the same payload for 24 hours."
     ),
     responses={

@@ -84,6 +84,7 @@ class _StoredRequirement(BaseModel):
     credit: float = Field(default=0.0, ge=0, le=1, allow_inf_nan=False)
     base_estimated_hours: int | None = Field(default=None, ge=0)
     estimated_hours: int | None = Field(default=None, ge=0)
+    metadata: RequirementMetadata | None = None
 
 
 class _StoredResults(BaseModel):
@@ -110,7 +111,8 @@ def build_analysis_summary(
     for item in sorted(stored.requirements, key=lambda item: (item.necessity != 'REQUIRED', item.label)):
         if item.status == 'SATISFIED':
             continue
-        metadata = metadata_lookup.lookup(item.requirement_key) if metadata_lookup else None
+        metadata = (item.metadata if "metadata" in item.model_fields_set else
+                    metadata_lookup.lookup(item.requirement_key) if metadata_lookup else None)
         base_hours = item.base_estimated_hours if item.base_estimated_hours is not None else metadata.estimated_hours if metadata else None
         hours = item.estimated_hours if item.estimated_hours is not None else (
             remaining_learning_hours(base_hours, item.credit) if base_hours is not None else None

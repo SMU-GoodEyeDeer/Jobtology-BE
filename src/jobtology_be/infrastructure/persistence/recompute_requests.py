@@ -3,6 +3,7 @@ from uuid import uuid4
 from sqlalchemy import insert, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from jobtology_be.application.recompute_freshness import analysis_context_fingerprint
 from jobtology_be.infrastructure.persistence.contracts import (
     AnalysisRecomputeSubmission,
     MissingRecordError,
@@ -60,7 +61,7 @@ class RecomputeRequestRepository(OutboxRepository):
             raise MissingRecordError(resource="goal")
         reusable = (
             await session.execute(
-                select(recompute_requests.c.id, recompute_requests.c.state)
+                select(recompute_requests.c.id, recompute_requests.c.state, recompute_contexts.c.payload)
                 .join(recompute_contexts, recompute_contexts.c.request_id == recompute_requests.c.id)
                 .where(
                     recompute_requests.c.user_id == submission.user_id,
@@ -69,11 +70,16 @@ class RecomputeRequestRepository(OutboxRepository):
                     recompute_contexts.c.payload["goal_id"].astext == str(submission.goal_id),
                 )
                 .order_by(recompute_requests.c.created_at.desc())
-                .limit(1)
+                .limit(100)
             )
-        ).one_or_none()
-        if reusable is not None:
-            return RecomputeRequestSnapshot(request_id=reusable.id, state=reusable.state)
+        ).all()
+        fingerprint = analysis_context_fingerprint(submission.context)
+        for existing in reusable:
+            if analysis_context_fingerprint(existing.payload) != fingerprint:
+                continue
+            if existing.state == "READY" and submission.payload.get("refresh") is True:
+                continue
+            return RecomputeRequestSnapshot(request_id=existing.id, state=existing.state)
         trigger_event_id = uuid4()
         await session.execute(
             insert(user_state_events).values(

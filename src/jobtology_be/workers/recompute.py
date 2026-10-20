@@ -1,5 +1,6 @@
 import logging
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Protocol, assert_never, override
@@ -16,6 +17,7 @@ from jobtology_be.corpus.snapshot import (
     PublishedSnapshotSelection,
 )
 from jobtology_be.infrastructure.persistence.contracts import (
+    JsonValue,
     PersistenceConflictError,
     RecomputeArtifacts,
     RecomputeFinalization,
@@ -49,7 +51,7 @@ from jobtology_be.workers.context import (
     RecomputeContextPayloadReader,
 )
 from jobtology_be.workers.outcomes import PinnedOutcomeResolutionError
-from jobtology_be.workers.recompute_artifacts import build_recompute_artifacts
+from jobtology_be.workers.recompute_artifacts import build_recompute_artifacts, solver_trace
 
 from .recompute_planning import build_planning_problem
 
@@ -88,6 +90,8 @@ class StaleProfileError(Exception):
 
 @dataclass(frozen=True, slots=True)
 class SolverTimeoutError(Exception):
+    failure_details: Mapping[str, JsonValue] | None = None
+
     @override
     def __str__(self) -> str:
         return "CP-SAT route planning timed out"
@@ -129,7 +133,8 @@ class RecomputeWorkClaimer(Protocol):
 
 
 class RecomputeFailureFinalizer(Protocol):
-    async def fail_recompute(self, work_item: RecomputeWorkItem, error_code: str) -> None: ...
+    async def fail_recompute(self, work_item: RecomputeWorkItem, error_code: str, *,
+                             failure_details: Mapping[str, JsonValue] | None = None) -> None: ...
 
 
 class RecomputeWorkerStore(
@@ -227,7 +232,7 @@ class RecomputeWorker:
             work_item.request_id, elapsed * 1000, len(problem.candidates), len(problem.calendar),
             self.solver_worker_count, planning_result.optimization_status)
         if planning_result.feasibility is None:
-            raise SolverTimeoutError()
+            raise SolverTimeoutError(failure_details=solver_trace(planning_result))
         return await self.finalizer.finalize_recompute(
             work_item,
             build_recompute_artifacts(
@@ -261,20 +266,21 @@ class LeasedRecomputeWorker:
             except PersistenceConflictError:
                 continue
             except StaleProfileError:
-                await self.failure_finalizer.fail_recompute(
+                await self._fail_recompute(
                     work_item, RecomputeFailureCode.STALE_PROFILE.value
                 )
             except NativeSourcePlanningUnsupportedError:
-                await self.failure_finalizer.fail_recompute(
+                await self._fail_recompute(
                     work_item, RecomputeFailureCode.NATIVE_SOURCE_UNSUPPORTED.value
                 )
             except CorpusSnapshotError:
-                await self.failure_finalizer.fail_recompute(
+                await self._fail_recompute(
                     work_item, RecomputeFailureCode.CORPUS_SNAPSHOT.value
                 )
-            except SolverTimeoutError:
-                await self.failure_finalizer.fail_recompute(
-                    work_item, RecomputeFailureCode.SOLVER_TIMEOUT.value
+            except SolverTimeoutError as error:
+                await self._fail_recompute(
+                    work_item, RecomputeFailureCode.SOLVER_TIMEOUT.value,
+                    failure_details=error.failure_details,
                 )
             except (
                 CandidateTemplateError,
@@ -286,10 +292,24 @@ class LeasedRecomputeWorker:
                 UnknownEntityIdError,
                 UnknownExperienceCodeError,
             ):
-                await self.failure_finalizer.fail_recompute(
+                await self._fail_recompute(
                     work_item, RecomputeFailureCode.INVALID_INPUT.value
                 )
         return tuple(finalizations)
+
+    async def _fail_recompute(self, work_item: RecomputeWorkItem, error_code: str, *,
+                              failure_details: Mapping[str, JsonValue] | None = None) -> None:
+        try:
+            if failure_details is None:
+                await self.failure_finalizer.fail_recompute(work_item, error_code)
+            else:
+                await self.failure_finalizer.fail_recompute(work_item, error_code,
+                                                            failure_details=failure_details)
+        except PersistenceConflictError:
+            # Another worker may reclaim the lease while this item is being
+            # validated. Losing that lease also forbids recording a failure.
+            _logger.info("recompute failure deferred after lease conflict request_id=%s",
+                         work_item.request_id)
 
 
 def build_leased_recompute_worker(

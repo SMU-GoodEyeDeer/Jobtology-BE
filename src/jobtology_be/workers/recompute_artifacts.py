@@ -1,10 +1,14 @@
 import hashlib
 import json
 from collections.abc import Mapping
+from dataclasses import asdict
 from datetime import datetime
 from typing import Protocol
 from uuid import UUID, uuid4
 
+from pydantic import TypeAdapter
+
+from jobtology_be.application.requirement_metadata import RequirementMetadata
 from jobtology_be.contracts import CapabilityInput
 from jobtology_be.corpus.snapshot import PublishedSnapshotSelection
 from jobtology_be.infrastructure.persistence.contracts import (
@@ -55,6 +59,9 @@ class ArtifactContext(Protocol):
     @property
     def planning_started_at(self) -> datetime: ...
 
+    @property
+    def requirement_metadata(self) -> Mapping[str, RequirementMetadata]: ...
+
 
 def build_recompute_artifacts(
     *,
@@ -94,7 +101,8 @@ def build_recompute_artifacts(
             reference_at=analysis.reference_at,
             input_snapshot=input_snapshot,
             input_hash=_hash(input_snapshot),
-            results=_analysis_results(analysis, planning_result, source_templates or templates, templates),
+            results=_analysis_results(analysis, planning_result, source_templates or templates, templates,
+                                      getattr(context, "requirement_metadata", {})),
             is_fixture=analysis.is_fixture,
         ),
         proposal=proposal,
@@ -117,12 +125,25 @@ def _input_snapshot(context: ArtifactContext) -> Mapping[str, JsonValue]:
         },
         "reference_at": context.reference_at.isoformat(),
         "planning_started_at": context.planning_started_at.isoformat(),
+        "calendar_policy": getattr(context, 'calendar_policy', 'EXPLICIT'),
+        "calendar": tuple({
+            'starts_at': slot.starts_at.isoformat(), 'ends_at': slot.ends_at.isoformat(),
+            'capacity_week_key': slot.capacity_week_key,
+        } for slot in getattr(context, 'calendar', ())),
+        "candidate_availability": tuple({
+            'action_id': item.action_id, 'available_from': item.available_from.isoformat(),
+            'available_until': item.available_until.isoformat(),
+        } for item in getattr(context, 'candidate_availability', ())),
+        "requirement_metadata": {key: TypeAdapter(dict[str, JsonValue]).validate_python(
+            TypeAdapter(RequirementMetadata).dump_python(value, mode='json'))
+            for key, value in getattr(context, 'requirement_metadata', {}).items()},
     }
 
 
 def _analysis_results(
     analysis: EditorialAnalysis, planning_result: PlanningResult,
     source_templates: tuple[ActivityTemplate, ...], templates: tuple[ActivityTemplate, ...],
+    metadata: Mapping[str, RequirementMetadata],
 ) -> Mapping[str, JsonValue]:
     results: dict[str, JsonValue] = {
         "analysis_id": analysis.analysis_id,
@@ -137,6 +158,9 @@ def _analysis_results(
         "required_coverage": _coverage(analysis.required_coverage),
         "requirements": tuple(
             {
+                "metadata": TypeAdapter(dict[str, JsonValue]).validate_python(
+                    TypeAdapter(RequirementMetadata).dump_python(metadata[item.requirement_key], mode="json"))
+                if item.requirement_key in metadata else None,
                 "label": item.label,
                 "necessity": item.necessity,
                 "provenance": tuple(sorted(item.provenance)),
@@ -151,22 +175,25 @@ def _analysis_results(
             for item in analysis.requirements
         ),
     }
-    if planning_result.feasibility is None:
-        results["route"] = {
-            "feasibility": None,
-            "optimization_status": planning_result.optimization_status,
-            "trace": _timeout_trace(planning_result),
-        }
+    results["route"] = {
+        "feasibility": planning_result.feasibility,
+        "optimization_status": planning_result.optimization_status,
+        "trace": solver_trace(planning_result),
+    }
     return results
 
 
-def _timeout_trace(planning_result: PlanningResult) -> Mapping[str, JsonValue]:
+def solver_trace(planning_result: PlanningResult) -> Mapping[str, JsonValue]:
     trace = planning_result.trace
     return {
         "analysis_id": trace.analysis_id,
         "basis_version": trace.basis_version,
         "corpus_release_id": trace.corpus_release_id,
         "reference_at": trace.reference_at.isoformat(),
+        "objective": TypeAdapter(dict[str, JsonValue]).validate_python(asdict(trace.objective)),
+        "solver_runs": tuple(TypeAdapter(dict[str, JsonValue]).validate_python(asdict(run))
+                             for run in trace.solver_runs),
+        "optimization_status": trace.optimization_status,
         "solver_seed": trace.solver_seed,
         "solver_worker_count": trace.solver_worker_count,
         "template_versions": {
@@ -223,6 +250,7 @@ def _proposal(
             for rejection in planning_result.trace.rejections
         ),
         "optimization_status": planning_result.optimization_status,
+        "solver": solver_trace(planning_result),
     }
     if planning_result.trace.planning_policy_version is not None:
         trace_versions = {**trace_versions,
@@ -237,7 +265,10 @@ def _proposal(
             ),
         }
     constraints_snapshot = _constraints_snapshot(planning_result.trace.constraints)
-    proposal_hash = _hash({"steps": steps, "trace": trace_outputs})
+    # Runtime duration/bounds are evidence about this solve, not proposal identity.
+    proposal_hash = _hash({"steps": steps,
+                           "trace": {key: value for key, value in trace_outputs.items() if key != 'solver'},
+                           "versions": trace_versions})
     return RouteProposalPersist(
         user_id=user_id,
         proposal_id=uuid4(),
@@ -286,6 +317,12 @@ def _step(
         "outcome_requirement_keys": step.outcome_requirement_keys,
         "planned_end_at": step.planned_end_at.isoformat(),
         "planned_start_at": step.planned_start_at.isoformat(),
+        "slot_allocations": tuple({
+            "slot_index": allocation.slot_index,
+            "capacity_week_key": allocation.capacity_week_key,
+            "starts_at": allocation.starts_at.isoformat(),
+            "ends_at": allocation.ends_at.isoformat(),
+        } for allocation in step.slot_allocations),
         "prerequisite_step_keys": step.prerequisite_step_keys,
         "reason_codes": step.reason_codes,
         "step_key": step.step_key,

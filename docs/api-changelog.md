@@ -1,5 +1,23 @@
 # API changelog
 
+## 2026-10-20 — analysis and weekly plan consistency
+
+- Analysis metadata is frozen with its release; legacy enrichment requires an exact release match.
+- `POST /api/v1/analyses` accepts `refresh` (default false). Equivalent active work is shared;
+  completed results are reused only for the same current input context/reference day. Refreshing
+  completed work requires a new idempotency key; same-key response replay remains unchanged.
+- Weekly responses add independent `version` (initial 0). PUT/preview require `expected_version`;
+  DELETE requires the same query parameter. Save/reset increment it and stale writes return 409.
+  Completed hours cannot change (422); completed history survives future rescheduling and reset.
+- Proposal steps persist hourly solver allocations, and trace outputs persist solver settings,
+  objective/bounds and full/partial statuses. Solver timeouts retain `FAILED` state and persist
+  their solver telemetry in `recompute_requests.failure_details`. Weekly responses use exact allocations
+  and display the last occupied day for exclusive midnight ends.
+- Chat candidate ownership follows actual competency credit, and evidence quotes match exact user text.
+  Confirmed candidates use structured spec fields, never category `chat` or `details.evidence_quote`.
+- **Deployment required:** migrate through `20261020_01` before serving the weekly plan contract.
+  Existing product-role approvals remain unchanged.
+
 ## 2026-10-18 — weekly roadmap plans
 
 - Added authenticated `GET`, `PUT`, and `DELETE /api/v1/roadmaps/{roadmap_id}/plan`.

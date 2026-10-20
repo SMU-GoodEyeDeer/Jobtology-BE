@@ -1,11 +1,12 @@
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import ClassVar, Protocol, override
+from typing import ClassVar, Literal, Protocol, override
 from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError
 
+from jobtology_be.application.requirement_metadata import RequirementMetadata
 from jobtology_be.contracts import CapabilityInput
 from jobtology_be.corpus.snapshot import PublishedSnapshotSelection
 from jobtology_be.infrastructure.persistence.contracts import JsonValue, RecomputeWorkItem
@@ -41,6 +42,8 @@ class RecomputeContext:
     candidate_availability: tuple[CandidateAvailability, ...] = ()
     solver_settings: SolverSettings = field(default_factory=SolverSettings)
     corpus_source: CorpusSource = "local_json"
+    requirement_metadata: Mapping[str, RequirementMetadata] = field(default_factory=dict)
+    calendar_policy: Literal["EXPLICIT", "FLEXIBLE_WEEKLY_V1"] = "EXPLICIT"
 
 
 class _ContextJson(BaseModel):
@@ -79,7 +82,7 @@ class _CandidateAvailabilityJson(_ContextJson):
 
 
 class _SolverSettingsJson(_ContextJson):
-    time_limit_seconds: float = Field(default=20.0, ge=0)
+    time_limit_seconds: float = Field(default=20.0, ge=0, allow_inf_nan=False)
 
 
 class RecomputeContextDocument(_ContextJson):
@@ -95,6 +98,8 @@ class RecomputeContextDocument(_ContextJson):
     calendar: tuple[_PlanningHourJson, ...]
     candidate_availability: tuple[_CandidateAvailabilityJson, ...] = ()
     solver_settings: _SolverSettingsJson = Field(default_factory=_SolverSettingsJson)
+    requirement_metadata: dict[str, RequirementMetadata] = Field(default_factory=dict)
+    calendar_policy: Literal["EXPLICIT", "FLEXIBLE_WEEKLY_V1"] = "EXPLICIT"
 
     def to_context(self) -> RecomputeContext:
         return RecomputeContext(
@@ -142,6 +147,8 @@ class RecomputeContextDocument(_ContextJson):
                 time_limit_seconds=self.solver_settings.time_limit_seconds
             ),
             corpus_source=self.snapshot_selection.source,
+            requirement_metadata=dict(self.requirement_metadata),
+            calendar_policy=self.calendar_policy,
         )
 
 

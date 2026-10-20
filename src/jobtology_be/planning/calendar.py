@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from jobtology_be.planning.solver_models import SLOT_DURATION, PlanningSlot
 
@@ -18,16 +18,21 @@ def flexible_weekly_slots(
         raise FlexibleCalendarError("calendar timestamps must be timezone-aware")
     if available_hours_per_week < 1:
         raise FlexibleCalendarError("weekly availability must be positive")
-    if target_by <= planning_started_at:
+    started_utc = planning_started_at.astimezone(UTC)
+    target_utc = target_by.astimezone(UTC)
+    if target_utc <= started_utc:
         return ()
-    if target_by - planning_started_at > MAX_FLEXIBLE_CALENDAR_HORIZON:
+    if target_utc - started_utc > MAX_FLEXIBLE_CALENDAR_HORIZON:
         raise FlexibleCalendarError("planning horizon exceeds the flexible calendar limit")
 
     slot_start = _next_hour(planning_started_at)
     slots: list[PlanningSlot] = []
     allocated_by_week: dict[tuple[int, int], int] = {}
-    while slot_start + SLOT_DURATION <= target_by:
-        iso_year, iso_week, _ = slot_start.isocalendar()
+    while slot_start + SLOT_DURATION <= target_utc:
+        # Advance real hours in UTC, retaining the goal's local ISO week for
+        # capacity accounting. Local arithmetic creates nonexistent/repeated
+        # intervals at daylight-saving transitions and breaks JSON round trips.
+        iso_year, iso_week, _ = slot_start.astimezone(planning_started_at.tzinfo).isocalendar()
         week = (iso_year, iso_week)
         allocated = allocated_by_week.get(week, 0)
         if allocated < available_hours_per_week:
@@ -44,8 +49,8 @@ def flexible_weekly_slots(
 
 
 def _next_hour(value: datetime) -> datetime:
-    rounded = value.replace(minute=0, second=0, microsecond=0)
-    return rounded if rounded == value else rounded + SLOT_DURATION
+    rounded = value.replace(minute=0, second=0, microsecond=0).astimezone(UTC)
+    return rounded if rounded == value.astimezone(UTC) else rounded + SLOT_DURATION
 
 
 def _is_aware(value: datetime) -> bool:

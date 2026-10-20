@@ -49,10 +49,16 @@ does not prove that those checks passed.
 2. Pin a supported Railpack builder version in the platform.
 3. Use the start command in `railpack.json`; remove stale Dockerfile or start-command overrides.
 4. Bind the assigned internal `PORT` (default `8000`) and configure the HTTP health check at
-   `/api/v1/health/live`.
+   `/api/v1/health/ready`.
 
 The liveness endpoint proves that the process is running, not that the database, corpus source,
 or worker is ready for product traffic.
+The readiness endpoint checks the application database, required role catalog,
+and required in-process worker heartbeat; it returns 503 while any required
+component is unavailable. Keep `/api/v1/health/live` for process-only probes.
+Worker readiness tolerates isolated failures: the last completed cycle must be
+less than 90 seconds old, and three consecutive failed cycles mark it unready.
+A successful cycle resets the failure count; individual failures remain logged.
 
 ## Runtime configuration
 
@@ -96,12 +102,19 @@ For a product environment with application persistence:
    uv run alembic upgrade head
    ```
 
-   The current head is `20261019_01`, including the shared per-account chat quota table and Google
-   identity lookup index. Apply it before serving authenticated chat. Common `users`, `profiles`, and
+   The current head is `20261020_01`, adding weekly-plan versions, completed
+   schedule snapshots and recompute failure diagnostics. Apply it before serving
+   this image; otherwise reads referencing the new columns fail. Common `users`, `profiles`, and
    `auth_sessions` tables remain in use by Google accounts.
    Do not run it independently in every API replica. Preserve backward compatibility before
    relying on an image rollback.
-3. Run the worker as a separate service from the same image and settings:
+3. In the separate catalog database, apply the additive Jobtology-DB SQL
+   `031_multi_source_live_postings.sql` and `032_inferred_occupation_context.sql`
+   as the existing owner/administrator. They do not change the approved
+   product-role artifact. See [the source API guide](../docs/source-catalog-api.md).
+4. Goldship uses `JOBTOLOGY_INPROCESS_WORKER_ENABLED=true`; readiness monitors
+   its supervised polling loop. If using an external batch worker instead,
+   disable the in-process worker flag and run the same image and settings:
 
    ```sh
    uv run python -m jobtology_be.workers.main
@@ -121,6 +134,7 @@ After the owner deploys, check the following at the service origin:
 | Request | Expected result |
 | --- | --- |
 | `GET /api/v1/health/live` | `200` process liveness response |
+| `GET /api/v1/health/ready` | `200` only when required runtime components are ready |
 | `GET /api/docs`, `GET /api/redoc`, `GET /api/openapi.json` | `200` API documentation surfaces |
 | `GET /api/guide` | `200` Korean wheel-backed integration guide |
 | An unauthenticated product request | `401 UNAUTHENTICATED` envelope |

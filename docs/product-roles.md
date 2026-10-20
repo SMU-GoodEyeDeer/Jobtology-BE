@@ -68,3 +68,25 @@ The policy approval record approves mapping/rules, not a generated artifact.
 Its exact approval time was not verified and is intentionally absent; it never
 supplies the published snapshot review timestamp. Review the draft's exact
 content and record its full digest before turning on these flags.
+
+Analysis results freeze the requirement metadata from their selected published
+snapshot. Historical results therefore keep their original levels, duration,
+qualifications and demand context. A legacy result without frozen metadata may
+use the current holder only when its full release ID exactly matches; otherwise
+metadata remains unavailable. Publishing the derived display metadata does not
+rewrite the approved artifact or its digest.
+
+JobKorea metadata-to-occupation associations are exposed separately as inferred
+posting context, with review status and source/catalog freshness. They do not
+silently extend `product_role_inputs_v1` or the reviewed competency denominator.
+The Neo4j graph excludes stale associations from current counts and fetches
+O*NET details by the exact selected current revision ID.
+
+OR-Tools remains the bounded activity scheduler. Results persist exact hourly
+allocations and solver diagnostics (full/partial status, objective/bound,
+elapsed time, worker count, seed and budget); a conservative capacity check can
+skip a provably infeasible full solve while retaining partial planning. Timeout
+diagnostics are retained on the failed request. Equivalent active analysis
+requests reuse the same context; an explicit refresh can rerun a completed one.
+Activity cost remains zero until pricing is modeled. Missing reviewed prerequisite
+edges or NCS–O*NET equivalences are not inferred as verified constraints.

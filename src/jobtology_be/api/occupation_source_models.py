@@ -1,4 +1,4 @@
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr
 
@@ -26,9 +26,15 @@ class _PublicCatalogFields(_PublicSourceRecord):
 
 
 class Neo4jOccupationResponse(_PublicCatalogFields):
+    scheme_id: Literal["NCS", "ONET"] = "NCS"
+    source_release_id: StrictStr | None = None
+    source_uri: StrictStr | None = None
+
     @classmethod
     def from_source(cls, node: Neo4jOccupationNode) -> "Neo4jOccupationResponse":
-        return cls(id=node.id, code=node.code, kind=node.kind, name=node.name)
+        return cls(id=node.id, code=node.code, kind=node.kind, name=node.name,
+                   scheme_id=node.scheme_id, source_release_id=node.source_release_id,
+                   source_uri=node.source_uri)
 
 
 class Neo4jNcsCompetencyResponse(_PublicCatalogFields):

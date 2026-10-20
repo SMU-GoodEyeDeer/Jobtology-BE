@@ -4,7 +4,9 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import anyio
+import pytest
 from sqlalchemy import func, select, text, update
+from sqlalchemy.exc import DBAPIError
 from test_acceptance_m5_worker import WorkerPublication, enqueue_recompute, process_recompute
 
 from jobtology_be.application.services.roadmaps import PersistentRoadmapService
@@ -62,7 +64,8 @@ async def _create_goal(database: Database) -> tuple[UUID, UUID]:
 async def _ready_proposal(database: Database) -> tuple[UUID, UUID, WorkerPublication]:
     user_id, goal_id = await _create_goal(database)
     publication = await process_recompute(
-        str(database.engine.url), user_id, 2, goal_id,
+        # str(URL) masks passwords and cannot be reused as a connection string.
+        database.engine.url.render_as_string(hide_password=False), user_id, 2, goal_id,
         target_by=datetime.now(UTC) + timedelta(days=30),
     )
     return user_id, goal_id, publication
@@ -119,7 +122,10 @@ def test_activation_sql_failure_rolls_back_creation_and_retries_after_restart(
                     CREATE TRIGGER reject_activation BEFORE UPDATE ON roadmaps
                     FOR EACH ROW WHEN (NEW.state = 'ACTIVE') EXECUTE FUNCTION reject_activation()
                 """))
-            await _loop(database).process_once()
+            # The supervisor must see the incomplete cycle so its readiness
+            # heartbeat cannot mark a failed activation as successful.
+            with pytest.raises(DBAPIError, match="transient activation failure"):
+                await _loop(database).process_once()
             async with database.sessions() as session:
                 assert await session.scalar(select(func.count()).select_from(roadmaps)) == 0
                 assert await session.scalar(select(recompute_requests.c.auto_roadmap_pending).where(

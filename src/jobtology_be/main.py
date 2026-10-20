@@ -277,6 +277,8 @@ def create_app(
         database_lifespan(
             database, corpus_source, source_catalog_resource, role_holder, inprocess_worker,
             resume_service,
+            role_catalog_required=settings.product_roles_enabled,
+            worker_required=settings.inprocess_worker_enabled,
         ),
     )
     app.dependency_overrides[require_resume_service] = lambda: resume_service

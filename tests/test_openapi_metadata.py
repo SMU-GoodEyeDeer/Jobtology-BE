@@ -125,6 +125,9 @@ def test_openapi_documents_the_authenticated_async_roadmap_contract(
         "code",
         "kind",
         "name",
+        "scheme_id",
+        "source_release_id",
+        "source_uri",
     }
     assert set(schema["components"]["schemas"]["Neo4jPublicationResponse"]["properties"]) == {
         "publication_id",
@@ -149,3 +152,11 @@ def test_openapi_documents_the_authenticated_async_roadmap_contract(
     _ = RoadmapCreateRequest.model_validate(
         schema["components"]["schemas"]["RoadmapCreateRequest"]["examples"][0]
     )
+
+    plan_schema = schema['components']['schemas']['WeeklyPlanRequest']
+    assert 'expected_version' in plan_schema['required']
+    assert plan_schema['properties']['expected_version']['minimum'] == 0
+    assert 'version' in schema['components']['schemas']['WeeklyPlanResponse']['properties']
+    plan_delete = schema['paths']['/api/v1/roadmaps/{roadmap_id}/plan']['delete']
+    assert any(parameter['name'] == 'expected_version' and parameter['in'] == 'query'
+               and parameter['required'] for parameter in plan_delete['parameters'])

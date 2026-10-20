@@ -133,17 +133,17 @@ def _initial_roadmap(
     anyio.run(_drain, database_url, catalog)
     roadmap = _active_roadmap(client)
     assert roadmap["steps"][0]["action_id"] == "study:backend"
+    plan = client.put(f"/api/v1/roadmaps/{roadmap['roadmap_id']}/plan", json={
+        "expected_version": 0, "weekly_hours": 5, "rest_weeks": [], "order": [roadmap["steps"][0]["step_id"]],
+        "hours": {roadmap["steps"][0]["step_id"]: 2},
+    })
+    assert plan.status_code == 200, plan.text
     progress = client.patch(
         f"/api/v1/roadmaps/{roadmap['roadmap_id']}/steps/{roadmap['steps'][0]['step_id']}",
         json={"state": progress_state, "expected_profile_version": _version(client),
               "expected_roadmap_version": roadmap["roadmap_version"]},
     )
     assert progress.status_code == 200
-    plan = client.put(f"/api/v1/roadmaps/{roadmap['roadmap_id']}/plan", json={
-        "weekly_hours": 5, "rest_weeks": [], "order": [roadmap["steps"][0]["step_id"]],
-        "hours": {roadmap["steps"][0]["step_id"]: 2},
-    })
-    assert plan.status_code == 200, plan.text
     return goal_id, _active_roadmap(client)
 
 
@@ -463,7 +463,7 @@ def test_added_and_deleted_capability_persists_and_changes_current_analysis(
         assert anyio.run(lifecycle) == "REVOKED"
 
 
-def test_timezone_edit_carries_local_calendar_when_analysis_reuses_pending_request(
+def test_timezone_edit_carries_local_calendar_and_manual_analysis_refreshes_changed_reference(
     acceptance_database_url: str, catalog_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from zoneinfo import ZoneInfo
@@ -474,7 +474,7 @@ def test_timezone_edit_carries_local_calendar_when_analysis_reuses_pending_reque
     now = datetime.now(UTC)
     # Sunday afternoon UTC is already Monday in Seoul, so the capacity week differs.
     sunday_utc = now.replace(hour=16, minute=15, second=0, microsecond=0) + timedelta(
-        days=(6 - now.weekday()) % 7,
+        days=((6 - now.weekday()) % 7) or 7,
     )
     seoul = ZoneInfo("Asia/Seoul")
 
@@ -513,14 +513,18 @@ def test_timezone_edit_carries_local_calendar_when_analysis_reuses_pending_reque
 
         pending = anyio.run(carried_request)
         request_id = _analyse(client, goal_id)
-        assert request_id == str(pending.id)
+        # The automatic context deliberately uses future Sunday, while the manual
+        # factory uses today. Different reference days must not share old work.
+        assert request_id != str(pending.id)
         carried = RecomputeContextDocument.model_validate(pending.payload)
         assert carried.constraints.target_by == target
         assert carried.constraints.target_by.utcoffset() == timedelta(hours=9)
         assert carried.reference_at.utcoffset() == timedelta(hours=9)
         assert carried.planning_started_at.utcoffset() == timedelta(hours=9)
         first_slot = carried.calendar[0]
-        assert first_slot.starts_at.utcoffset() == timedelta(hours=9)
+        # Calendar slots use real UTC hours; week capacity retains the goal zone.
+        assert first_slot.starts_at.utcoffset() == timedelta(0)
+        assert first_slot.starts_at.astimezone(seoul).utcoffset() == timedelta(hours=9)
         year, week, _ = sunday_utc.astimezone(seoul).isocalendar()
         assert first_slot.capacity_week_key == f"{year}-W{week:02d}"
         utc_year, utc_week, _ = sunday_utc.isocalendar()

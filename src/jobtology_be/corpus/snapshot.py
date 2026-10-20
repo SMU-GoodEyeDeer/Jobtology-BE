@@ -1,6 +1,9 @@
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Protocol, override
 
+from jobtology_be.application.requirement_metadata import RequirementMetadata
 from jobtology_be.modules.analyses.editorial_models import (
     EditorialBaseline,
     EditorialReleaseMetadata,
@@ -84,8 +87,10 @@ class PublishedCorpusSnapshot:
     allowed_experience_codes: frozenset[str]
     requirements: tuple[EditorialRequirement, ...]
     templates: tuple[ActivityTemplate, ...]
+    requirement_metadata: Mapping[str, RequirementMetadata] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, 'requirement_metadata', MappingProxyType(dict(self.requirement_metadata)))
         _ = self.editorial_baseline()
         _ = CandidateGenerator(self.templates)
         requirement_keys = frozenset(requirement.requirement_key for requirement in self.requirements)
