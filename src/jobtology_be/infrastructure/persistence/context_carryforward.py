@@ -58,6 +58,8 @@ def carry_forward_recompute_context(
                 planning_started_at=input.now,
                 target_by=constraints.target_by,
                 available_hours_per_week=constraints.available_hours_per_week,
+                weekly_availability=constraints.weekly_availability,
+                unavailable_dates=constraints.unavailable_dates,
             )
         )
         if not calendar:

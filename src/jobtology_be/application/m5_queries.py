@@ -60,6 +60,7 @@ class DashboardAnalysisView:
     methodology_version: str
     status: str
     generated_at: datetime | None
+    proposal_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)

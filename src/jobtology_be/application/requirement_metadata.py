@@ -51,7 +51,7 @@ class SkillSummary:
     achievement: str | None
     requirement_key: str
     ncs_base_code: str | None
-    status: Literal['PARTIAL', 'UNMET', 'NEEDS_INPUT']
+    status: Literal['SATISFIED', 'PARTIAL', 'UNMET', 'NEEDS_INPUT']
     ncs_level: int | None
     estimated_hours: int | None
     hours_basis: Literal['OFFICIAL', 'ESTIMATED'] | None
@@ -103,13 +103,14 @@ def _coverage_pct(coverage: _StoredCoverage | None, *, weighted: bool = False) -
 def build_analysis_summary(
     results: Mapping[str, ProductJsonValue] | None,
     metadata_lookup: RequirementMetadataLookup | None,
+    *, include_satisfied: bool = False,
 ) -> AnalysisSummary | None:
     if results is None:
         return None
     stored = _StoredResults.model_validate(results)
     skills: list[SkillSummary] = []
     for item in sorted(stored.requirements, key=lambda item: (item.necessity != 'REQUIRED', item.label)):
-        if item.status == 'SATISFIED':
+        if item.status == 'SATISFIED' and not include_satisfied:
             continue
         metadata = (item.metadata if "metadata" in item.model_fields_set else
                     metadata_lookup.lookup(item.requirement_key) if metadata_lookup else None)
@@ -125,7 +126,7 @@ def build_analysis_summary(
             demand_postings=metadata.demand_postings if metadata else None,
             demand_base=metadata.demand_base if metadata else None,
             difficulty=f'NCS 수준 {metadata.ncs_level}' if metadata and metadata.ncs_level is not None else None,
-            achievement=(f'추가 학습 {hours}시간 (부분 인정 적용 · 추정)' if partial else
+            achievement='완료한 역량' if item.status == 'SATISFIED' else (f'추가 학습 {hours}시간 (부분 인정 적용 · 추정)' if partial else
                          f'학습 {hours}시간' + (' (추정)' if metadata and metadata.hours_basis == 'ESTIMATED' else ''))
             if hours is not None else None,
             requirement_key=item.requirement_key,

@@ -41,6 +41,7 @@ from jobtology_be.corpus.source_factory import build_configured_corpus_source
 from jobtology_be.editorial.reader import DraftReadService, load_drafts
 from jobtology_be.infrastructure.persistence.accounts import PostgresAccountService
 from jobtology_be.infrastructure.persistence.auth_store import PostgresAuthStore
+from jobtology_be.infrastructure.persistence.compute_budget import AnalysisBudgetPolicy
 from jobtology_be.infrastructure.persistence.database import Database
 from jobtology_be.infrastructure.persistence.live_source_feed import PostgresLiveSourceFeed
 from jobtology_be.infrastructure.persistence.m5_queries import PostgresM5Queries
@@ -150,6 +151,11 @@ def create_app(
         store = PostgresApplicationStore(
             database, capability_list_authoritative=settings.capability_list_authoritative,
             google_accounts_only=settings.auth_enabled,
+            analysis_budget_policy=AnalysisBudgetPolicy(
+                requests_per_hour=settings.analysis_requests_per_hour,
+                executions_per_hour=settings.analysis_executions_per_hour,
+                executions_per_minute=settings.analysis_executions_per_minute,
+            ),
         )
         idempotency_store = idempotency_store or store
         corpus_source = corpus_source or build_configured_corpus_source(settings)
@@ -330,7 +336,7 @@ def create_app(
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
         allow_headers=["Content-Type", "Idempotency-Key", "X-CSRF-Token"],
-        expose_headers=["X-Request-ID"],
+        expose_headers=["X-Request-ID", "Retry-After"],
     )
     app.include_router(router, prefix="/api/v1")
     app.include_router(google_auth_router, prefix="/api/v1")

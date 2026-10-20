@@ -215,6 +215,14 @@ def main() -> None:
     signal.alarm(60)
     path, output = map(Path, sys.argv[1:3])
     try:
+        from jobtology_be.resume.isolation import restrict_parser_network
+        restrict_parser_network()
+    except Exception as error:  # noqa: BLE001 -- fail closed before opening the document.
+        output.write_text(json.dumps({
+            'ok': False, 'code': 'PARSER_ISOLATION_UNAVAILABLE', 'error_type': type(error).__name__,
+        }))
+        return
+    try:
         result = {'ok': True, 'result': extract(path).model_dump(mode='json')}
     except DocumentRejected as error:
         result = {'ok': False, 'code': str(error)}

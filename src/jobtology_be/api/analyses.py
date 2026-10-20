@@ -68,6 +68,7 @@ class RecomputeResponse(BaseModel):
     analysis_id: UUID | None
     proposal_id: UUID | None
     error_code: str | None
+    next_attempt_at: datetime | None = None
 
 
 class AnalysisQualificationResponse(BaseModel):
@@ -94,7 +95,7 @@ class AnalysisSkillResponse(BaseModel):
     achievement: str | None
     requirement_key: str
     ncs_base_code: str | None
-    status: Literal["PARTIAL", "UNMET", "NEEDS_INPUT"]
+    status: Literal["SATISFIED", "PARTIAL", "UNMET", "NEEDS_INPUT"]
     ncs_level: int | None
     estimated_hours: int | None
     hours_basis: Literal["OFFICIAL", "ESTIMATED"] | None
@@ -147,6 +148,7 @@ def _recompute_response(result: RecomputeView) -> RecomputeResponse:
         analysis_id=result.resulting_analysis_id,
         proposal_id=result.proposal_id,
         error_code=result.error_code,
+        next_attempt_at=result.next_attempt_at,
     )
 
 
@@ -217,6 +219,7 @@ def _analysis_command(request: AnalysisRequest, idempotency_key: str | None) -> 
             "description": "Version/idempotency conflict, or ACTIVE_TARGETED_GOAL_REQUIRED.",
         },
         503: {"model": ErrorResponse, "description": "Analysis inputs are unavailable."},
+        429: {"model": ErrorResponse, "description": "Account analysis budget reached; see Retry-After."},
     },
 )
 async def request_analysis(

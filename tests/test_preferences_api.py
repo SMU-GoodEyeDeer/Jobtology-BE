@@ -34,6 +34,8 @@ PREFERENCES_REQUEST = {
     "fastest_path": True,
     "needs_portfolio": False,
     "career_switch": True,
+    "weekly_availability": [{"weekday": 1, "start_hour": 18, "end_hour": 20}],
+    "unavailable_dates": ["2026-10-20"],
 }
 
 
@@ -130,6 +132,8 @@ async def _exercise_route_preferences_api(database_url: str) -> None:
             "fastest_path": True,
             "needs_portfolio": False,
             "career_switch": True,
+            "weekly_availability": PREFERENCES_REQUEST["weekly_availability"],
+            "unavailable_dates": PREFERENCES_REQUEST["unavailable_dates"],
         }
         assert missing_response.status_code == 404
         assert missing_response.json()["error"]["code"] == "NOT_FOUND"
@@ -218,6 +222,7 @@ def test_existing_account_without_preferences_reads_analysis_defaults_without_wr
                     "availability_source": "DEFAULT", "budget_mode": "REGULAR",
                     "max_out_of_pocket_krw": None, "fastest_path": False,
                     "needs_portfolio": False, "career_switch": False,
+                    "weekly_availability": [], "unavailable_dates": [],
                 }
             assert anyio.run(persisted) == (1, 0)
             saved = client.put("/me/route-preferences", json=PREFERENCES_REQUEST)

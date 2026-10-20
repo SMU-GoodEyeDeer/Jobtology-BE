@@ -210,6 +210,7 @@ def test_m5_goal_worker_and_roadmap_lifecycle_use_postgresql(
         "analysis_id": str(publication.analysis_id),
         "proposal_id": str(publication.proposal_id),
         "error_code": None,
+        "next_attempt_at": None,
     }
     assert first_create.status_code == 201
     assert second_create.status_code == 201

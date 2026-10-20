@@ -6,7 +6,7 @@
     "dotnet": "8.0"
   },
   "deploy": {
-    "aptPackages": ["...", "curl", "libicu-dev", "fontconfig"],
+    "aptPackages": ["...", "curl", "libicu-dev", "fontconfig", "libseccomp2"],
     "variables": {
       "JOBTOLOGY_AUTH_ENABLED": "false",
       "JOBTOLOGY_GUEST_SESSIONS_ENABLED": "false",

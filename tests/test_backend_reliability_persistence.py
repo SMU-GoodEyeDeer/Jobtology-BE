@@ -9,6 +9,7 @@ from test_acceptance_m5_lifecycle import _application
 from test_acceptance_m5_worker import process_recompute
 
 from jobtology_be.infrastructure.persistence.auth_store import prune_auth_records
+from jobtology_be.infrastructure.persistence.compute_budget import AnalysisBudgetPolicy
 from jobtology_be.infrastructure.persistence.contracts import (
     IdempotencyAcquire,
     StepStateMutation,
@@ -27,7 +28,8 @@ pytest_plugins = ("test_acceptance_m5_lifecycle",)
 
 async def _exercise_step_progress(database_url, user_id, roadmap_id, step_id):
     database = Database.create(database_url)
-    store = PostgresApplicationStore(database, capability_list_authoritative=True)
+    store = PostgresApplicationStore(database, capability_list_authoritative=True,
+                                      analysis_budget_policy=AnalysisBudgetPolicy(executions_per_minute=60))
     try:
         for offset, state in enumerate(("IN_PROGRESS", "TODO", "COMPLETED", "TODO")):
             await store.mutate_step_state(StepStateMutation(

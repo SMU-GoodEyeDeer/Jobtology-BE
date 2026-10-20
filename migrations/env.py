@@ -2,6 +2,7 @@ from os import environ
 
 import anyio
 from alembic import context
+from alembic.util import CommandError
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 from sqlalchemy.pool import NullPool
@@ -12,7 +13,7 @@ config = context.config
 target_metadata = METADATA
 
 
-class MigrationConfigurationError(Exception):
+class MigrationConfigurationError(CommandError):
     pass
 
 
@@ -21,7 +22,7 @@ def _database_url() -> str:
     return (
         database_url
         or environ.get("JOBTOLOGY_DATABASE_URL")
-        or config.get_main_option("sqlalchemy.url")
+        or (config.get_section(config.config_ini_section) or {}).get("sqlalchemy.url")
         or _raise_missing_database_url()
     )
 

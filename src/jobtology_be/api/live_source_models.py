@@ -108,6 +108,18 @@ class OccupationContextFilters(LiveRead):
     occupation_codes: list[str] | None
 
 
+class ContextOccupation(LiveRead):
+    code: str
+    name: str
+
+
+class RoleContextSelection(LiveRead):
+    role_id: str
+    version: Literal["posting-context-v1"]
+    basis: Literal["APPLICATION_CONTEXT_SELECTION"]
+    onet_occupations: list[ContextOccupation]
+
+
 class OccupationContextResponse(LiveRead):
     contract_version: Literal["jobtology-inferred-occupation-context-v1"]
     basis: Literal["METADATA_INFERRED"]
@@ -119,6 +131,7 @@ class OccupationContextResponse(LiveRead):
     total: int = Field(ge=0)
     summary: OccupationContextSummary
     items: list[OccupationAssociation]
+    role_context: RoleContextSelection | None = None
 
 
 class PostingFilters(LiveRead):

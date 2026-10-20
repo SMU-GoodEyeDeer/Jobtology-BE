@@ -95,6 +95,8 @@ class PostgresAnalysisContextInputSource:
                     route_preferences.c.fastest_path,
                     route_preferences.c.needs_portfolio,
                     route_preferences.c.career_switch,
+                    route_preferences.c.weekly_availability,
+                    route_preferences.c.unavailable_dates,
                 ).where(route_preferences.c.user_id == user_id)
             )
             preference_row = preference.one_or_none()
@@ -134,12 +136,16 @@ class PostgresAnalysisContextInputSource:
                     "fastest_path": preference_row.fastest_path,
                     "needs_portfolio": preference_row.needs_portfolio,
                     "career_switch": preference_row.career_switch,
+                    "weekly_availability": preference_row.weekly_availability,
+                    "unavailable_dates": preference_row.unavailable_dates,
                 }
             )
             calendar = flexible_weekly_slots(
                 planning_started_at=local_reference_at,
                 target_by=target_by,
                 available_hours_per_week=constraints.available_hours_per_week,
+                weekly_availability=constraints.weekly_availability,
+                unavailable_dates=constraints.unavailable_dates,
             )
         except (FlexibleCalendarError, ValidationError, ValueError, ZoneInfoNotFoundError) as error:
             raise AnalysisContextInputsUnavailableError(str(error)) from error

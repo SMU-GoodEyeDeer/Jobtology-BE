@@ -7,6 +7,11 @@ from sqlalchemy import func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.engine import CursorResult
 
+from jobtology_be.infrastructure.persistence.compute_budget import (
+    AnalysisBudgetExceeded,
+    AnalysisBudgetPolicy,
+    reserve_execution,
+)
 from jobtology_be.infrastructure.persistence.contracts import (
     MissingRecordError,
     OutboxLease,
@@ -21,6 +26,7 @@ from jobtology_be.infrastructure.persistence.schema import (
     profiles,
     recompute_contexts,
     recompute_requests,
+    users,
 )
 from jobtology_be.settings import CorpusSource
 
@@ -33,8 +39,11 @@ _logger = logging.getLogger(__name__)
 class OutboxRepository:
     _database: Database
 
-    def __init__(self, database: Database) -> None:
+    def __init__(
+        self, database: Database, *, analysis_budget_policy: AnalysisBudgetPolicy | None = None,
+    ) -> None:
         self._database = database
+        self._analysis_budget_policy = analysis_budget_policy or AnalysisBudgetPolicy()
 
     async def _enqueue_recompute(
         self, session, user_id: UUID, profile_version: int, event_id: UUID
@@ -220,11 +229,17 @@ class OutboxRepository:
                             ).join(
                                 profiles,
                                 profiles.c.user_id == recompute_requests.c.user_id,
+                            ).join(
+                                users,
+                                users.c.id == recompute_requests.c.user_id,
                             )
                         )
                         .where(*claim_conditions, recompute_requests.c.profile_version == profiles.c.version)
                         .order_by(outbox_jobs.c.available_at, outbox_jobs.c.id)
-                        .with_for_update(of=outbox_jobs, skip_locked=True)
+                        # Budget insertion takes an ownership FK lock. Skip an
+                        # owner held by a finalizer/erasure before reaching that
+                        # insert while holding the profile in the reverse order.
+                        .with_for_update(of=(outbox_jobs, profiles, users), skip_locked=True)
                         .limit(limit)
                     )
                 )
@@ -232,6 +247,38 @@ class OutboxRepository:
                 .all()
             )
             for row in rows:
+                # Profile locks serialize account claims across API/worker processes.
+                # Keep an older running version from overlapping its replacement.
+                running_jobs = outbox_jobs.alias("running_jobs")
+                running_requests = recompute_requests.alias("running_requests")
+                already_running = await session.scalar(select(running_jobs.c.id).join(
+                    running_requests,
+                    running_requests.c.id == running_jobs.c.recompute_request_id,
+                ).where(
+                    running_requests.c.user_id == row["user_id"],
+                    running_requests.c.id != row["request_id"],
+                    running_requests.c.state == "RUNNING",
+                    running_jobs.c.state == "LEASED",
+                    running_jobs.c.lease_until > func.clock_timestamp(),
+                ).limit(1))
+                if already_running is not None:
+                    await session.execute(update(outbox_jobs).where(
+                        outbox_jobs.c.id == row["job_id"],
+                    ).values(state="READY", lease_token=None, lease_until=None,
+                             available_at=func.clock_timestamp() + timedelta(seconds=5)))
+                    continue
+                try:
+                    async with session.begin_nested():
+                        await reserve_execution(session, row["user_id"], self._analysis_budget_policy)
+                except AnalysisBudgetExceeded as error:
+                    await session.execute(update(outbox_jobs).where(
+                        outbox_jobs.c.id == row["job_id"],
+                    ).values(state="READY", lease_token=None, lease_until=None,
+                             available_at=func.clock_timestamp()
+                             + timedelta(seconds=error.retry_after_seconds)))
+                    _logger.info("recompute_budget_deferred retry_after_seconds=%d",
+                                 error.retry_after_seconds)
+                    continue
                 lease_token = uuid4()
                 leased_job = cast(
                     CursorResult[Any],

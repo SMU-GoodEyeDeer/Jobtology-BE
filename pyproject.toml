@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Jobtology analysis and roadmap API"
 requires-python = ">=3.12,<3.15"
 dependencies = [
-  "alembic>=1.14,<2",
+  "alembic>=1.16,<2",
   "asyncpg>=0.30,<1",
   "fastapi>=0.115,<1",
   "ortools>=9.11,<10",
@@ -37,6 +37,7 @@ artifacts = ["src/jobtology_be/document_processor/core/vendor/**/*", "src/jobtol
 [tool.hatch.build.targets.wheel.force-include]
 "docs/fe-integration.md" = "jobtology_be/api/guide/fe-integration.md"
 "config/product_roles/policy.v1.json" = "jobtology_be/product_roles/policy.v1.json"
+"config/product_roles/posting_context.v1.json" = "jobtology_be/product_roles/posting_context.v1.json"
 "config/product_roles/onboarding_checklist.v1.json" = "jobtology_be/product_roles/onboarding_checklist.v1.json"
 
 [tool.pytest.ini_options]

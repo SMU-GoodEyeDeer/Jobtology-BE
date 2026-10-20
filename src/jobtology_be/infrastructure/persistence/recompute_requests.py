@@ -4,6 +4,7 @@ from sqlalchemy import insert, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jobtology_be.application.recompute_freshness import analysis_context_fingerprint
+from jobtology_be.infrastructure.persistence.compute_budget import reserve_request
 from jobtology_be.infrastructure.persistence.contracts import (
     AnalysisRecomputeSubmission,
     MissingRecordError,
@@ -18,6 +19,7 @@ from jobtology_be.infrastructure.persistence.schema import (
     recompute_contexts,
     recompute_requests,
     user_state_events,
+    users,
 )
 
 REUSABLE_RECOMPUTE_STATES = ("PENDING", "RUNNING", "READY")
@@ -49,6 +51,13 @@ class RecomputeRequestRepository(OutboxRepository):
     async def submit_analysis_recompute_in_session(
         self, session: AsyncSession, submission: AnalysisRecomputeSubmission
     ) -> RecomputeRequestSnapshot:
+        # Finalization/erasure acquire account ownership before the profile.
+        # Match erasure's NO KEY UPDATE lock before the profile, even without
+        # HTTP idempotency. KEY SHARE would let erasure take the profile first,
+        # then block its final users DELETE while this writer waits on profile.
+        await session.scalar(select(users.c.id).where(
+            users.c.id == submission.user_id,
+        ).with_for_update(key_share=True))
         profile_version = await session.scalar(
             select(profiles.c.version)
             .where(profiles.c.user_id == submission.user_id)
@@ -80,6 +89,7 @@ class RecomputeRequestRepository(OutboxRepository):
             if existing.state == "READY" and submission.payload.get("refresh") is True:
                 continue
             return RecomputeRequestSnapshot(request_id=existing.id, state=existing.state)
+        await reserve_request(session, submission.user_id, self._analysis_budget_policy)
         trigger_event_id = uuid4()
         await session.execute(
             insert(user_state_events).values(

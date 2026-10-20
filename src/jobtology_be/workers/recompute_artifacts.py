@@ -303,6 +303,9 @@ def _constraints_snapshot(snapshot: PlanningConstraintSnapshot) -> Mapping[str, 
         "max_out_of_pocket_krw": snapshot.max_out_of_pocket_krw,
         "needs_portfolio": snapshot.needs_portfolio,
         "target_by": snapshot.target_by.isoformat(),
+        "weekly_availability": tuple(window.model_dump(mode="json")
+                                     for window in snapshot.weekly_availability),
+        "unavailable_dates": tuple(day.isoformat() for day in snapshot.unavailable_dates),
     }
 
 

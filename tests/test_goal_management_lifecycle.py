@@ -15,6 +15,7 @@ from jobtology_be.api.identity import AuthenticatedPrincipal
 from jobtology_be.application.services.roadmaps import PersistentRoadmapService
 from jobtology_be.corpus.local_snapshot import LocalJsonPublishedCorpusSnapshotReader
 from jobtology_be.infrastructure.persistence import schema as s
+from jobtology_be.infrastructure.persistence.compute_budget import AnalysisBudgetPolicy
 from jobtology_be.infrastructure.persistence.database import Database
 from jobtology_be.infrastructure.persistence.store import PostgresApplicationStore
 from jobtology_be.main import create_app
@@ -101,7 +102,9 @@ def _analyse(client: TestClient, goal_id: str) -> str:
 
 async def _drain(database_url: str, catalog: Path) -> None:
     database = Database.create(database_url)
-    store = PostgresApplicationStore(database, capability_list_authoritative=True)
+    # Exercise several logical user edits without waiting for wall-clock quota windows.
+    store = PostgresApplicationStore(database, capability_list_authoritative=True,
+        analysis_budget_policy=AnalysisBudgetPolicy(executions_per_minute=60))
     loop = InProcessRecomputeLoop(
         worker=build_leased_recompute_worker(
             store=store, snapshot_reader=LocalJsonPublishedCorpusSnapshotReader.from_path(catalog),

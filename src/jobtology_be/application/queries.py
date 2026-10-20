@@ -106,6 +106,7 @@ class RoadmapView:
     release_id: str | None
     validity: Mapping[str, ProductJsonValue]
     steps: tuple[RoadmapStepView, ...]
+    analysis_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,6 +117,7 @@ class RecomputeView:
     resulting_analysis_id: UUID | None
     proposal_id: UUID | None
     error_code: str | None
+    next_attempt_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)

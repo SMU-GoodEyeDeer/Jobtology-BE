@@ -13,7 +13,7 @@ from jobtology_be.api.identity import AuthenticatedPrincipal, require_authentica
 from jobtology_be.api.product_queries import require_product_queries
 from jobtology_be.application.queries import ProductQueries
 from jobtology_be.application.requirement_metadata import RequirementMetadataLookup
-from jobtology_be.application.weekly_plan import build_weekly_plan
+from jobtology_be.application.weekly_plan import WeeklyPlanSchedulingError, build_weekly_plan
 from jobtology_be.application.weekly_plan_models import (
     PlanContext,
     PlanOverrides,
@@ -67,8 +67,9 @@ async def _load_plan(
     for step in roadmap.steps:
         outcome = step.outcomes[0] if step.outcomes else None
         key = outcome.get('requirement_key') if isinstance(outcome, Mapping) else None
-        pinned = context.requirement_metadata.get(key) if isinstance(key, str) else None
-        if (isinstance(key, str) and key not in context.requirement_metadata
+        pinned = (context.step_metadata[step.step_key] if step.step_key in context.step_metadata else
+                  context.requirement_metadata.get(key) if isinstance(key, str) else None)
+        if (step.step_key not in context.step_metadata and isinstance(key, str) and key not in context.requirement_metadata
                 and roadmap.release_id is not None and getattr(metadata, 'release_id', None) == roadmap.release_id):
             pinned = metadata.lookup(key) if metadata is not None else None
         steps.append(PlanStepInput(step=step, metadata=pinned))
@@ -89,7 +90,7 @@ _ERRORS: dict[int | str, dict[str, type[BaseModel] | str]] = {
             summary='Get weekly roadmap plan', responses=_ERRORS)
 async def get_weekly_plan(inputs: _Inputs) -> WeeklyPlanResponse:
     overrides = await inputs.store.get(inputs.user_id, inputs.context.roadmap_id)
-    return build_weekly_plan(inputs.context, inputs.steps, overrides)
+    return _build_plan(inputs.context, inputs.steps, overrides)
 
 
 @router.put('/roadmaps/{roadmap_id}/plan', response_model=WeeklyPlanResponse,
@@ -97,12 +98,12 @@ async def get_weekly_plan(inputs: _Inputs) -> WeeklyPlanResponse:
 async def put_weekly_plan(request: WeeklyPlanRequest, inputs: _Inputs) -> WeeklyPlanResponse:
     existing = await inputs.store.get(inputs.user_id, inputs.context.roadmap_id)
     plan = _overrides(request, inputs, saved_at=datetime.now(UTC), existing=existing)
-    preview = build_weekly_plan(inputs.context, inputs.steps, plan)
+    preview = _build_plan(inputs.context, inputs.steps, plan)
     if not preview.is_customized:
         plan = plan.model_copy(update={'is_customized': False})
     plan = plan.model_copy(update={'step_schedules': {str(step.step_id): step for step in preview.steps}})
     overrides = await inputs.store.upsert(inputs.user_id, inputs.context.roadmap_id, plan)
-    return build_weekly_plan(inputs.context, inputs.steps, overrides)
+    return _build_plan(inputs.context, inputs.steps, overrides)
 
 
 def _overrides(
@@ -114,8 +115,8 @@ def _overrides(
         raise HTTPException(status_code=422, detail='order must be an exact permutation of step IDs')
     if not set(request.hours) <= step_ids:
         raise HTTPException(status_code=422, detail='hours contains unknown step IDs')
-    recommended = build_weekly_plan(inputs.context, inputs.steps)
-    current = build_weekly_plan(inputs.context, inputs.steps, existing)
+    recommended = _build_plan(inputs.context, inputs.steps)
+    current = _build_plan(inputs.context, inputs.steps, existing)
     completed = {str(step.step_id): step for step in current.steps if step.state == 'COMPLETED'}
     if any(key in request.hours and request.hours[key] != step.hours for key, step in completed.items()):
         raise HTTPException(status_code=422, detail='completed step hours cannot be changed')
@@ -137,11 +138,18 @@ async def preview_weekly_plan(inputs: _Inputs, request: WeeklyPlanRequest | None
     existing = await inputs.store.get(inputs.user_id, inputs.context.roadmap_id)
     overrides = (_overrides(request, inputs, saved_at=None, existing=existing)
                  if request is not None else existing.model_copy(update={'is_customized': False}) if existing else None)
-    return build_weekly_plan(inputs.context, inputs.steps, overrides)
+    return _build_plan(inputs.context, inputs.steps, overrides)
 
 
 @router.delete('/roadmaps/{roadmap_id}/plan', response_model=WeeklyPlanResponse,
                summary='Reset weekly roadmap plan to recommendations', responses=_ERRORS)
 async def delete_weekly_plan(inputs: _Inputs, expected_version: Annotated[int, Query(ge=0)]) -> WeeklyPlanResponse:
     reset = await inputs.store.delete(inputs.user_id, inputs.context.roadmap_id, expected_version)
-    return build_weekly_plan(inputs.context, inputs.steps, reset)
+    return _build_plan(inputs.context, inputs.steps, reset)
+
+
+def _build_plan(context: PlanContext, steps: tuple[PlanStepInput, ...], overrides: PlanOverrides | None = None) -> WeeklyPlanResponse:
+    try:
+        return build_weekly_plan(context, steps, overrides)
+    except WeeklyPlanSchedulingError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error

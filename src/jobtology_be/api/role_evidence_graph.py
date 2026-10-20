@@ -8,7 +8,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from jobtology_be.api.errors import ErrorResponse
 from jobtology_be.api.identity import AuthenticatedPrincipal, require_authenticated_principal
 from jobtology_be.api.live_source import _allowed_query, require_live_source_feed
-from jobtology_be.api.live_source_models import OccupationContextResponse
+from jobtology_be.api.live_source_models import (
+    ContextOccupation,
+    OccupationContextResponse,
+    RoleContextSelection,
+)
 from jobtology_be.corpus.neo4j_client import Neo4jQueryApiError
 from jobtology_be.corpus.neo4j_repository import Neo4jRepositoryError
 from jobtology_be.corpus.role_evidence_graph import RoleEvidenceGraph
@@ -17,6 +21,7 @@ from jobtology_be.infrastructure.persistence.live_source_feed import (
     LiveSourceReadError,
 )
 from jobtology_be.product_roles.models import ProductRolePolicy
+from jobtology_be.product_roles.posting_context import posting_context_policy
 
 router = APIRouter(tags=["native catalog"])
 
@@ -53,9 +58,18 @@ async def role_posting_context(
     role = next((role for role in _role_policy().roles if role.occupation_id == occupation_id), None)
     if role is None:
         raise HTTPException(status_code=404)
-    codes = sorted({*role.occupation_codes, *(code[:8] for code in role.additional_base_codes)})
+    # O*NET filters broaden context discovery; they establish no NCS equivalence
+    # and never enter the approved competency artifact or analysis inputs.
+    context_policy = posting_context_policy()
+    codes = sorted({*role.occupation_codes, *(code[:8] for code in role.additional_base_codes),
+                    *context_policy.roles.get(occupation_id, ())})
     try:
-        return await feed.occupation_context(codes, limit, offset)
+        result = await feed.occupation_context(codes, limit, offset)
+        return result.model_copy(update={"role_context": RoleContextSelection(
+            role_id=occupation_id, version=context_policy.version, basis=context_policy.basis,
+            onet_occupations=[ContextOccupation(code=code, name=context_policy.occupations[code].title)
+                              for code in context_policy.roles.get(occupation_id, ())],
+        )})
     except LiveSourceReadError as error:
         raise HTTPException(status_code=error.status_code) from None
 

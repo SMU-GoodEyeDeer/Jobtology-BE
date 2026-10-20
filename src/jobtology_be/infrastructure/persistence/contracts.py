@@ -3,6 +3,8 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from uuid import UUID
 
+from jobtology_be.contracts import WeeklyAvailabilityWindow
+
 type JsonValue = str | int | float | bool | None | Sequence[JsonValue] | Mapping[str, JsonValue]
 
 
@@ -112,6 +114,8 @@ class RoutePreferenceMutation:
     fastest_path: bool
     needs_portfolio: bool
     career_switch: bool
+    weekly_availability: tuple[WeeklyAvailabilityWindow, ...] = ()
+    unavailable_dates: tuple[date, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

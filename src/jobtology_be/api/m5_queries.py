@@ -59,6 +59,7 @@ class DashboardResponse(BaseModel):
     state: str
     goal_id: UUID | None
     analysis_id: UUID | None
+    proposal_id: UUID | None
     active_roadmap_id: UUID | None
     recompute_request_id: UUID | None
     recompute_state: str | None
@@ -179,6 +180,7 @@ def _dashboard_response(value: DashboardView) -> DashboardResponse:
         state=value.state,
         goal_id=value.goal_id,
         analysis_id=None if value.analysis is None else value.analysis.analysis_id,
+        proposal_id=None if value.analysis is None else value.analysis.proposal_id,
         active_roadmap_id=None if value.active_roadmap is None else value.active_roadmap.roadmap_id,
         recompute_request_id=None if value.recompute is None else value.recompute.recompute_request_id,
         recompute_state=None if value.recompute is None else value.recompute.state,

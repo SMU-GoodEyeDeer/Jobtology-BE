@@ -9,6 +9,7 @@ from jobtology_be.application.services.preferences import (
     PreferencesUpdateCommand,
     RoutePreferences,
 )
+from jobtology_be.contracts import UnavailableDates, WeeklyAvailability
 
 router = APIRouter(tags=["preferences"])
 
@@ -24,6 +25,8 @@ class RoutePreferencesUpdateRequest(BaseModel):
     fastest_path: StrictBool
     needs_portfolio: StrictBool
     career_switch: StrictBool
+    weekly_availability: WeeklyAvailability = ()
+    unavailable_dates: UnavailableDates = ()
 
 
 class RoutePreferencesResponse(BaseModel):
@@ -37,6 +40,8 @@ class RoutePreferencesResponse(BaseModel):
     fastest_path: bool
     needs_portfolio: bool
     career_switch: bool
+    weekly_availability: WeeklyAvailability = ()
+    unavailable_dates: UnavailableDates = ()
 
 
 async def require_preferences_service() -> PreferencesService:
@@ -53,6 +58,8 @@ def _response(preferences: RoutePreferences) -> RoutePreferencesResponse:
         fastest_path=preferences.fastest_path,
         needs_portfolio=preferences.needs_portfolio,
         career_switch=preferences.career_switch,
+        weekly_availability=preferences.weekly_availability,
+        unavailable_dates=preferences.unavailable_dates,
     )
 
 
@@ -96,6 +103,8 @@ async def update_route_preferences(
                 fastest_path=request.fastest_path,
                 needs_portfolio=request.needs_portfolio,
                 career_switch=request.career_switch,
+                weekly_availability=request.weekly_availability,
+                unavailable_dates=request.unavailable_dates,
             ),
         )
     )
