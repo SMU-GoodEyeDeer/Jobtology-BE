@@ -95,7 +95,7 @@ class CandidateGenerator:
         unmet = tuple(
             item
             for item in sorted(analysis.requirements, key=lambda item: item.requirement_key)
-            if item.status is SatisfactionStatus.UNMET
+            if item.status in (SatisfactionStatus.UNMET, SatisfactionStatus.PARTIAL)
         )
         needs_input = tuple(
             NeedsInputBlocker(

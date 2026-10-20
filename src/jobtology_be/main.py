@@ -23,6 +23,7 @@ from jobtology_be.api.google_auth import (
 from jobtology_be.api.guide import router as guide_router
 from jobtology_be.api.live_source import router as live_source_router
 from jobtology_be.api.neo4j_catalog import router as neo4j_catalog_router
+from jobtology_be.api.resume import require_resume_service
 from jobtology_be.api.role_evidence_graph import router as role_evidence_graph_router
 from jobtology_be.api.router import create_api_shell, router
 from jobtology_be.api.source_catalog import router as source_catalog_router
@@ -33,6 +34,7 @@ from jobtology_be.application.services.goals import PersistentGoalService
 from jobtology_be.application.services.preferences import PersistentPreferencesService
 from jobtology_be.application.services.profiles import PersistentProfileService
 from jobtology_be.application.services.roadmaps import PersistentRoadmapService
+from jobtology_be.application.specs import SkillCatalog
 from jobtology_be.chat.service import ChatCapabilityService
 from jobtology_be.corpus.role_evidence_graph import Neo4jRoleEvidenceGraph
 from jobtology_be.corpus.source_factory import build_configured_corpus_source
@@ -64,6 +66,7 @@ from jobtology_be.product_roles.context import ProductRoleAnalysisContextFactory
 from jobtology_be.product_roles.holder import ProductRoleHolder
 from jobtology_be.product_roles.models import ProductRolePolicy
 from jobtology_be.product_roles.worker import InProcessRecomputeLoop
+from jobtology_be.resume.service import ResumeService
 from jobtology_be.settings import Settings
 from jobtology_be.workers.recompute import build_leased_recompute_worker
 
@@ -258,11 +261,25 @@ def create_app(
             roadmap_service=roadmap_service or PersistentRoadmapService(store),
             holder=role_holder,
         )
+    skill_catalog = dependencies.skill_catalog or SkillCatalog(
+        (lambda: role_holder.snapshots) if role_holder is not None else
+        (lambda: corpus_source.local_snapshot_reader.snapshots)
+        if (corpus_source is not None and settings.corpus_source == 'local_json'
+            and corpus_source.local_snapshot_reader is not None)
+        else lambda: (),
+        role_holder or dependencies.requirement_metadata,
+    )
+    resume_service = dependencies.resume_service or ResumeService(
+        skill_catalog, llm=llm_client,
+        provider_label={'openai_api_key': 'OpenAI', 'chatgpt_oauth': 'ChatGPT'}.get(settings.llm_provider),
+    )
     app = create_api_shell(
         database_lifespan(
             database, corpus_source, source_catalog_resource, role_holder, inprocess_worker,
+            resume_service,
         ),
     )
+    app.dependency_overrides[require_resume_service] = lambda: resume_service
     register_error_handlers(app)
     app.add_middleware(OAuthCallbackQueryMiddleware)
     app.dependency_overrides[require_google_settings] = lambda: settings
@@ -279,6 +296,7 @@ def create_app(
         app,
         replace(
             dependencies,
+            skill_catalog=skill_catalog,
             profile_service=profile_service,
             preferences_service=preferences_service,
             goal_service=goal_service,

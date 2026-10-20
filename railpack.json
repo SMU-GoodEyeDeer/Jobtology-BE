@@ -1,7 +1,12 @@
 {
   "$schema": "https://schema.railpack.com",
   "provider": "python",
+  "packages": {
+    "java": "25",
+    "dotnet": "8.0"
+  },
   "deploy": {
+    "aptPackages": ["...", "libicu-dev", "fontconfig"],
     "variables": {
       "JOBTOLOGY_AUTH_ENABLED": "false",
       "JOBTOLOGY_GUEST_SESSIONS_ENABLED": "false",

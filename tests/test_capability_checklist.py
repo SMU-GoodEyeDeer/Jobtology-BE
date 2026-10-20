@@ -13,7 +13,6 @@ from jobtology_be.application.services.capabilities import (
     CapabilityService,
     OnboardingCapabilitiesCommand,
 )
-from jobtology_be.infrastructure.persistence.contracts import OnboardingCapabilityUnit
 from jobtology_be.main import create_app
 from jobtology_be.product_roles.checklist import (
     ChecklistDocument,
@@ -149,77 +148,12 @@ def _client(service: CapabilityService) -> TestClient:
     )
 
 
-def test_checklist_endpoint_returns_visible_groups_without_unit_identifiers() -> None:
-    with _client(RecordingOnboardingService()) as client:
-        response = client.get("/api/v1/occupations/BACKEND_DEVELOPER/capability-checklist")
-        missing = client.get("/api/v1/occupations/DATA_ANALYST/capability-checklist")
-
-    assert response.status_code == 200
-    assert response.json() == {
-        "occupation_id": "BACKEND_DEVELOPER",
-        "checklist_version": 3,
-        "groups": [
-            {
-                "label": "서버",
-                "items": [
-                    {"item_id": "B1", "label": "API를 만들어 봤어요"},
-                    {"item_id": "B2", "label": "API와 폐지 단위"},
-                ],
-            }
-        ],
-    }
-    assert missing.status_code == 404
-
-
-def test_onboarding_replace_resolves_items_into_one_service_call() -> None:
+def test_unstructured_checklist_endpoints_are_retired_without_writing() -> None:
     service = RecordingOnboardingService()
     with _client(service) as client:
-        response = client.put(
-            "/api/v1/me/capabilities/onboarding",
-            json={
-                "expected_profile_version": 4,
-                "occupation_id": "BACKEND_DEVELOPER",
-                "item_ids": ["B1", "B2"],
-            },
-        )
-
-    assert response.status_code == 200
-    assert response.json() == {"profile_version": 5, "saved_count": 1}
-    assert service.command == OnboardingCapabilitiesCommand(
-        expected_profile_version=4,
-        occupation_id="BACKEND_DEVELOPER",
-        checklist_version=3,
-        units=(OnboardingCapabilityUnit(item_id="B1", raw_text=CAPABILITY_LABEL),),
-    )
-
-
-def test_onboarding_replace_accepts_an_empty_answer_list() -> None:
-    service = RecordingOnboardingService()
-    with _client(service) as client:
-        response = client.put(
-            "/api/v1/me/capabilities/onboarding",
-            json={"expected_profile_version": 2, "occupation_id": "BACKEND_DEVELOPER", "item_ids": []},
-        )
-
-    assert response.status_code == 200
-    assert response.json() == {"profile_version": 3, "saved_count": 0}
-    assert service.command is not None
-    assert service.command.units == ()
-
-
-def test_onboarding_replace_rejects_unknown_items_without_writing() -> None:
-    service = RecordingOnboardingService()
-    with _client(service) as client:
-        unknown_item = client.put(
-            "/api/v1/me/capabilities/onboarding",
-            json={"expected_profile_version": 2, "occupation_id": "BACKEND_DEVELOPER",
-                  "item_ids": ["B3"]},
-        )
-        unknown_occupation = client.put(
-            "/api/v1/me/capabilities/onboarding",
-            json={"expected_profile_version": 2, "occupation_id": "DATA_ANALYST", "item_ids": []},
-        )
-
-    assert unknown_item.status_code == 422
-    assert unknown_occupation.status_code == 404
+        assert client.get("/api/v1/occupations/BACKEND_DEVELOPER/capability-checklist").status_code == 404
+        response = client.put("/api/v1/me/capabilities/onboarding", json={
+            "expected_profile_version": 4, "occupation_id": "BACKEND_DEVELOPER", "item_ids": ["B1"],
+        })
+    assert response.status_code == 405
     assert service.command is None

@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>DocToDocx.Cli</AssemblyName>
+    <RootNamespace>DocToDocx.Cli</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <DebugSymbols>false</DebugSymbols>
+    <DebugType>none</DebugType>
+    <PublishTrimmed>false</PublishTrimmed>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="DocSharp.Binary.Doc" Version="0.20.0" />
+  </ItemGroup>
+</Project>

@@ -86,11 +86,15 @@ class EditorialGapAnalyzer:
             )
             return self._evaluation(requirement, status, frozenset())
         provenance = frozenset({"SELF_REPORTED"})
-        observed_experience_codes = frozenset(
-            code for capability in matches for code in capability.experience_codes
-        )
-        if requirement.required_experience_codes <= observed_experience_codes:
-            return self._evaluation(requirement, SatisfactionStatus.SATISFIED, provenance)
+        # A single eligible evidence record must support its credit and required
+        # experience. Duplicates never add credit or borrow another record's codes.
+        eligible = tuple(capability for capability in matches
+                         if requirement.required_experience_codes <= frozenset(capability.experience_codes))
+        if eligible:
+            credit = max(capability.credit for capability in eligible)
+            status = (SatisfactionStatus.SATISFIED if credit == 1
+                      else SatisfactionStatus.PARTIAL if credit > 0 else SatisfactionStatus.UNMET)
+            return self._evaluation(requirement, status, provenance, credit)
         status = (
             SatisfactionStatus.UNMET
             if completeness.experience_is_complete_for(requirement.entity_id)
@@ -103,6 +107,7 @@ class EditorialGapAnalyzer:
         requirement: EditorialRequirement,
         status: SatisfactionStatus,
         provenance: frozenset[str],
+        credit: float = 0.0,
     ) -> RequirementEvaluation:
         return RequirementEvaluation(
             requirement_key=requirement.requirement_key,
@@ -111,6 +116,7 @@ class EditorialGapAnalyzer:
             status=status,
             provenance=provenance,
             support_refs=requirement.support_refs,
+            credit=credit,
         )
 
     def _coverage(
@@ -148,4 +154,6 @@ class EditorialGapAnalyzer:
             matched_count=matched_count,
             total_count=len(matching),
             score_method="REVIEWED_CHECKLIST",
+            weighted_score=sum(item.credit for item in matching) / len(matching),
+            weighted_score_method="MODELED_COMPETENCY_CREDIT_V1",
         )

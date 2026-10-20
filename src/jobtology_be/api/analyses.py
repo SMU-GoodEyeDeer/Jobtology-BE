@@ -93,11 +93,13 @@ class AnalysisSkillResponse(BaseModel):
     achievement: str | None
     requirement_key: str
     ncs_base_code: str | None
-    status: Literal["UNMET", "NEEDS_INPUT"]
+    status: Literal["PARTIAL", "UNMET", "NEEDS_INPUT"]
     ncs_level: int | None
     estimated_hours: int | None
     hours_basis: Literal["OFFICIAL", "ESTIMATED"] | None
     qualifications: tuple[AnalysisQualificationResponse, ...]
+    credit: float = Field(default=0.0, ge=0, le=1)
+    base_estimated_hours: int | None = None
 
 
 class AnalysisResultResponse(BaseModel):
@@ -106,6 +108,9 @@ class AnalysisResultResponse(BaseModel):
     required_pct: int | None
     preferred_pct: int | None
     skills: tuple[AnalysisSkillResponse, ...]
+    weighted_required_pct: int | None = None
+    weighted_preferred_pct: int | None = None
+    weighted_score_method: str = 'MODELED_COMPETENCY_CREDIT_V1'
 
 
 class AnalysisResponse(BaseModel):

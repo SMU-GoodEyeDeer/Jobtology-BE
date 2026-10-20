@@ -1,0 +1,2096 @@
+from __future__ import annotations
+
+import base64
+from io import BytesIO
+from pathlib import Path
+import sys
+import tempfile
+from types import SimpleNamespace
+import unittest
+from unittest.mock import patch
+
+
+from jobtology_be.document_processor import (
+    BoundingBox,
+    DocIR,
+    ImageAsset,
+    ImageIR,
+    PageInfo,
+    ParaStyleInfo,
+    ParagraphIR,
+    RunIR,
+    paragraph_page_number,
+)
+from jobtology_be.document_processor.pdf.enhancement.image_fallback import (
+    replace_low_resolution_pdf_image_assets,
+)
+from jobtology_be.document_processor.pdf.config import PdfParseConfig
+from jobtology_be.document_processor.pdf.local_outputs import export_pdf_local_outputs
+from jobtology_be.document_processor.pdf.odl import (
+    build_doc_ir_from_odl_result,
+    convert_pdf_local,
+    resolve_odl_jar_path,
+)
+from jobtology_be.document_processor.pdf.pipeline import parse_pdf_to_doc_ir
+from jobtology_be.document_processor.pdf.parsing import PageProfile, PdfProfile
+from jobtology_be.document_processor.pdf.preview.models import PdfPreviewContext
+from jobtology_be.document_processor.pdf.odl.adapter import _pdf_node_kwargs
+
+
+class PdfPipelineTests(unittest.TestCase):
+    def test_pdf_parse_config_does_not_expose_raster_border_enrichment(self) -> None:
+        self.assertNotIn("infer_table_borders", PdfParseConfig.model_fields)
+        self.assertNotIn("table_border_dpi", PdfParseConfig.model_fields)
+
+    def test_pdf_parse_config_exposes_only_simple_public_options(self) -> None:
+        self.assertEqual(
+            set(PdfParseConfig.model_fields),
+            {"pages", "include_header_footer", "image_quality", "image_output"},
+        )
+
+    def test_pdf_parse_config_rejects_odl_internal_options(self) -> None:
+        with self.assertRaises(ValueError):
+            PdfParseConfig.model_validate({"table_method": "default"})
+
+    def test_low_resolution_pdf_image_fallback_replaces_asset_with_bbox_crop(
+        self,
+    ) -> None:
+        class FakeBitmap:
+            width = 30
+            height = 30
+            stride = 90
+            mode = "BGR"
+            n_channels = 3
+            buffer = bytes([0, 0, 255]) * (width * height)
+
+            def close(self) -> None:
+                return None
+
+        class FakePage:
+            def render(self, *, scale: float, grayscale: bool) -> FakeBitmap:
+                self.scale = scale
+                self.grayscale = grayscale
+                return FakeBitmap()
+
+        class FakePdfDocument:
+            def __init__(self, path: str) -> None:
+                self.path = path
+                self.page = FakePage()
+
+            def __getitem__(self, index: int) -> FakePage:
+                self.index = index
+                return self.page
+
+            def close(self) -> None:
+                return None
+
+        doc = DocIR(
+            source_doc_type="pdf",
+            pages=[PageInfo(page_number=1, width_pt=10.0, height_pt=10.0)],
+            assets={
+                "img1": ImageAsset(
+                    mime_type="image/png",
+                    data_base64=base64.b64encode(b"old").decode("ascii"),
+                    intrinsic_width_px=5,
+                    intrinsic_height_px=5,
+                )
+            },
+            paragraphs=[
+                ParagraphIR(
+                    content=[
+                        ImageIR(
+                            image_id="img1",
+                            page_number=1,
+                            bbox=BoundingBox(
+                                left_pt=0, bottom_pt=0, right_pt=10, top_pt=10
+                            ),
+                            display_width_pt=10.0,
+                            display_height_pt=10.0,
+                        )
+                    ],
+                )
+            ],
+        )
+
+        with patch.dict(
+            sys.modules,
+            {
+                "pypdfium2": SimpleNamespace(
+                    PdfDocument=lambda path: FakePdfDocument(path)
+                )
+            },
+        ):
+            replace_low_resolution_pdf_image_assets(
+                doc, "sample.pdf", threshold_px_per_pt=1.1, dpi=216
+            )
+
+        asset = doc.assets["img1"]
+        data = asset.bytes_data()
+        self.assertEqual(asset.mime_type, "image/png")
+        self.assertEqual(asset.intrinsic_width_px, 30)
+        self.assertEqual(asset.intrinsic_height_px, 30)
+        self.assertTrue(data.startswith(b"\x89PNG\r\n\x1a\n"))
+        self.assertEqual(int.from_bytes(data[16:20], "big"), 30)
+        self.assertEqual(int.from_bytes(data[20:24], "big"), 30)
+
+    def test_build_doc_ir_from_odl_result_prefers_explicit_table_cell_border_css(
+        self,
+    ) -> None:
+        raw_document = {
+            "file name": "sample.pdf",
+            "kids": [
+                {
+                    "type": "table",
+                    "page number": 1,
+                    "bounding box": [10, 10, 110, 90],
+                    "number of rows": 1,
+                    "number of columns": 1,
+                    "rows": [
+                        {
+                            "cells": [
+                                {
+                                    "type": "table cell",
+                                    "page number": 1,
+                                    "row number": 1,
+                                    "column number": 1,
+                                    "bounding box": [10, 10, 110, 90],
+                                    "has top border": True,
+                                    "has bottom border": True,
+                                    "border top": "1.5px dotted #123456",
+                                    "kids": [
+                                        {
+                                            "type": "paragraph",
+                                            "content": "A1",
+                                            "page number": 1,
+                                        }
+                                    ],
+                                }
+                            ]
+                        }
+                    ],
+                }
+            ],
+        }
+
+        doc = build_doc_ir_from_odl_result(raw_document, source_path="sample.pdf")
+
+        style = doc.paragraphs[0].tables[0].cells[0][0].cell_style
+        self.assertEqual(style.border_top, "1.5px dotted #123456")
+        self.assertEqual(style.border_bottom, "1px solid")
+
+    def test_build_doc_ir_from_odl_result_maps_table_continuation_ids_to_docir_table_ids(
+        self,
+    ) -> None:
+        raw_document = {
+            "file name": "sample.pdf",
+            "kids": [
+                {
+                    "type": "table",
+                    "id": 7,
+                    "page number": 1,
+                    "bounding box": [10, 10, 110, 90],
+                    "number of rows": 1,
+                    "number of columns": 1,
+                    "next table id": 11,
+                    "rows": [
+                        {
+                            "cells": [
+                                {
+                                    "type": "table cell",
+                                    "page number": 1,
+                                    "row number": 1,
+                                    "column number": 1,
+                                    "bounding box": [10, 10, 110, 90],
+                                    "kids": [
+                                        {
+                                            "type": "paragraph",
+                                            "content": "A1",
+                                            "page number": 1,
+                                        }
+                                    ],
+                                }
+                            ]
+                        }
+                    ],
+                },
+                {
+                    "type": "table",
+                    "id": 11,
+                    "page number": 2,
+                    "bounding box": [10, 10, 110, 90],
+                    "number of rows": 1,
+                    "number of columns": 1,
+                    "previous table id": 7,
+                    "rows": [
+                        {
+                            "cells": [
+                                {
+                                    "type": "table cell",
+                                    "page number": 2,
+                                    "row number": 1,
+                                    "column number": 1,
+                                    "bounding box": [10, 10, 110, 90],
+                                    "kids": [
+                                        {
+                                            "type": "paragraph",
+                                            "content": "B1",
+                                            "page number": 2,
+                                        }
+                                    ],
+                                }
+                            ]
+                        }
+                    ],
+                },
+            ],
+        }
+
+        doc = build_doc_ir_from_odl_result(raw_document, source_path="sample.pdf")
+
+        first_table = doc.paragraphs[0].tables[0]
+        second_table = doc.paragraphs[1].tables[0]
+        self.assertEqual(first_table.next_table_id, second_table.node_id)
+        self.assertIsNone(first_table.previous_table_id)
+        self.assertEqual(second_table.previous_table_id, first_table.node_id)
+        self.assertIsNone(second_table.next_table_id)
+        self.assertNotEqual(first_table.next_table_id, "11")
+        self.assertNotEqual(second_table.previous_table_id, "7")
+
+    def test_parse_pdf_to_doc_ir_applies_preview_context_before_returning_doc(
+        self,
+    ) -> None:
+        doc = DocIR(doc_id="sample", source_doc_type="pdf")
+        preview_context = PdfPreviewContext()
+
+        with (
+            patch(
+                "jobtology_be.document_processor.pdf.pipeline._parse_pdf_to_doc_ir_with_preview",
+                return_value=(doc, preview_context),
+            ),
+            patch(
+                "jobtology_be.document_processor.pdf.preview.normalize.enrich_pdf_doc_ir"
+            ) as enrich_pdf,
+        ):
+            enrich_pdf.return_value = doc
+            result = parse_pdf_to_doc_ir("sample.pdf")
+
+        self.assertIs(result, doc)
+        enrich_pdf.assert_called_once_with(doc, preview_context=preview_context)
+
+    def test_pdf_docir_to_html_uses_common_html_renderer(self) -> None:
+        doc = DocIR(
+            doc_id="sample",
+            source_doc_type="pdf",
+            paragraphs=[
+                ParagraphIR(
+                    **_pdf_node_kwargs("paragraph", "s1.p1"),
+                    content=[
+                        RunIR(**_pdf_node_kwargs("run", "s1.p1.r1"), text="PDF body")
+                    ],
+                )
+            ],
+        )
+
+        with (
+            patch(
+                "jobtology_be.document_processor.pdf.preview.normalize.enrich_pdf_doc_ir",
+            ) as enrich_pdf,
+            patch(
+                "jobtology_be.document_processor.html_exporter.render_html_document",
+                return_value="<html>common</html>",
+            ) as render_html,
+        ):
+            html = doc.to_html(title="Preview", debug_layout=True)
+
+        self.assertEqual(html, "<html>common</html>")
+        enrich_pdf.assert_not_called()
+        render_html.assert_called_once()
+        self.assertEqual(render_html.call_args.args[0].source_doc_type, "pdf")
+        self.assertEqual(render_html.call_args.kwargs["title"], "Preview")
+        self.assertTrue(render_html.call_args.kwargs["debug_layout"])
+
+    def test_docir_from_file_pdf_uses_common_builder_without_duplicate_style_extraction(
+        self,
+    ) -> None:
+        built_doc = DocIR(
+            doc_id="sample",
+            source_path="sample.pdf",
+            source_doc_type="pdf",
+            paragraphs=[
+                ParagraphIR(
+                    **_pdf_node_kwargs("paragraph", "s1.p1"),
+                    para_style=ParaStyleInfo(align="center"),
+                )
+            ],
+        )
+        with (
+            patch(
+                "jobtology_be.document_processor.core.document_ir_parser.build_doc_ir_from_file",
+                return_value=built_doc,
+            ) as build_doc,
+            patch(
+                "jobtology_be.document_processor.core.style_extractor.extract_styles",
+            ) as extract_styles,
+        ):
+            result = DocIR.from_file(BytesIO(b"%PDF-1.7\n%fake"), doc_type="pdf")
+
+        self.assertEqual(result.source_doc_type, "pdf")
+        self.assertEqual(result.paragraphs[0].para_style.align, "center")
+        build_doc.assert_called_once()
+        parsed_path = build_doc.call_args.args[0]
+        self.assertTrue(str(parsed_path).endswith(".pdf"))
+        self.assertEqual(build_doc.call_args.kwargs["doc_type"], "pdf")
+        extract_styles.assert_not_called()
+
+    def test_docir_from_file_pdf_to_html_renders_preview_content(self) -> None:
+        raw_document = {
+            "file name": "sample.pdf",
+            "number of pages": 1,
+            "pages": [{"page number": 1, "width pt": 200, "height pt": 120}],
+            "layout regions": [
+                {
+                    "region id": "p1-main",
+                    "region type": "main",
+                    "page number": 1,
+                    "bounding box": [0, 0, 200, 120],
+                }
+            ],
+            "kids": [
+                {
+                    "type": "paragraph",
+                    "content": "Preview body",
+                    "page number": 1,
+                    "layout region id": "p1-main",
+                    "reading order index": 1,
+                },
+                {
+                    "type": "table",
+                    "page number": 1,
+                    "layout region id": "p1-main",
+                    "reading order index": 2,
+                    "bounding box": [20, 30, 180, 90],
+                    "rows": [
+                        {
+                            "cells": [
+                                {
+                                    "type": "table cell",
+                                    "row number": 1,
+                                    "column number": 1,
+                                    "page number": 1,
+                                    "kids": [
+                                        {
+                                            "type": "paragraph",
+                                            "content": "A1",
+                                            "page number": 1,
+                                        }
+                                    ],
+                                }
+                            ]
+                        }
+                    ],
+                },
+            ],
+        }
+        profile = PdfProfile(
+            page_count=1,
+            avg_chars_per_page=10.0,
+            normal_text_ratio=1.0,
+            text_readable=True,
+            text_readable_page_ratio=1.0,
+            page_profiles=[
+                PageProfile(
+                    page_number=1,
+                    char_count=10,
+                    normal_text_ratio=1.0,
+                    replacement_char_ratio=0.0,
+                    text_readable=True,
+                    image_area_ratio=0.0,
+                    image_area_in_content_ratio=0.0,
+                    page_width_pt=200.0,
+                    page_height_pt=120.0,
+                )
+            ],
+        )
+
+        with (
+            patch("jobtology_be.document_processor.pdf.pipeline.probe_pdf", return_value=profile),
+            patch(
+                "jobtology_be.document_processor.pdf.pipeline.run_odl_json",
+                return_value=raw_document,
+            ),
+        ):
+            doc = DocIR.from_file(BytesIO(b"%PDF-1.7\n%fake"), doc_type="pdf")
+            html = doc.to_html(title="Preview")
+
+        self.assertIn("Preview body", html)
+        self.assertEqual(html.count('<section class="document-page"'), 1)
+        self.assertNotIn("document-region-band--columns", html)
+
+    def test_build_doc_ir_from_odl_result_builds_paragraph_table_and_asset(
+        self,
+    ) -> None:
+        raw_document = {
+            "file name": "sample.pdf",
+            "number of pages": 2,
+            "author": "Hancom",
+            "title": "Sample PDF",
+            "creation date": "2026-04-09T09:00:00Z",
+            "modification date": "2026-04-09T10:00:00Z",
+            "pages": [
+                {"page number": 1, "width pt": 612, "height pt": 792},
+                {"page number": 2, "width pt": 612, "height pt": 792},
+            ],
+            "kids": [
+                {
+                    "type": "paragraph",
+                    "content": "Hello PDF",
+                    "page number": 1,
+                    "id": 101,
+                    "bounding box": [10, 20, 30, 40],
+                    "layout region id": "p1-main",
+                    "reading order index": 1,
+                    "heading level": 2,
+                    "font": "Noto Serif KR",
+                    "text color": "#112233",
+                    "font size": 11,
+                },
+                {
+                    "type": "formula",
+                    "content": "\\frac{a}{b}",
+                    "page number": 1,
+                    "id": 111,
+                    "layout region id": "p1-main",
+                    "reading order index": 2,
+                },
+                {
+                    "type": "list",
+                    "numbering style": "ordered",
+                    "previous list id": 10,
+                    "next list id": 12,
+                    "list items": [
+                        {
+                            "type": "list item",
+                            "content": "First item",
+                            "page number": 1,
+                            "id": 112,
+                            "layout region id": "p1-main",
+                            "reading order index": 3,
+                        }
+                    ],
+                },
+                {
+                    "type": "table",
+                    "page number": 2,
+                    "id": 202,
+                    "bounding box": [200, 210, 260, 310],
+                    "layout region id": "p2-main",
+                    "reading order index": 4,
+                    "number of rows": 1,
+                    "number of columns": 1,
+                    "rows": [
+                        {
+                            "cells": [
+                                {
+                                    "type": "table cell",
+                                    "id": 303,
+                                    "row number": 1,
+                                    "column number": 1,
+                                    "page number": 2,
+                                    "bounding box": [210, 220, 250, 300],
+                                    "layout region id": "p2-main",
+                                    "reading order index": 5,
+                                    "has top border": True,
+                                    "has bottom border": True,
+                                    "has left border": True,
+                                    "has right border": True,
+                                    "kids": [
+                                        {
+                                            "type": "paragraph",
+                                            "content": "A1",
+                                            "page number": 2,
+                                        }
+                                    ],
+                                }
+                            ]
+                        }
+                    ],
+                },
+                {
+                    "type": "image",
+                    "page number": 2,
+                    "bounding box": [300, 100, 420, 140],
+                    "data": "data:image/png;base64,QUJD",
+                    "width px": 120,
+                    "height px": 40,
+                },
+            ],
+        }
+
+        doc = build_doc_ir_from_odl_result(raw_document, source_path="sample.pdf")
+
+        self.assertEqual(doc.source_doc_type, "pdf")
+        self.assertIsNone(doc.meta)
+        self.assertEqual([page.page_number for page in doc.pages], [1, 2])
+        self.assertEqual(doc.paragraphs[0].native_anchor.debug_path, "s1.p1")
+        self.assertEqual(doc.paragraphs[0].text, "Hello PDF")
+        self.assertEqual(doc.paragraphs[0].bbox.left_pt, 10.0)
+        self.assertIsNone(doc.paragraphs[0].meta)
+        self.assertEqual(doc.paragraphs[0].runs[0].bbox.left_pt, 10.0)
+        self.assertEqual(doc.paragraphs[0].runs[0].native_anchor.debug_path, "s1.p1.r1")
+        self.assertIsNone(doc.paragraphs[0].runs[0].meta)
+        self.assertEqual(
+            doc.paragraphs[0].runs[0].run_style.font_family, "Noto Serif KR"
+        )
+        self.assertEqual(doc.paragraphs[1].native_anchor.debug_path, "s1.p2")
+        self.assertEqual(doc.paragraphs[1].text, "\\frac{a}{b}")
+        self.assertIsNone(doc.paragraphs[1].meta)
+        self.assertEqual(doc.paragraphs[2].native_anchor.debug_path, "s1.p3")
+        self.assertEqual(doc.paragraphs[2].text, "First item")
+        self.assertIsNone(doc.paragraphs[2].meta)
+        self.assertEqual(doc.paragraphs[3].native_anchor.debug_path, "s1.p4")
+        self.assertEqual(doc.paragraphs[3].tables[0].cells[0][0].text, "A1")
+        self.assertEqual(doc.paragraphs[3].bbox.left_pt, 200.0)
+        self.assertEqual(
+            doc.paragraphs[3].tables[0].native_anchor.debug_path, "s1.p4.r1.tbl1"
+        )
+        self.assertEqual(doc.paragraphs[3].tables[0].bbox.left_pt, 200.0)
+        self.assertIsNone(doc.paragraphs[3].tables[0].meta)
+        self.assertTrue(doc.paragraphs[3].tables[0].table_style.render_grid)
+        self.assertEqual(
+            doc.paragraphs[3].tables[0].cells[0][0].native_anchor.debug_path,
+            "s1.p4.r1.tbl1.tr1.tc1",
+        )
+        self.assertEqual(doc.paragraphs[3].tables[0].cells[0][0].bbox.left_pt, 210.0)
+        self.assertIsNone(doc.paragraphs[3].tables[0].cells[0][0].meta)
+        self.assertEqual(
+            doc.paragraphs[3]
+            .tables[0]
+            .cells[0][0]
+            .paragraphs[0]
+            .native_anchor.debug_path,
+            "s1.p4.r1.tbl1.tr1.tc1.p1",
+        )
+        self.assertEqual(
+            doc.paragraphs[3].tables[0].cells[0][0].cell_style.border_top, "1px solid"
+        )
+        self.assertEqual(
+            doc.paragraphs[3].tables[0].cells[0][0].cell_style.border_right, "1px solid"
+        )
+        self.assertIn("odl-img-p5", doc.assets)
+        self.assertEqual(doc.paragraphs[4].native_anchor.debug_path, "s1.p5")
+        self.assertEqual(
+            doc.paragraphs[4].images[0].native_anchor.debug_path, "s1.p5.img1"
+        )
+        self.assertEqual(doc.paragraphs[4].images[0].image_id, "odl-img-p5")
+        self.assertEqual(doc.paragraphs[4].images[0].display_width_pt, 120.0)
+        self.assertEqual(doc.paragraphs[4].images[0].display_height_pt, 40.0)
+        self.assertEqual(doc.paragraphs[4].bbox.left_pt, 300.0)
+        self.assertEqual(doc.paragraphs[4].images[0].bbox.left_pt, 300.0)
+        self.assertFalse(hasattr(doc.paragraphs[4].images[0], "meta"))
+        self.assertIsNone(doc.assets["odl-img-p5"].meta)
+
+    def test_build_doc_ir_from_odl_result_preserves_text_whitespace_and_header_footer_children(
+        self,
+    ) -> None:
+        raw_document = {
+            "file name": "sample.pdf",
+            "number of pages": 1,
+            "kids": [
+                {
+                    "type": "paragraph",
+                    "content": "  Hello PDF  ",
+                    "page number": 1,
+                    "id": 101,
+                },
+                {
+                    "type": "paragraph",
+                    "content": "   ",
+                    "page number": 1,
+                    "id": 102,
+                },
+                {
+                    "type": "header",
+                    "page number": 1,
+                    "id": 201,
+                    "kids": [
+                        {
+                            "type": "paragraph",
+                            "content": "Header line",
+                            "page number": 1,
+                            "id": 202,
+                            "font": "Noto Sans KR",
+                            "font size": 9,
+                        }
+                    ],
+                },
+                {
+                    "type": "table",
+                    "page number": 1,
+                    "rows": [
+                        {
+                            "cells": [
+                                {
+                                    "type": "table cell",
+                                    "row number": 1,
+                                    "column number": 1,
+                                    "page number": 1,
+                                    "kids": [
+                                        {
+                                            "type": "paragraph",
+                                            "content": "  A1  ",
+                                            "page number": 1,
+                                        }
+                                    ],
+                                }
+                            ]
+                        }
+                    ],
+                },
+            ],
+        }
+
+        doc = build_doc_ir_from_odl_result(raw_document, source_path="sample.pdf")
+
+        self.assertEqual(len(doc.paragraphs), 3)
+        self.assertEqual(doc.paragraphs[0].text, "  Hello PDF  ")
+        self.assertEqual(doc.paragraphs[1].text, "Header line")
+        self.assertEqual(paragraph_page_number(doc.paragraphs[1]), 1)
+        self.assertIsNone(doc.paragraphs[1].meta)
+        self.assertIsNone(doc.paragraphs[1].runs[0].meta)
+        self.assertEqual(
+            doc.paragraphs[1].runs[0].run_style.font_family, "Noto Sans KR"
+        )
+        self.assertEqual(doc.paragraphs[1].runs[0].run_style.size_pt, 9.0)
+        self.assertEqual(doc.paragraphs[2].tables[0].cells[0][0].text, "  A1  ")
+        self.assertEqual(
+            doc.paragraphs[2].tables[0].cells[0][0].paragraphs[0].text, "  A1  "
+        )
+
+    def test_build_doc_ir_from_odl_result_preserves_nested_list_children_in_table_cells(
+        self,
+    ) -> None:
+        raw_document = {
+            "file name": "sample.pdf",
+            "number of pages": 1,
+            "kids": [
+                {
+                    "type": "table",
+                    "page number": 1,
+                    "number of rows": 1,
+                    "number of columns": 1,
+                    "rows": [
+                        {
+                            "cells": [
+                                {
+                                    "type": "table cell",
+                                    "row number": 1,
+                                    "column number": 1,
+                                    "page number": 1,
+                                    "kids": [
+                                        {
+                                            "type": "paragraph",
+                                            "content": "460,465 30,000",
+                                            "page number": 1,
+                                        },
+                                        {
+                                            "type": "list",
+                                            "page number": 1,
+                                            "list items": [
+                                                {
+                                                    "type": "list item",
+                                                    "content": "6,270",
+                                                    "page number": 1,
+                                                    "kids": [
+                                                        {
+                                                            "type": "list",
+                                                            "page number": 1,
+                                                            "list items": [
+                                                                {
+                                                                    "type": "list item",
+                                                                    "content": "2,700 1,050",
+                                                                    "page number": 1,
+                                                                    "kids": [
+                                                                        {
+                                                                            "type": "paragraph",
+                                                                            "content": "7,560",
+                                                                            "page number": 1,
+                                                                        }
+                                                                    ],
+                                                                },
+                                                                {
+                                                                    "type": "list item",
+                                                                    "content": "3,000 3,000",
+                                                                    "page number": 1,
+                                                                },
+                                                            ],
+                                                        }
+                                                    ],
+                                                }
+                                            ],
+                                        },
+                                        {
+                                            "type": "paragraph",
+                                            "content": "18,720 44,400",
+                                            "page number": 1,
+                                        },
+                                    ],
+                                }
+                            ]
+                        }
+                    ],
+                }
+            ],
+        }
+
+        doc = build_doc_ir_from_odl_result(raw_document, source_path="sample.pdf")
+
+        cell = doc.paragraphs[0].tables[0].cells[0][0]
+        self.assertEqual(
+            cell.text.splitlines(),
+            [
+                "460,465 30,000",
+                "6,270",
+                "2,700 1,050",
+                "7,560",
+                "3,000 3,000",
+                "18,720 44,400",
+            ],
+        )
+        self.assertEqual(
+            "\n".join(paragraph.text for paragraph in cell.paragraphs).splitlines(),
+            [
+                "460,465 30,000",
+                "6,270",
+                "2,700 1,050",
+                "7,560",
+                "3,000 3,000",
+                "18,720 44,400",
+            ],
+        )
+
+    def test_build_doc_ir_from_odl_result_preserves_cell_list_tables_without_top_level_duplicate(
+        self,
+    ) -> None:
+        nested_table = {
+            "type": "table",
+            "id": 200,
+            "page number": 1,
+            "number of rows": 1,
+            "number of columns": 2,
+            "bounding box": [20, 20, 120, 60],
+            "rows": [
+                {
+                    "cells": [
+                        {
+                            "type": "table cell",
+                            "row number": 1,
+                            "column number": 1,
+                            "page number": 1,
+                            "kids": [
+                                {
+                                    "type": "paragraph",
+                                    "content": "사업명",
+                                    "page number": 1,
+                                }
+                            ],
+                        },
+                        {
+                            "type": "table cell",
+                            "row number": 1,
+                            "column number": 2,
+                            "page number": 1,
+                            "kids": [
+                                {
+                                    "type": "paragraph",
+                                    "content": "706,000",
+                                    "page number": 1,
+                                }
+                            ],
+                        },
+                    ]
+                }
+            ],
+        }
+        raw_document = {
+            "file name": "sample.pdf",
+            "number of pages": 1,
+            "kids": [
+                {
+                    "type": "table",
+                    "id": 100,
+                    "page number": 1,
+                    "number of rows": 1,
+                    "number of columns": 1,
+                    "rows": [
+                        {
+                            "cells": [
+                                {
+                                    "type": "table cell",
+                                    "row number": 1,
+                                    "column number": 1,
+                                    "page number": 1,
+                                    "kids": [
+                                        {
+                                            "type": "paragraph",
+                                            "content": "5. 사업규모",
+                                            "page number": 1,
+                                        },
+                                        {
+                                            "type": "list",
+                                            "page number": 1,
+                                            "list items": [
+                                                {
+                                                    "type": "list item",
+                                                    "content": "6. 사업추진절차\n계획수립\n사업수행",
+                                                    "page number": 1,
+                                                    "kids": [
+                                                        {
+                                                            "type": "text block",
+                                                            "page number": 1,
+                                                            "kids": [
+                                                                {
+                                                                    "type": "paragraph",
+                                                                    "content": "계획수립",
+                                                                    "page number": 1,
+                                                                }
+                                                            ],
+                                                        },
+                                                        {
+                                                            "type": "text block",
+                                                            "page number": 1,
+                                                            "kids": [
+                                                                {
+                                                                    "type": "paragraph",
+                                                                    "content": "사업수행",
+                                                                    "page number": 1,
+                                                                }
+                                                            ],
+                                                        },
+                                                    ],
+                                                },
+                                                {
+                                                    "type": "list item",
+                                                    "content": "- 시도분담금 내역",
+                                                    "page number": 1,
+                                                    "kids": [
+                                                        {
+                                                            "type": "list",
+                                                            "page number": 1,
+                                                            "list items": [
+                                                                {
+                                                                    "type": "list item",
+                                                                    "content": "- 시도분담금 내역",
+                                                                    "page number": 1,
+                                                                    "kids": [
+                                                                        nested_table
+                                                                    ],
+                                                                }
+                                                            ],
+                                                        }
+                                                    ],
+                                                },
+                                            ],
+                                        },
+                                    ],
+                                }
+                            ]
+                        }
+                    ],
+                },
+                nested_table,
+            ],
+        }
+
+        doc = build_doc_ir_from_odl_result(raw_document, source_path="sample.pdf")
+
+        self.assertEqual(len(doc.paragraphs), 1)
+        outer_cell = doc.paragraphs[0].tables[0].cells[0][0]
+        nested_tables = [
+            table for paragraph in outer_cell.paragraphs for table in paragraph.tables
+        ]
+        self.assertEqual(len(nested_tables), 1)
+        self.assertEqual(nested_tables[0].cells[0][0].text, "사업명")
+        self.assertEqual(nested_tables[0].cells[0][1].text, "706,000")
+        self.assertIn("- 시도분담금 내역", outer_cell.text)
+        self.assertEqual(outer_cell.text.splitlines().count("- 시도분담금 내역"), 1)
+        self.assertIn("6. 사업추진절차", outer_cell.text)
+        self.assertEqual(outer_cell.text.splitlines().count("계획수립"), 1)
+        self.assertEqual(outer_cell.text.splitlines().count("사업수행"), 1)
+        self.assertIn("사업명", outer_cell.text)
+
+    def test_build_doc_ir_from_odl_result_keeps_top_level_table_when_reused_id_has_different_geometry(
+        self,
+    ) -> None:
+        nested_table = {
+            "type": "table",
+            "id": 200,
+            "page number": 1,
+            "number of rows": 1,
+            "number of columns": 1,
+            "bounding box": [20, 20, 120, 60],
+            "rows": [
+                {
+                    "cells": [
+                        {
+                            "type": "table cell",
+                            "row number": 1,
+                            "column number": 1,
+                            "page number": 1,
+                            "kids": [
+                                {
+                                    "type": "paragraph",
+                                    "content": "nested page 1",
+                                    "page number": 1,
+                                }
+                            ],
+                        }
+                    ]
+                }
+            ],
+        }
+        top_level_reused_id_table = {
+            "type": "table",
+            "id": 200,
+            "page number": 2,
+            "number of rows": 1,
+            "number of columns": 1,
+            "bounding box": [20, 200, 120, 240],
+            "rows": [
+                {
+                    "cells": [
+                        {
+                            "type": "table cell",
+                            "row number": 1,
+                            "column number": 1,
+                            "page number": 2,
+                            "kids": [
+                                {
+                                    "type": "paragraph",
+                                    "content": "top level page 2",
+                                    "page number": 2,
+                                }
+                            ],
+                        }
+                    ]
+                }
+            ],
+        }
+        raw_document = {
+            "file name": "sample.pdf",
+            "number of pages": 2,
+            "kids": [
+                {
+                    "type": "table",
+                    "id": 100,
+                    "page number": 1,
+                    "number of rows": 1,
+                    "number of columns": 1,
+                    "bounding box": [0, 0, 200, 100],
+                    "rows": [
+                        {
+                            "cells": [
+                                {
+                                    "type": "table cell",
+                                    "row number": 1,
+                                    "column number": 1,
+                                    "page number": 1,
+                                    "kids": [nested_table],
+                                }
+                            ]
+                        }
+                    ],
+                },
+                top_level_reused_id_table,
+            ],
+        }
+
+        doc = build_doc_ir_from_odl_result(raw_document, source_path="sample.pdf")
+
+        self.assertEqual(len(doc.paragraphs), 2)
+        self.assertEqual(doc.paragraphs[0].tables[0].cells[0][0].text, "nested page 1")
+        self.assertEqual(
+            doc.paragraphs[1].tables[0].cells[0][0].text, "top level page 2"
+        )
+
+    def test_build_doc_ir_from_odl_result_orders_cell_children_by_visual_position(
+        self,
+    ) -> None:
+        nested_table = {
+            "type": "table",
+            "id": 200,
+            "page number": 1,
+            "number of rows": 1,
+            "number of columns": 1,
+            "bounding box": [20, 320, 120, 460],
+            "rows": [
+                {
+                    "cells": [
+                        {
+                            "type": "table cell",
+                            "row number": 1,
+                            "column number": 1,
+                            "page number": 1,
+                            "kids": [
+                                {
+                                    "type": "paragraph",
+                                    "content": "nested table",
+                                    "page number": 1,
+                                    "bounding box": [30, 380, 100, 430],
+                                }
+                            ],
+                        }
+                    ]
+                }
+            ],
+        }
+        raw_document = {
+            "file name": "sample.pdf",
+            "number of pages": 1,
+            "kids": [
+                {
+                    "type": "table",
+                    "id": 100,
+                    "page number": 1,
+                    "number of rows": 1,
+                    "number of columns": 1,
+                    "rows": [
+                        {
+                            "cells": [
+                                {
+                                    "type": "table cell",
+                                    "row number": 1,
+                                    "column number": 1,
+                                    "page number": 1,
+                                    "kids": [
+                                        {
+                                            "type": "paragraph",
+                                            "content": "4. 수혜대상",
+                                            "page number": 1,
+                                            "bounding box": [20, 500, 120, 520],
+                                        },
+                                        {
+                                            "type": "paragraph",
+                                            "content": "- 수혜대상 상세",
+                                            "page number": 1,
+                                            "bounding box": [26, 480, 150, 496],
+                                        },
+                                        {
+                                            "type": "paragraph",
+                                            "content": "5. 사업규모",
+                                            "page number": 1,
+                                            "bounding box": [20, 450, 120, 470],
+                                        },
+                                        {
+                                            "type": "paragraph",
+                                            "content": "6. 사업추진절차",
+                                            "page number": 1,
+                                            "bounding box": [20, 280, 120, 300],
+                                        },
+                                        nested_table,
+                                    ],
+                                }
+                            ]
+                        }
+                    ],
+                }
+            ],
+        }
+
+        doc = build_doc_ir_from_odl_result(raw_document, source_path="sample.pdf")
+
+        cell = doc.paragraphs[0].tables[0].cells[0][0]
+        self.assertEqual(
+            cell.text.splitlines(),
+            [
+                "4. 수혜대상",
+                "- 수혜대상 상세",
+                "5. 사업규모",
+                "nested table",
+                "6. 사업추진절차",
+            ],
+        )
+
+    def test_build_doc_ir_from_odl_result_uses_additive_spans_for_multi_run_text(
+        self,
+    ) -> None:
+        raw_document = {
+            "file name": "sample.pdf",
+            "number of pages": 1,
+            "kids": [
+                {
+                    "type": "heading",
+                    "content": "Hello PDF",
+                    "page number": 1,
+                    "id": 101,
+                    "heading level": 1,
+                    "font": "Parent Font",
+                    "font size": 18,
+                    "text color": "#112233",
+                    "spans": [
+                        {
+                            "type": "text chunk",
+                            "content": "Hello",
+                            "page number": 1,
+                            "bounding box": [1, 2, 3, 4],
+                            "font": "Span Font",
+                            "font size": 19,
+                            "text color": "#abcdef",
+                            "font weight": 700,
+                        },
+                        {
+                            "type": "text chunk",
+                            "content": " ",
+                            "page number": 1,
+                            "bounding box": [3, 2, 4, 4],
+                        },
+                        {
+                            "type": "text chunk",
+                            "content": "PDF",
+                            "page number": 1,
+                            "bounding box": [4, 2, 6, 4],
+                            "italic angle": 12,
+                            "underline": True,
+                        },
+                    ],
+                },
+                {
+                    "type": "table",
+                    "page number": 1,
+                    "rows": [
+                        {
+                            "cells": [
+                                {
+                                    "type": "table cell",
+                                    "row number": 1,
+                                    "column number": 1,
+                                    "page number": 1,
+                                    "kids": [
+                                        {
+                                            "type": "paragraph",
+                                            "content": "A1",
+                                            "page number": 1,
+                                            "font": "Cell Font",
+                                            "font size": 10,
+                                            "spans": [
+                                                {
+                                                    "type": "text chunk",
+                                                    "content": "A",
+                                                    "page number": 1,
+                                                    "font": "Cell Span Font",
+                                                    "font size": 11,
+                                                },
+                                                {
+                                                    "type": "text chunk",
+                                                    "content": "1",
+                                                    "page number": 1,
+                                                },
+                                            ],
+                                        }
+                                    ],
+                                }
+                            ]
+                        }
+                    ],
+                },
+            ],
+        }
+
+        doc = build_doc_ir_from_odl_result(raw_document, source_path="sample.pdf")
+
+        self.assertEqual(doc.paragraphs[0].text, "Hello PDF")
+        self.assertEqual(
+            [run.text for run in doc.paragraphs[0].runs], ["Hello", " ", "PDF"]
+        )
+        self.assertEqual(doc.paragraphs[0].runs[0].run_style.font_family, "Span Font")
+        self.assertEqual(doc.paragraphs[0].runs[0].run_style.size_pt, 19.0)
+        self.assertEqual(doc.paragraphs[0].runs[0].run_style.color, "#abcdef")
+        self.assertTrue(doc.paragraphs[0].runs[0].run_style.bold)
+        self.assertEqual(doc.paragraphs[0].runs[1].run_style.font_family, "Parent Font")
+        self.assertEqual(doc.paragraphs[0].runs[1].run_style.size_pt, 18.0)
+        self.assertTrue(doc.paragraphs[0].runs[2].run_style.italic)
+        self.assertTrue(doc.paragraphs[0].runs[2].run_style.underline)
+        self.assertIsNone(doc.paragraphs[0].runs[0].meta)
+        self.assertEqual(doc.paragraphs[0].runs[0].bbox.left_pt, 1.0)
+        self.assertEqual(doc.paragraphs[1].tables[0].cells[0][0].text, "A1")
+        self.assertEqual(
+            [
+                run.text
+                for run in doc.paragraphs[1].tables[0].cells[0][0].paragraphs[0].runs
+            ],
+            ["A", "1"],
+        )
+        self.assertEqual(
+            doc.paragraphs[1]
+            .tables[0]
+            .cells[0][0]
+            .paragraphs[0]
+            .runs[0]
+            .run_style.font_family,
+            "Cell Span Font",
+        )
+        self.assertEqual(
+            doc.paragraphs[1]
+            .tables[0]
+            .cells[0][0]
+            .paragraphs[0]
+            .runs[1]
+            .run_style.font_family,
+            "Cell Font",
+        )
+
+    def test_build_doc_ir_from_odl_result_merges_adjacent_spans_with_same_style(
+        self,
+    ) -> None:
+        raw_document = {
+            "file name": "sample.pdf",
+            "number of pages": 1,
+            "kids": [
+                {
+                    "type": "paragraph",
+                    "content": "Hello World",
+                    "page number": 1,
+                    "font": "Base Font",
+                    "font size": 12,
+                    "text color": "#111111",
+                    "spans": [
+                        {
+                            "type": "text chunk",
+                            "content": "Hello",
+                            "page number": 1,
+                            "bounding box": [1, 2, 3, 4],
+                            "font": "Base Font",
+                            "font size": 12,
+                            "text color": "#111111",
+                        },
+                        {
+                            "type": "text chunk",
+                            "content": " ",
+                            "page number": 1,
+                            "bounding box": [3, 2, 4, 4],
+                        },
+                        {
+                            "type": "text chunk",
+                            "content": "World",
+                            "page number": 1,
+                            "bounding box": [4, 2, 7, 4],
+                            "font": "Base Font",
+                            "font size": 12,
+                            "text color": "#111111",
+                        },
+                    ],
+                }
+            ],
+        }
+
+        doc = build_doc_ir_from_odl_result(raw_document, source_path="sample.pdf")
+
+        self.assertEqual(doc.paragraphs[0].text, "Hello World")
+        self.assertEqual(len(doc.paragraphs[0].runs), 1)
+        self.assertEqual(doc.paragraphs[0].runs[0].text, "Hello World")
+        self.assertEqual(doc.paragraphs[0].runs[0].bbox.left_pt, 1.0)
+        self.assertEqual(doc.paragraphs[0].runs[0].bbox.right_pt, 7.0)
+
+    def test_build_doc_ir_from_odl_result_prefers_node_text_when_spans_flatten_newlines(
+        self,
+    ) -> None:
+        raw_document = {
+            "file name": "sample.pdf",
+            "number of pages": 1,
+            "kids": [
+                {
+                    "type": "paragraph",
+                    "content": "64\n65\n66 68 69390",
+                    "page number": 1,
+                    "font": "Base Font",
+                    "font size": 12,
+                    "spans": [
+                        {"type": "text chunk", "content": "64", "page number": 1},
+                        {"type": "text chunk", "content": " ", "page number": 1},
+                        {"type": "text chunk", "content": "65", "page number": 1},
+                        {"type": "text chunk", "content": " ", "page number": 1},
+                        {"type": "text chunk", "content": "66", "page number": 1},
+                    ],
+                }
+            ],
+        }
+
+        doc = build_doc_ir_from_odl_result(raw_document, source_path="sample.pdf")
+
+        self.assertEqual(doc.paragraphs[0].text, "64\n65\n66 68 69390")
+        self.assertEqual(len(doc.paragraphs[0].runs), 1)
+        self.assertEqual(doc.paragraphs[0].runs[0].text, "64\n65\n66 68 69390")
+
+    def test_build_doc_ir_from_odl_result_keeps_soft_visual_wraps_as_spaces(
+        self,
+    ) -> None:
+        raw_document = {
+            "file name": "sample.pdf",
+            "number of pages": 1,
+            "kids": [
+                {
+                    "type": "paragraph",
+                    "content": "First line Second line",
+                    "page number": 1,
+                    "font": "Base Font",
+                    "font size": 12,
+                    "spans": [
+                        {
+                            "type": "text chunk",
+                            "content": "First line",
+                            "page number": 1,
+                            "bounding box": [10, 80, 58, 92],
+                        },
+                        {
+                            "type": "text chunk",
+                            "content": "Second line",
+                            "page number": 1,
+                            "bounding box": [10, 62, 72, 74],
+                        },
+                    ],
+                }
+            ],
+        }
+
+        doc = build_doc_ir_from_odl_result(raw_document, source_path="sample.pdf")
+        html = doc.to_html()
+
+        self.assertEqual(doc.paragraphs[0].text, "First line Second line")
+        self.assertEqual(
+            [run.text for run in doc.paragraphs[0].runs], ["First line", " Second line"]
+        )
+        self.assertNotIn("<br>Second line", html)
+
+    def test_build_doc_ir_from_odl_result_splits_stacked_numeric_spans_into_visual_lines(
+        self,
+    ) -> None:
+        raw_document = {
+            "file name": "sample.pdf",
+            "number of pages": 1,
+            "kids": [
+                {
+                    "type": "table",
+                    "page number": 1,
+                    "number of rows": 1,
+                    "number of columns": 1,
+                    "rows": [
+                        {
+                            "cells": [
+                                {
+                                    "type": "table cell",
+                                    "row number": 1,
+                                    "column number": 1,
+                                    "page number": 1,
+                                    "kids": [
+                                        {
+                                            "type": "paragraph",
+                                            "content": "0 52,000",
+                                            "page number": 1,
+                                            "spans": [
+                                                {
+                                                    "type": "text chunk",
+                                                    "content": "0",
+                                                    "page number": 1,
+                                                    "bounding box": [50, 80, 55, 92],
+                                                },
+                                                {
+                                                    "type": "text chunk",
+                                                    "content": "52,000",
+                                                    "page number": 1,
+                                                    "bounding box": [20, 62, 55, 74],
+                                                },
+                                            ],
+                                        }
+                                    ],
+                                }
+                            ]
+                        }
+                    ],
+                }
+            ],
+        }
+
+        doc = build_doc_ir_from_odl_result(raw_document, source_path="sample.pdf")
+        cell = doc.paragraphs[0].tables[0].cells[0][0]
+        html = doc.to_html()
+
+        self.assertEqual(cell.text, "0\n52,000")
+        self.assertEqual(cell.paragraphs[0].text, "0\n52,000")
+        self.assertIn("0<br>52,000", html)
+
+    def test_build_doc_ir_from_odl_result_expands_rowspans_after_all_pdf_cells_are_added(
+        self,
+    ) -> None:
+        def cell(row: int, col: int, text: str, *, rowspan: int = 1) -> dict:
+            return {
+                "type": "table cell",
+                "row number": row,
+                "column number": col,
+                "row span": rowspan,
+                "column span": 1,
+                "page number": 1,
+                "kids": [
+                    {
+                        "type": "paragraph",
+                        "content": text,
+                        "page number": 1,
+                    }
+                ],
+            }
+
+        raw_document = {
+            "file name": "sample.pdf",
+            "number of pages": 1,
+            "kids": [
+                {
+                    "type": "table",
+                    "page number": 1,
+                    "number of rows": 4,
+                    "number of columns": 6,
+                    "rows": [
+                        {
+                            "cells": [
+                                cell(1, 1, "시·군명"),
+                                cell(1, 2, "예산(천원)"),
+                                cell(1, 3, "시·군명"),
+                                cell(1, 4, "예산(천원)"),
+                                cell(1, 5, "시·군명"),
+                                cell(1, 6, "예산(천원)"),
+                            ]
+                        },
+                        {
+                            "cells": [
+                                cell(2, 1, "동두천"),
+                                cell(2, 2, "836,238"),
+                                cell(2, 3, "안성"),
+                                cell(2, 4, "500,000"),
+                                cell(2, 5, "이천"),
+                                cell(2, 6, "1,670,536"),
+                            ]
+                        },
+                        {
+                            "cells": [
+                                cell(3, 1, "안산"),
+                                cell(3, 2, "3,215,176"),
+                                cell(3, 3, "양주"),
+                                cell(3, 4, "241,617"),
+                                cell(3, 5, "계", rowspan=2),
+                                cell(3, 6, "8,169,135", rowspan=2),
+                            ]
+                        },
+                        {
+                            "cells": [
+                                cell(4, 1, "포천"),
+                                cell(4, 2, "499,169"),
+                                cell(4, 3, "여주"),
+                                cell(4, 4, "1,206,399"),
+                            ]
+                        },
+                    ],
+                }
+            ],
+        }
+
+        doc = build_doc_ir_from_odl_result(raw_document, source_path="sample.pdf")
+
+        table = doc.paragraphs[0].tables[0]
+        self.assertEqual(table.row_count, 4)
+        self.assertEqual(table.col_count, 6)
+        self.assertEqual([len(row) for row in table.cells], [6, 6, 6, 6])
+        self.assertEqual(
+            [cell.text for cell in table.cells[3]],
+            ["포천", "499,169", "여주", "1,206,399", "계", "8,169,135"],
+        )
+        self.assertEqual(
+            [
+                (row_index, col_index, cell.text)
+                for row_index, col_index, cell in table.iter_cell_positions()
+                if row_index == 4
+            ],
+            [
+                (4, 1, "포천"),
+                (4, 2, "499,169"),
+                (4, 3, "여주"),
+                (4, 4, "1,206,399"),
+            ],
+        )
+
+    def test_build_doc_ir_from_odl_result_expands_explicit_wide_space_spans(
+        self,
+    ) -> None:
+        raw_document = {
+            "file name": "sample.pdf",
+            "number of pages": 1,
+            "kids": [
+                {
+                    "type": "paragraph",
+                    "content": "금 원정(\\ )",
+                    "page number": 1,
+                    "font": "Base Font",
+                    "font size": 12,
+                    "spans": [
+                        {
+                            "type": "text chunk",
+                            "content": "금",
+                            "page number": 1,
+                            "bounding box": [10, 80, 20, 92],
+                        },
+                        {
+                            "type": "text chunk",
+                            "content": " ",
+                            "page number": 1,
+                            "bounding box": [20, 80, 80, 92],
+                        },
+                        {
+                            "type": "text chunk",
+                            "content": "원정(\\",
+                            "page number": 1,
+                            "bounding box": [80, 80, 112, 92],
+                        },
+                        {
+                            "type": "text chunk",
+                            "content": " ",
+                            "page number": 1,
+                            "bounding box": [112, 80, 172, 92],
+                        },
+                        {
+                            "type": "text chunk",
+                            "content": ")",
+                            "page number": 1,
+                            "bounding box": [172, 80, 176, 92],
+                        },
+                    ],
+                }
+            ],
+        }
+
+        doc = build_doc_ir_from_odl_result(raw_document, source_path="sample.pdf")
+        html = doc.to_html()
+
+        self.assertEqual(doc.paragraphs[0].text, "금          원정(\\          )")
+        self.assertEqual(
+            [run.text for run in doc.paragraphs[0].runs],
+            ["금", "          ", "원정(\\", "          ", ")"],
+        )
+        self.assertNotIn("text-decoration:underline", html)
+        self.assertIn(
+            "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;", html
+        )
+
+    def test_parse_pdf_to_doc_ir_marks_scan_like_pages_as_skipped(self) -> None:
+        profile = PdfProfile(
+            page_count=3,
+            avg_chars_per_page=30.0,
+            normal_text_ratio=0.8,
+            text_readable=True,
+            text_readable_page_ratio=2 / 3,
+            page_profiles=[
+                PageProfile(
+                    page_number=1,
+                    char_count=0,
+                    normal_text_ratio=0.0,
+                    replacement_char_ratio=0.0,
+                    text_readable=False,
+                    image_area_ratio=1.0,
+                    image_area_in_content_ratio=1.0,
+                    page_width_pt=612.0,
+                    page_height_pt=792.0,
+                ),
+                PageProfile(
+                    page_number=2,
+                    char_count=40,
+                    normal_text_ratio=0.8,
+                    replacement_char_ratio=0.0,
+                    text_readable=True,
+                    image_area_ratio=0.1,
+                    image_area_in_content_ratio=0.1,
+                    page_width_pt=612.0,
+                    page_height_pt=792.0,
+                ),
+                PageProfile(
+                    page_number=3,
+                    char_count=35,
+                    normal_text_ratio=0.7,
+                    replacement_char_ratio=0.0,
+                    text_readable=True,
+                    image_area_ratio=0.1,
+                    image_area_in_content_ratio=0.1,
+                    page_width_pt=612.0,
+                    page_height_pt=792.0,
+                ),
+            ],
+        )
+        raw_document = {
+            "file name": "sample.pdf",
+            "number of pages": 3,
+            "kids": [
+                {
+                    "type": "paragraph",
+                    "content": "Structured page 2",
+                    "page number": 2,
+                },
+                {
+                    "type": "paragraph",
+                    "content": "Structured page 3",
+                    "page number": 3,
+                },
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            pdf_path = Path(tmp_dir) / "sample.pdf"
+            pdf_path.write_bytes(b"%PDF-1.7\n%fake")
+
+            with patch(
+                "jobtology_be.document_processor.pdf.pipeline.probe_pdf", return_value=profile
+            ):
+                with (
+                    patch(
+                        "jobtology_be.document_processor.pdf.pipeline.run_odl_json",
+                        return_value=raw_document,
+                    ) as run_odl,
+                    patch(
+                        "jobtology_be.document_processor.pdf.pipeline.build_pdf_preview_context"
+                    ) as build_preview_context,
+                ):
+                    build_preview_context.return_value = PdfPreviewContext()
+                    doc = parse_pdf_to_doc_ir(pdf_path)
+
+        self.assertEqual(run_odl.call_args.kwargs, {})
+        self.assertEqual(run_odl.call_args.args[1]["pages"], [2, 3])
+        self.assertEqual(run_odl.call_args.args[1]["image_output"], "embedded")
+        self.assertEqual(build_preview_context.call_args.args, (raw_document,))
+        self.assertEqual(build_preview_context.call_args.kwargs, {})
+        self.assertEqual([page.page_number for page in doc.pages], [1, 2, 3])
+        self.assertEqual(
+            [
+                (page.page_number, page.parse_status, page.parse_skip_reason)
+                for page in doc.pages
+            ],
+            [
+                (1, "skipped", "pdf_scan_like"),
+                (2, "parsed", None),
+                (3, "parsed", None),
+            ],
+        )
+        page_dump = doc.model_dump(mode="json", exclude_none=True)["pages"]
+        self.assertEqual(page_dump[0]["parse_status"], "skipped")
+        self.assertEqual(page_dump[0]["parse_skip_reason"], "pdf_scan_like")
+        self.assertEqual(page_dump[1]["parse_status"], "parsed")
+        self.assertNotIn("parse_skip_reason", page_dump[1])
+        self.assertEqual(
+            [paragraph_page_number(paragraph) for paragraph in doc.paragraphs], [2, 3]
+        )
+        self.assertIsNone(doc.meta)
+        self.assertFalse(hasattr(doc, "get_pdf_preview_context"))
+
+    def test_parse_pdf_to_doc_ir_marks_vector_only_scan_like_pages_as_skipped(
+        self,
+    ) -> None:
+        profile = PdfProfile(
+            page_count=1,
+            avg_chars_per_page=0.0,
+            normal_text_ratio=0.0,
+            text_readable=False,
+            text_readable_page_ratio=0.0,
+            page_profiles=[
+                PageProfile(
+                    page_number=1,
+                    char_count=0,
+                    normal_text_ratio=0.0,
+                    replacement_char_ratio=0.0,
+                    text_readable=False,
+                    path_count=857,
+                    image_area_ratio=0.0,
+                    image_area_in_content_ratio=0.0,
+                    page_width_pt=595.0,
+                    page_height_pt=842.0,
+                ),
+            ],
+        )
+        raw_document = {
+            "file name": "sample.pdf",
+            "number of pages": 1,
+            "kids": [{"type": "paragraph", "content": "", "page number": 1}],
+        }
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            pdf_path = Path(tmp_dir) / "sample.pdf"
+            pdf_path.write_bytes(b"%PDF-1.7\n%fake")
+
+            with (
+                patch(
+                    "jobtology_be.document_processor.pdf.pipeline.probe_pdf", return_value=profile
+                ),
+                patch(
+                    "jobtology_be.document_processor.pdf.pipeline.run_odl_json",
+                    return_value=raw_document,
+                ) as run_odl,
+                patch(
+                    "jobtology_be.document_processor.pdf.pipeline.build_pdf_preview_context",
+                    return_value=PdfPreviewContext(),
+                ),
+            ):
+                doc = parse_pdf_to_doc_ir(pdf_path)
+
+        run_odl.assert_not_called()
+        self.assertEqual(
+            [
+                (page.page_number, page.parse_status, page.parse_skip_reason)
+                for page in doc.pages
+            ],
+            [(1, "skipped", "pdf_scan_like")],
+        )
+        self.assertEqual(doc.paragraphs, [])
+
+    def test_parse_pdf_to_doc_ir_keeps_sparse_vector_pages_with_text_structured(
+        self,
+    ) -> None:
+        profile = PdfProfile(
+            page_count=1,
+            avg_chars_per_page=10.0,
+            normal_text_ratio=1.0,
+            text_readable=False,
+            text_readable_page_ratio=0.0,
+            page_profiles=[
+                PageProfile(
+                    page_number=1,
+                    char_count=10,
+                    normal_text_ratio=1.0,
+                    replacement_char_ratio=0.0,
+                    text_readable=False,
+                    path_count=857,
+                    image_area_ratio=0.0,
+                    image_area_in_content_ratio=0.0,
+                    page_width_pt=595.0,
+                    page_height_pt=842.0,
+                ),
+            ],
+        )
+        raw_document = {
+            "file name": "sample.pdf",
+            "number of pages": 1,
+            "kids": [{"type": "paragraph", "content": "Short title", "page number": 1}],
+        }
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            pdf_path = Path(tmp_dir) / "sample.pdf"
+            pdf_path.write_bytes(b"%PDF-1.7\n%fake")
+
+            with (
+                patch(
+                    "jobtology_be.document_processor.pdf.pipeline.probe_pdf", return_value=profile
+                ),
+                patch(
+                    "jobtology_be.document_processor.pdf.pipeline.run_odl_json",
+                    return_value=raw_document,
+                ) as run_odl,
+                patch(
+                    "jobtology_be.document_processor.pdf.pipeline.build_pdf_preview_context",
+                    return_value=PdfPreviewContext(),
+                ),
+            ):
+                doc = parse_pdf_to_doc_ir(pdf_path)
+
+        run_odl.assert_called_once()
+        self.assertEqual(
+            [
+                (page.page_number, page.parse_status, page.parse_skip_reason)
+                for page in doc.pages
+            ],
+            [(1, "parsed", None)],
+        )
+        self.assertEqual(
+            [paragraph.text for paragraph in doc.paragraphs], ["Short title"]
+        )
+
+    def test_parse_pdf_to_doc_ir_maps_simple_public_config_to_odl_options(self) -> None:
+        profile = PdfProfile(
+            page_count=3,
+            avg_chars_per_page=30.0,
+            normal_text_ratio=0.8,
+            text_readable=True,
+            text_readable_page_ratio=2 / 3,
+            page_profiles=[
+                PageProfile(
+                    page_number=1,
+                    char_count=0,
+                    normal_text_ratio=0.0,
+                    replacement_char_ratio=0.0,
+                    text_readable=False,
+                    image_area_ratio=1.0,
+                    image_area_in_content_ratio=1.0,
+                    page_width_pt=612.0,
+                    page_height_pt=792.0,
+                ),
+                PageProfile(
+                    page_number=2,
+                    char_count=40,
+                    normal_text_ratio=0.8,
+                    replacement_char_ratio=0.0,
+                    text_readable=True,
+                    image_area_ratio=0.1,
+                    image_area_in_content_ratio=0.1,
+                    page_width_pt=612.0,
+                    page_height_pt=792.0,
+                ),
+                PageProfile(
+                    page_number=3,
+                    char_count=35,
+                    normal_text_ratio=0.7,
+                    replacement_char_ratio=0.0,
+                    text_readable=True,
+                    image_area_ratio=0.1,
+                    image_area_in_content_ratio=0.1,
+                    page_width_pt=612.0,
+                    page_height_pt=792.0,
+                ),
+            ],
+        )
+        raw_document = {
+            "file name": "sample.pdf",
+            "number of pages": 3,
+            "kids": [
+                {"type": "paragraph", "content": "Structured page 2", "page number": 2}
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            pdf_path = Path(tmp_dir) / "sample.pdf"
+            pdf_path.write_bytes(b"%PDF-1.7\n%fake")
+
+            with patch(
+                "jobtology_be.document_processor.pdf.pipeline.probe_pdf", return_value=profile
+            ):
+                with (
+                    patch(
+                        "jobtology_be.document_processor.pdf.pipeline.run_odl_json",
+                        return_value=raw_document,
+                    ) as run_odl,
+                    patch(
+                        "jobtology_be.document_processor.pdf.pipeline.build_pdf_preview_context"
+                    ) as build_preview_context,
+                ):
+                    build_preview_context.return_value = PdfPreviewContext()
+                    doc = parse_pdf_to_doc_ir(
+                        pdf_path,
+                        config={
+                            "pages": "2-3",
+                            "include_header_footer": True,
+                            "image_quality": "max",
+                            "image_output": "off",
+                        },
+                    )
+
+        odl_config = run_odl.call_args.args[1]
+        self.assertEqual(odl_config["pages"], [2, 3])
+        self.assertEqual(odl_config["include_header_footer"], True)
+        self.assertEqual(odl_config["image_quality"], "max")
+        self.assertEqual(odl_config["image_output"], "off")
+        self.assertEqual(
+            [
+                (page.page_number, page.parse_status, page.parse_skip_reason)
+                for page in doc.pages
+            ],
+            [(2, "parsed", None), (3, "parsed", None)],
+        )
+
+    def test_parse_pdf_to_doc_ir_keeps_split_pages_from_selected_physical_page(
+        self,
+    ) -> None:
+        profile = PdfProfile(
+            page_count=1,
+            avg_chars_per_page=40.0,
+            normal_text_ratio=0.8,
+            text_readable=True,
+            text_readable_page_ratio=1.0,
+            page_profiles=[
+                PageProfile(
+                    page_number=1,
+                    char_count=40,
+                    normal_text_ratio=0.8,
+                    replacement_char_ratio=0.0,
+                    text_readable=True,
+                    image_area_ratio=0.1,
+                    image_area_in_content_ratio=0.1,
+                    page_width_pt=400.0,
+                    page_height_pt=200.0,
+                ),
+            ],
+        )
+        raw_document = {
+            "file name": "sample.pdf",
+            "number of pages": 1,
+            "pages": [{"page number": 1, "width pt": 400.0, "height pt": 200.0}],
+            "layout regions": [
+                {
+                    "region id": "p1-left",
+                    "region type": "left-page",
+                    "page number": 1,
+                    "bounding box": [0.0, 0.0, 200.0, 200.0],
+                },
+                {
+                    "region id": "p1-right",
+                    "region type": "right-page",
+                    "page number": 1,
+                    "bounding box": [200.0, 0.0, 400.0, 200.0],
+                },
+            ],
+            "kids": [
+                {
+                    "type": "paragraph",
+                    "content": "Left body",
+                    "page number": 1,
+                    "bounding box": [20.0, 50.0, 100.0, 80.0],
+                    "layout region id": "p1-left",
+                },
+                {
+                    "type": "paragraph",
+                    "content": "Right body",
+                    "page number": 1,
+                    "bounding box": [240.0, 50.0, 340.0, 80.0],
+                    "layout region id": "p1-right",
+                },
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            pdf_path = Path(tmp_dir) / "sample.pdf"
+            pdf_path.write_bytes(b"%PDF-1.7\n%fake")
+
+            with (
+                patch(
+                    "jobtology_be.document_processor.pdf.pipeline.probe_pdf", return_value=profile
+                ),
+                patch(
+                    "jobtology_be.document_processor.pdf.pipeline.run_odl_json",
+                    return_value=raw_document,
+                ),
+                patch(
+                    "jobtology_be.document_processor.pdf.pipeline.collect_pdfium_visual_block_candidates",
+                    return_value=[],
+                ),
+            ):
+                doc = parse_pdf_to_doc_ir(pdf_path, config={"pages": "1"})
+
+        self.assertEqual([page.page_number for page in doc.pages], [1, 2])
+        self.assertEqual(
+            [paragraph_page_number(paragraph) for paragraph in doc.paragraphs], [1, 2]
+        )
+        self.assertEqual(
+            [paragraph.text for paragraph in doc.paragraphs],
+            ["Left body", "Right body"],
+        )
+
+    def test_resolve_odl_jar_path_uses_vendored_jar(self) -> None:
+        jar_path = resolve_odl_jar_path()
+
+        self.assertTrue(jar_path.exists())
+        self.assertEqual(jar_path.name, "opendataloader-pdf-cli-2.2.1.jar")
+
+    def test_convert_pdf_local_runs_vendored_jar_and_returns_expected_outputs(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            pdf_path = Path(tmp_dir) / "sample.pdf"
+            pdf_path.write_bytes(b"%PDF-1.7\n%fake")
+            output_dir = Path(tmp_dir) / "out"
+
+            def fake_run(command, **kwargs):
+                self.assertEqual(
+                    command[:4],
+                    [
+                        "java",
+                        "-Djava.awt.headless=true",
+                        "-jar",
+                        str(resolve_odl_jar_path()),
+                    ],
+                )
+                self.assertIn("--format", command)
+                output_dir.mkdir(parents=True, exist_ok=True)
+                (output_dir / "sample.json").write_text(
+                    '{"ok": true}', encoding="utf-8"
+                )
+                (output_dir / "sample.html").write_text("<p>ok</p>", encoding="utf-8")
+                (output_dir / "sample.md").write_text("# ok", encoding="utf-8")
+                return None
+
+            with patch(
+                "jobtology_be.document_processor.pdf.odl.runner.subprocess.run", side_effect=fake_run
+            ) as run_cli:
+                outputs = convert_pdf_local(
+                    pdf_path,
+                    output_dir=output_dir,
+                    formats=["json", "html", "markdown"],
+                    config={"pages": [2, 3]},
+                )
+
+        run_cli.assert_called_once()
+        self.assertEqual(outputs["json"].name, "sample.json")
+        self.assertEqual(outputs["html"].name, "sample.html")
+        self.assertEqual(outputs["markdown"].name, "sample.md")
+
+    def test_convert_pdf_local_passes_simple_image_quality_when_configured(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            pdf_path = Path(tmp_dir) / "sample.pdf"
+            pdf_path.write_bytes(b"%PDF-1.7\n%fake")
+            output_dir = Path(tmp_dir) / "out"
+
+            def fake_run(command, **kwargs):
+                self.assertIn("--image-pixel-size", command)
+                self.assertEqual(
+                    command[command.index("--image-pixel-size") + 1], "2400"
+                )
+                output_dir.mkdir(parents=True, exist_ok=True)
+                (output_dir / "sample.json").write_text(
+                    '{"ok": true}', encoding="utf-8"
+                )
+                return None
+
+            with patch(
+                "jobtology_be.document_processor.pdf.odl.runner.subprocess.run", side_effect=fake_run
+            ):
+                outputs = convert_pdf_local(
+                    pdf_path,
+                    output_dir=output_dir,
+                    formats=["json"],
+                    config={"image_quality": "high"},
+                )
+
+        self.assertEqual(outputs["json"].name, "sample.json")
+
+    def test_export_pdf_local_outputs_returns_readable_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir) / "native"
+
+            def fake_convert(path, *, output_dir, formats, config):
+                self.assertEqual(Path(path).suffix, ".pdf")
+                self.assertEqual(list(formats), ["json", "html", "markdown"])
+                output_dir.mkdir(parents=True, exist_ok=True)
+                json_path = output_dir / "sample.json"
+                html_path = output_dir / "sample.html"
+                markdown_path = output_dir / "sample.md"
+                json_path.write_text('{"source": "odl"}', encoding="utf-8")
+                html_path.write_text("<article>native</article>", encoding="utf-8")
+                markdown_path.write_text("# native", encoding="utf-8")
+                return {
+                    "json": json_path,
+                    "html": html_path,
+                    "markdown": markdown_path,
+                }
+
+            with patch(
+                "jobtology_be.document_processor.pdf.local_outputs.convert_pdf_local",
+                side_effect=fake_convert,
+            ):
+                outputs = export_pdf_local_outputs(
+                    BytesIO(b"%PDF-1.7\n%fake"),
+                    output_dir=output_dir,
+                )
+
+                self.assertEqual(outputs.read_json()["source"], "odl")
+                self.assertEqual(outputs.read_text("html"), "<article>native</article>")
+                self.assertEqual(outputs.read_text("markdown"), "# native")
+                self.assertEqual(outputs.html_path.name, "sample.html")
+                self.assertEqual(outputs.markdown_path.name, "sample.md")

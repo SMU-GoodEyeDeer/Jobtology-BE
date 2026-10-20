@@ -1,10 +1,11 @@
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import ValidationError
 from sqlalchemy import select
 
+from jobtology_be.application.specs import capability_inputs
 from jobtology_be.contracts import CapabilityInput
 from jobtology_be.infrastructure.persistence.context_carryforward import (
     ContextCarryforwardError,
@@ -86,7 +87,7 @@ class ConfiguredRecomputeRepository(OutboxRepository):
         try:
             timezone = ZoneInfo(goal_row.timezone)
             target_by = goal_row.target_by.astimezone(timezone)
-            capabilities, completeness = await self._active_capabilities(session, user_id)
+            capabilities, completeness = await self._active_capabilities(session, user_id, datetime.now(timezone).date())
             constraints = await self._current_constraints(session, user_id, target_by)
             carried_context = carry_forward_recompute_context(
                 context,
@@ -118,7 +119,7 @@ class ConfiguredRecomputeRepository(OutboxRepository):
         )
 
     async def _active_capabilities(
-        self, session, user_id: UUID
+        self, session, user_id: UUID, today: date | None = None,
     ) -> tuple[tuple[CapabilityInput, ...], InputCompleteness]:
         rows = (
             await session.execute(
@@ -126,6 +127,9 @@ class ConfiguredRecomputeRepository(OutboxRepository):
                     user_capabilities.c.raw_text,
                     user_capabilities.c.entity_id,
                     user_capabilities.c.details,
+                    user_capabilities.c.category,
+                    user_capabilities.c.proficiency,
+                    user_capabilities.c.source_completion_event_id,
                 )
                 .where(
                     user_capabilities.c.user_id == user_id,
@@ -136,12 +140,15 @@ class ConfiguredRecomputeRepository(OutboxRepository):
         ).all()
         try:
             capabilities = tuple(
-                CapabilityInput(
+                item
+                for row in rows
+                for item in capability_inputs(
                     raw_text=row.raw_text,
                     entity_id=row.entity_id,
-                    experience_codes=list(row.details.get("experience_codes", ())),
+                    category=row.category, proficiency=row.proficiency, details=row.details,
+                    completed=row.source_completion_event_id is not None,
+                    today=today,
                 )
-                for row in rows
             )
             completeness = InputCompleteness(
                 entities_complete=self._capability_list_authoritative or (

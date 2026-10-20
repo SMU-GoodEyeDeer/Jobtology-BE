@@ -48,6 +48,7 @@ def test_normalize_returns_unresolved_for_blank_raw_text(
         "experience_codes": [],
         "resolution": "UNRESOLVED",
         "verification": "SELF_REPORTED",
+        "credit": 1.0,
     }
 
 
@@ -72,6 +73,7 @@ def test_normalize_resolves_exact_normalized_alias_without_changing_raw_text(
                 "experience_codes": ["PRACTICED"],
                 "resolution": "RESOLVED",
                 "verification": "SELF_REPORTED",
+                "credit": 1.0,
             }
         ],
     }

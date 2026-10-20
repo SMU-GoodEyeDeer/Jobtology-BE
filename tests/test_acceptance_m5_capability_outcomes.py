@@ -47,6 +47,7 @@ class DerivedCapability:
             "raw_text": self.raw_text,
             "entity_id": self.entity_id,
             "experience_codes": list(self.experience_codes),
+            "credit": 1.0,
         }
 
 
@@ -229,6 +230,7 @@ def test_step_outcome_creates_a_resolved_capability_for_a_follow_up_recompute(
     follow_up_document = RecomputeContextDocument.model_validate(follow_up_context)
     assert follow_up_document.reference_at > datetime(2026, 9, 22, tzinfo=UTC)
     assert follow_up_document.planning_started_at > datetime(2026, 9, 22, tzinfo=UTC)
+    assert follow_up_document.capabilities[0].credit == 1.0
     assert follow_up_document.calendar
     assert follow_up_document.calendar[0].starts_at >= follow_up_document.planning_started_at
     follow_up_finalization = anyio.run(_process_pending_recompute, acceptance_database_url)

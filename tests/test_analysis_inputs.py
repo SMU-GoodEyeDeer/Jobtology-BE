@@ -60,10 +60,11 @@ async def _seed_context_inputs(
             insert(user_capabilities).values(
                 id=uuid4(),
                 user_id=user_id,
-                category="SKILL",
-                raw_text="Python",
-                entity_id="SKILL_PYTHON",
-                details={"experience_codes": ["PROFESSIONAL"]},
+                category="project",
+                raw_text="Python API",
+                proficiency="GUIDED",
+                details={"competency_ids": ["ncs:unit:2001020211", "ncs:unit:2001020212"],
+                         "evidence": "FastAPI로 로그인 API와 외부 인증 인터페이스를 구현하고 테스트했습니다."},
             )
         )
         if include_preferences:
@@ -107,7 +108,10 @@ async def _exercise_source(database_url: str) -> None:
             "2026-W43",
         }
         assert inputs.completeness.entities_complete is True
-        assert inputs.completeness.experience_complete_entity_ids == frozenset({"SKILL_PYTHON"})
+        assert inputs.completeness.experience_complete_entity_ids == frozenset()
+        assert [item.entity_id for item in inputs.capabilities] == ["ncs:unit:2001020211", "ncs:unit:2001020212"]
+        assert all(item.credit == .5 for item in inputs.capabilities)
+        assert [item.raw_text for item in inputs.capabilities] == ["2001020211", "2001020212"]
 
         with pytest.raises(PersistenceConflictError):
             await source.load_context_inputs(

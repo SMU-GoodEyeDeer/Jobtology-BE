@@ -179,12 +179,13 @@ def test_shared_entity_outcomes_merge_before_completion_and_reverse_only_their_e
             "/api/v1/me/capabilities",
             json={
                 "expected_profile_version": 4,
-                "category": "MANUAL",
+                "category": "skill",
                 "raw_text": DELIVERY_LABEL,
-                "entity_id": CAPABILITY_ENTITY_ID,
-                "details": {"experience_codes": []},
+                "proficiency": "GUIDED",
+                "details": {"evidence": "Built the delivery feature with guidance and tested its behavior."},
             },
         )
+        assert manual_response.status_code == 201, manual_response.text
         manual_capability_id = UUID(manual_response.json()["capability_id"])
         reversal_response = client.patch(
             f"/api/v1/roadmaps/{roadmap_id}/steps/{step_id}",
@@ -210,4 +211,8 @@ def test_shared_entity_outcomes_merge_before_completion_and_reverse_only_their_e
     assert manual_detail_response.status_code == 200
     assert manual_detail_response.json()["lifecycle"] == "ACTIVE"
     assert manual_detail_response.json()["source_completion_event_id"] is None
+    assert manual_detail_response.json()["raw_text"] == DELIVERY_LABEL
+    assert manual_detail_response.json()["entity_id"] is None
+    assert manual_detail_response.json()["matching"]["credit"] == 0.0
+    assert manual_detail_response.json()["matching"]["status"] == "NEEDS_CLARIFICATION"
     assert anyio.run(completion_capabilities, acceptance_database_url, step_id)[0].lifecycle == "REVOKED"

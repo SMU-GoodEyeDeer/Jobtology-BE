@@ -4,11 +4,10 @@ from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from test_acceptance_m5_automatic_lifecycle import _run_worker
+from test_acceptance_m5_automatic_lifecycle import _run_worker, _write_structured_spec_snapshot
 from test_acceptance_m5_automatic_loop import (
     _application,
     _configure_preferences,
-    _write_snapshot,
 )
 
 pytest_plugins = ("test_acceptance_m5_lifecycle",)
@@ -19,7 +18,7 @@ def test_configured_query_routes_return_published_user_scoped_results(
 ) -> None:
     # Given
     snapshot_path = tmp_path / "published-snapshots.json"
-    _write_snapshot(snapshot_path)
+    _write_structured_spec_snapshot(snapshot_path)
     monkeypatch.setenv("JOBTOLOGY_CORPUS_SNAPSHOT_PATH", str(snapshot_path))
     user_id = uuid4()
     target_by = (datetime.now(UTC) + timedelta(days=30)).isoformat()
@@ -54,10 +53,10 @@ def test_configured_query_routes_return_published_user_scoped_results(
             "/api/v1/me/capabilities",
             json={
                 "expected_profile_version": 4,
-                "category": "SELF_REPORTED",
+                "category": "skill",
                 "raw_text": "API implementation",
-                "entity_id": "capability-api",
-                "details": {"experience_codes": []},
+                "proficiency": "GUIDED",
+                "details": {"competency_ids": ["ncs:unit:2001020201"], "evidence": ""},
             },
         )
         assert capability_response.status_code == 201
@@ -121,7 +120,7 @@ def test_dashboard_hides_a_latest_analysis_when_the_profile_has_advanced(
 ) -> None:
     # Given
     snapshot_path = tmp_path / "published-snapshots.json"
-    _write_snapshot(snapshot_path)
+    _write_structured_spec_snapshot(snapshot_path)
     monkeypatch.setenv("JOBTOLOGY_CORPUS_SNAPSHOT_PATH", str(snapshot_path))
     user_id = uuid4()
     target_by = (datetime.now(UTC) + timedelta(days=30)).isoformat()
@@ -155,10 +154,10 @@ def test_dashboard_hides_a_latest_analysis_when_the_profile_has_advanced(
             "/api/v1/me/capabilities",
             json={
                 "expected_profile_version": 4,
-                "category": "SELF_REPORTED",
+                "category": "skill",
                 "raw_text": "API implementation",
-                "entity_id": "capability-api",
-                "details": {"experience_codes": []},
+                "proficiency": "GUIDED",
+                "details": {"competency_ids": ["ncs:unit:2001020201"], "evidence": ""},
             },
         ).status_code == 201
         analysis_response = client.post(
@@ -208,7 +207,7 @@ def test_dashboard_does_not_show_a_different_goals_pending_recompute(
 ) -> None:
     # Given
     snapshot_path = tmp_path / "published-snapshots.json"
-    _write_snapshot(snapshot_path)
+    _write_structured_spec_snapshot(snapshot_path)
     monkeypatch.setenv("JOBTOLOGY_CORPUS_SNAPSHOT_PATH", str(snapshot_path))
     user_id = uuid4()
     target_by = (datetime.now(UTC) + timedelta(days=30)).isoformat()

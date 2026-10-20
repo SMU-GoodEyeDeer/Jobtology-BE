@@ -18,6 +18,12 @@ triggers, and rollback.
 The [Goldship deployment and environment guide](../docs/goldship-deployment.md) records the
 observed host topology and Coolify setup; use its smoke checks to verify a deployment.
 
+Document processing is copied into the BE source and remains compatible with Python 3.12.
+`railpack.json` also requests Java 25 and .NET 8 in this image for the bundled converters,
+plus ICU/fontconfig. `.mise.toml` keeps .NET installs in the runtime-copied Mise tree.
+See [document processing](../docs/document-processing.md) for the installed-wheel checks.
+This library integration does not enable public résumé uploads.
+
 ## Pre-deploy gate
 
 Run against the exact commit to promote:

@@ -1,0 +1,4 @@
+# Retain copied upstream formatting while checking syntax and undefined/unused names.
+target-version = "py312"
+[lint]
+select = ["E4", "E7", "E9", "F"]

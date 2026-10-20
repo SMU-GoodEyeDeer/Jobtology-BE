@@ -18,7 +18,7 @@ def build_planning_problem(
     runtime_catalog: RuntimePlanningCatalog | None = None,
 ) -> PlanningProblem:
     unmet = frozenset(item.requirement_key for item in analysis.requirements
-                      if item.status is SatisfactionStatus.UNMET)
+                      if item.status in (SatisfactionStatus.UNMET, SatisfactionStatus.PARTIAL))
     action_ids = dict(runtime_catalog.action_id_mapping) if runtime_catalog else {}
     return PlanningProblem(
         analysis_id=analysis.analysis_id,

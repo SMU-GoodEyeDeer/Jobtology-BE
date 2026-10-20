@@ -11,6 +11,7 @@ class RequirementNecessity(StrEnum):
 
 class SatisfactionStatus(StrEnum):
     SATISFIED = "SATISFIED"
+    PARTIAL = "PARTIAL"
     UNMET = "UNMET"
     NEEDS_INPUT = "NEEDS_INPUT"
 
@@ -216,6 +217,7 @@ class RequirementEvaluation:
     status: SatisfactionStatus
     provenance: frozenset[str]
     support_refs: frozenset[str]
+    credit: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,6 +228,8 @@ class Coverage:
     matched_count: int
     total_count: int
     score_method: str | None
+    weighted_score: float | None = None
+    weighted_score_method: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

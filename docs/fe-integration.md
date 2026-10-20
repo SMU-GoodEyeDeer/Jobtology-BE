@@ -237,28 +237,51 @@ Google 이름을 받기 위해 기존 Google Cloud 클라이언트를 교체할 
 저장하지 않으면 주 10시간·일반 예산 기본값으로 분석합니다. 각 자원은 서버가 관리하는 `version`을
 갖고, 이후 분석 요청 시 `expected_profile_version`으로 사용합니다.
 
-#### 온보딩 "이미 해본 것" 체크리스트
+#### 온보딩·내 정보의 구조화된 내 스펙
 
-직무를 고른 직후 보여줄 체크 항목은 `GET /api/v1/occupations/{occupation_id}/capability-checklist`
-로 조회합니다(세션 불필요). 응답은 `{occupation_id, checklist_version, groups: [{label, items:
-[{item_id, label}]}]}`이며 NCS 단위 ID는 노출하지 않습니다. 현재 승인된 직무 요구에 연결이 없는
-항목은 숨겨지고, 체크리스트가 없는 직무는 `404`입니다. 이때 단계를 건너뛰세요.
+온보딩과 이후 수정은 같은 편집기를 사용합니다. 기존 체크리스트 조회·일괄 교체 경로는
+종료했습니다. 이번 교체는 소유자가 기존 스펙 초기화를 요청한 변경이며 이전 입력 형식을
+변환하는 호환 계층이나 스키마 마이그레이션은 없습니다. BE와 FE를 함께 배포하세요.
 
-체크 결과는 한 번에 저장합니다.
+- `GET /api/v1/skills?q=Python&occupation_id=BACKEND_DEVELOPER&limit=20`: 인증된 검색입니다.
+  `occupation_id`는 선택이며 없으면 전역 검색입니다. 승인된 NCS 단위명·기술 별칭과 O*NET
+  35개 핵심 역량의 원래 영어 이름·Jobtology 한국어 번역을 검색합니다. 원래 식별자와 출처를
+  보존하며 번역만으로 O*NET을 NCS 요구와 동등하다고 처리하지 않습니다.
+- `POST /api/v1/me/capabilities`, `PATCH /api/v1/me/capabilities/{id}`:
+  `expected_profile_version`, `category` (`skill`, `certification`, `test`, `project`, `experience`),
+  `raw_text` (제목), `proficiency` (`FAMILIAR`, `GUIDED`, `INDEPENDENT`, `PRODUCTION`),
+  `details`를 제출합니다. PATCH도 편집 내용 전체를 제출합니다. 응답은 ID와 새 프로필 버전이며
+  성공 후 상세 GET으로 전체 레코드·연결 결과를 조회하세요. POST의 멱등성 키는 응답 유실 시
+  같은 원래 버전과 본문으로 재사용하고, 저장 후 조회 실패는 GET만 재시도합니다.
+- `details`: 선택한 `competency_ids` (최대 12개), `evidence` (최대 2000자),
+  `source` (`MANUAL` / `LLM_ASSISTED`), `issuer`, `credential_code`, `issued_on`, `expires_on`,
+  `score`, `score_max`, `score_unit`, `organization`, `role`, `started_on`, `ended_on`,
+  `ongoing`, HTTP(S) `url`을 구조화합니다. 자격증은 발급기관, 시험 점수는 수치가 필요합니다.
+  종료일·만료일·점수 범위는 저장 시 검증합니다. 스펙 제목·점수·자격증명만으로 역량이
+  자동 충족되거나 실제 자격이 검증되는 것은 아닙니다.
+- 목록·상세 GET의 `matching`은 **현재 ACTIVE 목표** 기준의 연결 가능성을 보여줍니다.
+  `MATCHED`, `NEEDS_CLARIFICATION`, `UNUSED`, `EXPIRED`와 연결 역량·출처·계획 반영치를
+  함께 표시하세요. 관련 역량이 없는 기록은 보관하되 현재 분석에 반영하지 않습니다.
+- 역량 선택과 20자 이상 수행 근거가 있을 때만 계획 반영치 25/50/75/100%를 수행 수준에
+  따라 적용합니다. 동일 역량은 조건을 충족하는 가장 강한 기록 하나를 쓰며 합산하지 않습니다.
+  만료되었거나 아직 발급되지 않은 자격·시험 기록은 새 분석에서 0입니다. 날짜 판정은 분석 기준일과
+  활성 목표 시간대를 따릅니다. 내부 로드맵 완료 결과는 별도 완료 이벤트 출처를 유지합니다.
+- `POST /api/v1/chat/messages`의 `mode: "spec"`는 사용자가 명시적으로 경험 설명을 요청했을
+  때만 호출합니다. 허용된 역량 ID, 사용자 발화의 인용과 기록 종류 제안을 후보로 반환하며 저장하지 않습니다.
+  사용자가 후보·근거·수행 수준을 확인한 후 동일한 스펙 저장 API를 사용합니다. AI가
+  비활성화되거나 실패해도 수동 검색과 저장은 계속 사용할 수 있습니다.
 
-```text
-PUT /api/v1/me/capabilities/onboarding
-{ "expected_profile_version": 3, "occupation_id": "BACKEND_DEVELOPER", "item_ids": ["B1", "B6"] }
-→ 200 { "profile_version": 4, "saved_count": 3 }
-```
+부분 인정은 `MODELED_COMPETENCY_CREDIT_V1`이라는 **제품 계획 가정**이며 검증된 숙련도·
+취업 확률이 아닙니다. 기존 완전 충족률(`required_pct` / `preferred_pct`)과 가중 계획 지표
+(`weighted_required_pct` / `weighted_preferred_pct`)를 구별하세요. `PARTIAL` 요구는 계속
+부족 역량에 보이며 남은 학습시간을 `ceil(원본 시간 × (1 − 인정치))`로 추정합니다(최소 1시간).
+여러 요구를 다루는 활동은 가장 낮은 인정치를 사용합니다. 실제 솔버·제안·주차 플랜은 같은
+남은 시간을 사용하고, 줄인 시간은 공식 최소 훈련시간으로 표시하지 않습니다. 승인된 원본
+카탈로그와 서명은 변경하지 않습니다. 프로필 변경 후 새 분석이 필요하며 기존 활성 로드맵과
+진행 상태는 자동으로 덮어쓰지 않습니다.
 
-- 한 트랜잭션에서 저장하고 프로필 버전은 **한 번만** 올라갑니다. 다음 요청에는 응답의
-  `profile_version`을 쓰세요.
-- 이전 온보딩 응답을 **교체**합니다. 빈 `item_ids`는 이전 응답을 모두 지웁니다. "내 정보"에서
-  직접 입력한 역량은 바뀌지 않습니다.
-- 저장된 역량은 `category: "onboarding"`, `verification: "SELF_REPORTED"`입니다.
-  `saved_count`는 저장된 역량 수로, 항목 하나가 여러 역량에 연결되면 항목 수보다 큽니다.
-- 알 수 없는 `item_id`는 `422`, 버전 불일치는 `409`입니다. `Idempotency-Key`를 지원합니다.
+O*NET® 31.0 데이터: USDOL/ETA, [CC BY 4.0](https://www.onetcenter.org/license_db.html).
+한국어 표시는 Jobtology가 추가한 번역으로 공식·승인된 번역이 아닙니다.
 
 ### 2. 분석 요청 (202 비동기)
 
@@ -576,3 +599,7 @@ NCS 1–8수준 설명은 [공식 수준체계](https://www.ncs.go.kr/mobile/rm0
 - 열람용 API 문서(ReDoc): [\/api\/redoc](/api/redoc)
 - OpenAPI JSON: [\/api\/openapi.json](/api/openapi.json)
 - 이 문서의 원본 markdown: 저장소 `docs/fe-integration.md`
+
+### Résumé scanner
+
+Onboarding and My Info share **내 스펙 → 이력서에서 가져오기**. The authenticated status, raw-binary scan, and explicit selected-passage interpretation endpoints are documented in [resume-scanner.md](resume-scanner.md). A scan does not mutate the profile or call AI. Review each draft in the existing spec editor, require an explicit experience-level choice, then save with ordinary capability versioning/idempotency and full readback. Imported specs use `DOCUMENT_IMPORT` plus typed source quotation/span metadata. No SQL migration or new secret is required; deploy the BE first. Original files are request-only temporary data, and OCR/automatic education-profile writes are not implemented.

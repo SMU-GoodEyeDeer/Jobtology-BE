@@ -23,7 +23,6 @@ from jobtology_be.modules.analyses.editorial import EditorialGapAnalyzer
 from jobtology_be.modules.analyses.editorial_models import (
     EditorialAnalysisRequest,
     EditorialBaselineError,
-    ReleaseState,
 )
 from jobtology_be.modules.profiles.normalizer import (
     CatalogProfileNormalizer,
@@ -142,23 +141,14 @@ class RecomputeWorkerStore(
 def _target_capabilities(
     context: RecomputeContext,
     target: PublishedCorpusSnapshot,
-    reader: PublishedCorpusSnapshotReader,
 ) -> tuple[CapabilityInput, ...]:
-    # The account profile spans roles. Omit explicit entities belonging only to
-    # another reviewed role in this same release, without changing saved inputs.
-    # Truly unknown IDs still reach the strict normalizer and fail validation.
+    # Account specs can refer to competencies from the global catalog. Evaluate
+    # only this pinned goal's identities without rewriting or reinterpreting the
+    # other specs as aliases of current-role skills. Direct normalizer callers
+    # still receive strict unknown/conflicting identity errors.
     target_ids = frozenset(entry.entity_id for entry in target.capability_entries)
-    foreign_ids = frozenset(
-        entry.entity_id
-        for snapshot in getattr(reader, "snapshots", ())
-        if isinstance(snapshot, PublishedCorpusSnapshot)
-        and snapshot.basis_version == target.basis_version
-        and snapshot.release.release_id == target.release.release_id
-        and snapshot.release.state is ReleaseState.PUBLISHED and not snapshot.is_fixture
-        for entry in snapshot.capability_entries
-    ) - target_ids
     return tuple(capability for capability in context.capabilities
-                 if capability.entity_id not in foreign_ids)
+                 if capability.entity_id is None or capability.entity_id in target_ids)
 
 
 @dataclass(frozen=True, slots=True)
@@ -203,7 +193,7 @@ class RecomputeWorker:
         ).normalize(
             user_id=str(context.user_id),
             profile_version=context.profile_version,
-            capabilities=list(_target_capabilities(context, snapshot, self.snapshot_reader)),
+            capabilities=list(_target_capabilities(context, snapshot)),
         )
         analysis = EditorialGapAnalyzer(baseline).evaluate(
             normalized_profile,
@@ -215,7 +205,7 @@ class RecomputeWorker:
             ),
             context.completeness,
         )
-        runtime_catalog = product_planning_catalog(snapshot, context.constraints)
+        runtime_catalog = product_planning_catalog(snapshot, context.constraints, analysis)
         candidate_set = CandidateGenerator(runtime_catalog.templates).build(analysis)
         problem = build_planning_problem(context, analysis, candidate_set, runtime_catalog)
         if self.solver_time_limit_seconds is not None:
@@ -235,6 +225,7 @@ class RecomputeWorker:
                 analysis=analysis,
                 baseline=baseline,
                 templates=runtime_catalog.templates,
+                source_templates=snapshot.templates,
                 planning_result=planning_result,
             ),
         )

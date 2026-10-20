@@ -14,6 +14,11 @@ dependencies = [
   "authlib>=1.8,<2",
   "httpx>=0.28,<1",
   "markdown-it-py>=3,<4",
+  "jpype1>=1.7.1,<2",
+  "pydantic>=2.12,<3",
+  "pypdf>=6.2,<7",
+  "pypdfium2>=5.9,<6",
+  "python-docx>=1.2,<2",
 ]
 
 [dependency-groups]
@@ -25,6 +30,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/jobtology_be"]
+
+[tool.hatch.build]
+artifacts = ["src/jobtology_be/document_processor/core/vendor/**/*", "src/jobtology_be/document_processor/pdf/odl/vendor/**/*.jar"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "docs/fe-integration.md" = "jobtology_be/api/guide/fe-integration.md"

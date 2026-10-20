@@ -276,6 +276,10 @@ def build_weekly_plan(
             ))
         key, name = _identity(item)
         basis = meta.hours_basis if meta and meta.hours_basis else 'ESTIMATED'
+        if meta and meta.estimated_hours is not None and recommended_hours != meta.estimated_hours:
+            # The proposal may model remaining effort from partial competency credit.
+            # The source's official total is not an official remaining-hours estimate.
+            basis = 'ESTIMATED'
         result.append(WeeklyPlanStep(
             step_id=item.step.step_id, number=number,
             recommended_number=recommended_positions[item.step.step_id],

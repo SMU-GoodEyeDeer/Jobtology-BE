@@ -12,6 +12,9 @@ class CapabilityInput(Contract):
     raw_text: str = Field(min_length=1, max_length=500)
     entity_id: str | None = None
     experience_codes: list[str] = Field(default_factory=list)
+    # Internal domain/completion inputs default to full credit. Saved profile records
+    # must derive this value from validated spec evidence, never copy a client score.
+    credit: float = Field(default=1.0, ge=0, le=1, allow_inf_nan=False, strict=True)
 
 
 class RoadmapOutcome(Contract):
@@ -29,6 +32,7 @@ class NormalizedCapability(Contract):
     experience_codes: list[str]
     resolution: Literal["RESOLVED", "UNRESOLVED", "AMBIGUOUS"]
     verification: Literal["SELF_REPORTED"] = "SELF_REPORTED"
+    credit: float = Field(default=1.0, ge=0, le=1, allow_inf_nan=False, strict=True)
 
 
 class NormalizedProfile(Contract):

@@ -372,6 +372,8 @@ async def test_recompute_worker_finalizes_pinned_analysis_and_route_atomically()
             "score": None,
             "score_method": None,
             "total_count": 0,
+            "weighted_score": None,
+            "weighted_score_method": None,
         },
         "profile_version": 3,
         "reference_at": "2026-09-22T12:00:00+00:00",
@@ -382,6 +384,8 @@ async def test_recompute_worker_finalizes_pinned_analysis_and_route_atomically()
             "score": 0.0,
             "score_method": "REVIEWED_CHECKLIST",
             "total_count": 1,
+            "weighted_score": 0.0,
+            "weighted_score_method": "MODELED_COMPETENCY_CREDIT_V1",
         },
         "requirements": (
             {
@@ -390,6 +394,9 @@ async def test_recompute_worker_finalizes_pinned_analysis_and_route_atomically()
                 "provenance": ("SELF_REPORTED",),
                 "requirement_key": "api",
                 "status": "UNMET",
+                "credit": 0.0,
+                "base_estimated_hours": 1,
+                "estimated_hours": 1,
                 "support_refs": ("review:api",),
             },
         ),
