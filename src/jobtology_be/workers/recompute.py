@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import anyio
 
+from jobtology_be.contracts import CapabilityInput
 from jobtology_be.corpus.snapshot import (
     CorpusSnapshotError,
     PublishedCorpusSnapshot,
@@ -22,6 +23,7 @@ from jobtology_be.modules.analyses.editorial import EditorialGapAnalyzer
 from jobtology_be.modules.analyses.editorial_models import (
     EditorialAnalysisRequest,
     EditorialBaselineError,
+    ReleaseState,
 )
 from jobtology_be.modules.profiles.normalizer import (
     CatalogProfileNormalizer,
@@ -137,6 +139,28 @@ class RecomputeWorkerStore(
     pass
 
 
+def _target_capabilities(
+    context: RecomputeContext,
+    target: PublishedCorpusSnapshot,
+    reader: PublishedCorpusSnapshotReader,
+) -> tuple[CapabilityInput, ...]:
+    # The account profile spans roles. Omit explicit entities belonging only to
+    # another reviewed role in this same release, without changing saved inputs.
+    # Truly unknown IDs still reach the strict normalizer and fail validation.
+    target_ids = frozenset(entry.entity_id for entry in target.capability_entries)
+    foreign_ids = frozenset(
+        entry.entity_id
+        for snapshot in getattr(reader, "snapshots", ())
+        if isinstance(snapshot, PublishedCorpusSnapshot)
+        and snapshot.basis_version == target.basis_version
+        and snapshot.release.release_id == target.release.release_id
+        and snapshot.release.state is ReleaseState.PUBLISHED and not snapshot.is_fixture
+        for entry in snapshot.capability_entries
+    ) - target_ids
+    return tuple(capability for capability in context.capabilities
+                 if capability.entity_id not in foreign_ids)
+
+
 @dataclass(frozen=True, slots=True)
 class RecomputeWorker:
     context_reader: RecomputeContextReader
@@ -179,7 +203,7 @@ class RecomputeWorker:
         ).normalize(
             user_id=str(context.user_id),
             profile_version=context.profile_version,
-            capabilities=list(context.capabilities),
+            capabilities=list(_target_capabilities(context, snapshot, self.snapshot_reader)),
         )
         analysis = EditorialGapAnalyzer(baseline).evaluate(
             normalized_profile,

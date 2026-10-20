@@ -154,6 +154,15 @@ class PostgresApplicationStore(OutboxRepository, WorkerRepository):
             )
             if profile_version != request.expected_profile_version:
                 raise PersistenceConflictError(resource="profile")
+            previous = None
+            if request.goal_id is not None:
+                previous = (await session.execute(
+                    select(goals.c.goal_mode, goals.c.occupation_id, goals.c.status)
+                    .where(goals.c.id == goal_id, goals.c.user_id == request.user_id)
+                    .with_for_update()
+                )).one_or_none()
+                if previous is None:
+                    raise MissingRecordError(resource="goal")
             if request.status == "ACTIVE":
                 other_active_goal_id = await session.scalar(
                     select(goals.c.id)
@@ -196,6 +205,21 @@ class PostgresApplicationStore(OutboxRepository, WorkerRepository):
                 )
                 if result.rowcount != 1:
                     raise MissingRecordError(resource="goal")
+            if previous is not None and (
+                (previous.goal_mode, previous.occupation_id) != (request.goal_mode, request.occupation_id)
+                or (previous.status == "ACTIVE" and request.status != "ACTIVE")
+            ):
+                # A route belongs to the target it was planned for. Keep its
+                # progress/history, but never present an old role as the new goal.
+                await session.execute(
+                    update(roadmaps).where(
+                        roadmaps.c.user_id == request.user_id,
+                        roadmaps.c.goal_id == goal_id,
+                        roadmaps.c.state == "ACTIVE",
+                    ).values(
+                        state="ARCHIVED", version=roadmaps.c.version + 1, updated_at=datetime.now(UTC),
+                    )
+                )
             event_id = await self._append_event(
                 session,
                 request.user_id,
@@ -203,13 +227,16 @@ class PostgresApplicationStore(OutboxRepository, WorkerRepository):
                 request.expected_profile_version + 1,
                 "GOAL_UPDATED",
             )
-            await self._configured_recomputes.enqueue_for_goal(
-                session,
-                request.user_id,
-                request.expected_profile_version + 1,
-                event_id,
-                goal_id,
-            )
+            if request.status == "ACTIVE":
+                await self._configured_recomputes.enqueue_for_goal(
+                    session, request.user_id, request.expected_profile_version + 1, event_id, goal_id,
+                )
+            else:
+                # Adding/editing another draft must keep the current active
+                # analysis current after the shared profile version is bumped.
+                await self._configured_recomputes.enqueue_for_active_user(
+                    session, request.user_id, request.expected_profile_version + 1, event_id,
+                )
         return GoalSnapshot(goal_id=goal_id, user_id=request.user_id, status=request.status)
 
     async def mutate_capability(self, request: CapabilityMutation) -> CapabilitySnapshot:
@@ -725,7 +752,7 @@ class PostgresApplicationStore(OutboxRepository, WorkerRepository):
             if profile_version != request.expected_profile_version:
                 raise PersistenceConflictError(resource="profile")
             roadmap = await session.execute(
-                select(roadmaps.c.state, roadmaps.c.proposal_id, roadmaps.c.validity)
+                select(roadmaps.c.state, roadmaps.c.proposal_id, roadmaps.c.validity, roadmaps.c.goal_id)
                 .where(
                     roadmaps.c.id == request.roadmap_id,
                     roadmaps.c.user_id == request.user_id,
@@ -740,14 +767,29 @@ class PostgresApplicationStore(OutboxRepository, WorkerRepository):
                 source_validity = parse_source_validity(roadmap_row.validity)
                 if not source_is_current(source_validity, datetime.now(UTC)):
                     raise PersistenceConflictError(resource="roadmap source")
-                feasibility = await session.scalar(
-                    select(route_proposals.c.feasibility).where(
+                proposal = (await session.execute(
+                    select(
+                        route_proposals.c.feasibility, analyses.c.input_snapshot, analyses.c.results,
+                        goals.c.status, goals.c.goal_mode, goals.c.occupation_id,
+                    )
+                    .join(analyses, analyses.c.id == route_proposals.c.analysis_id)
+                    .join(goals, goals.c.id == analyses.c.goal_id)
+                    .where(
                         route_proposals.c.id == roadmap_row.proposal_id,
                         route_proposals.c.user_id == request.user_id,
+                        analyses.c.user_id == request.user_id,
+                        goals.c.user_id == request.user_id,
+                        goals.c.id == roadmap_row.goal_id,
                     )
-                )
-                if feasibility not in {"FEASIBLE", "RISKY", "PARTIAL"}:
+                )).one_or_none()
+                if proposal is None or proposal.feasibility not in {"FEASIBLE", "RISKY", "PARTIAL"}:
                     raise PersistenceConflictError(resource="route proposal")
+                if (
+                    proposal.status != "ACTIVE" or proposal.goal_mode != "TARGETED"
+                    or proposal.occupation_id is None
+                    or _pinned_occupation(proposal.input_snapshot, proposal.results) != proposal.occupation_id
+                ):
+                    raise PersistenceConflictError(resource="roadmap goal")
                 await session.execute(
                     update(roadmaps)
                     .where(
@@ -924,3 +966,15 @@ def _proposal_step_dates(step: Mapping[str, JsonValue]) -> tuple[datetime | None
     if start is not None and end is not None and end < start:
         raise PersistenceConflictError(resource="proposal schedule")
     return start, end
+
+
+def _pinned_occupation(
+    input_snapshot: Mapping[str, JsonValue], results: Mapping[str, JsonValue] | None,
+) -> str | None:
+    selection = input_snapshot.get("snapshot_selection")
+    occupation = selection.get("occupation_id") if isinstance(selection, Mapping) else None
+    result_occupation = None if results is None else results.get("occupation_id")
+    identities = {value for value in (occupation, result_occupation) if isinstance(value, str) and value.strip()}
+    # Legacy results can identify a route when the older snapshot omitted it.
+    # Missing/conflicting immutable identities require a fresh analysis to activate.
+    return next(iter(identities)) if len(identities) == 1 else None
