@@ -166,3 +166,21 @@ async def test_creating_goals_still_rejects_a_past_deadline(status: str) -> None
         ))
     assert error.value.code == "deadline_not_future"
     assert store.goal_mutations == []
+
+
+@pytest.mark.anyio
+async def test_goal_deletion_maps_owned_ids_and_version_without_provisioning_a_user():
+    from jobtology_be.infrastructure.persistence.contracts import GoalDelete
+
+    user_id = UUID("d0b3d8d1-7de4-4a62-8c58-e652431377b4")
+    goal_id = UUID("73625079-9005-4cff-9b10-95a894696690")
+
+    class DeleteStore:
+        async def delete_goal(self, request):
+            assert request == GoalDelete(user_id, goal_id, 3)
+            return ProfileSnapshot(user_id=user_id, version=4)
+
+        async def create_user(self, request):
+            raise AssertionError("Deletion must never provision an account")
+
+    assert await PersistentGoalService(DeleteStore()).delete_goal(user_id, goal_id, 3) == 4

@@ -249,6 +249,15 @@ class WorkerRepository:
                 .with_for_update()
             )
             lease_row = lease.one_or_none()
+            if lease_row is None:
+                job_exists = await session.scalar(select(outbox_jobs.c.id).where(
+                    outbox_jobs.c.id == work_item.lease.job_id,
+                ))
+                request_exists = await session.scalar(select(recompute_requests.c.id).where(
+                    recompute_requests.c.id == work_item.request_id,
+                ))
+                if job_exists is None and request_exists is None:
+                    return  # Goal erasure removed this leased work while the solver ran.
             if (
                 lease_row is None
                 or lease_row.state != "LEASED"
