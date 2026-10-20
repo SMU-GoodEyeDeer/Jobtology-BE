@@ -30,6 +30,7 @@ from jobtology_be.api.role_evidence_graph import (
     RoleEvidenceGraphSource,
     require_role_evidence_graph,
 )
+from jobtology_be.api.skills import require_skill_catalog
 from jobtology_be.api.source_catalog import require_source_catalog
 from jobtology_be.application.m5_queries import M5Queries
 from jobtology_be.application.queries import ProductQueries
@@ -49,6 +50,7 @@ from jobtology_be.application.services.goals import GoalService
 from jobtology_be.application.services.preferences import PreferencesService
 from jobtology_be.application.services.profiles import ProfileService
 from jobtology_be.application.services.roadmaps import RoadmapService
+from jobtology_be.application.specs import SkillCatalog
 from jobtology_be.application.weekly_plan_store import WeeklyPlanStore
 from jobtology_be.chat.service import ChatCapabilityService
 from jobtology_be.corpus.local_snapshot import LocalJsonPublishedCorpusSnapshotReader
@@ -160,6 +162,11 @@ def configured_analysis_context_factory(
 
 
 def register_api_dependencies(app: FastAPI, dependencies: ApiDependencies, settings: Settings) -> None:
+    if (skill_catalog := dependencies.skill_catalog) is not None:
+        def get_injected_skill_catalog() -> SkillCatalog:
+            return skill_catalog
+
+        app.dependency_overrides[require_skill_catalog] = get_injected_skill_catalog
     if (account_service := dependencies.account_service) is not None:
         def get_injected_account_service() -> AccountService:
             return account_service

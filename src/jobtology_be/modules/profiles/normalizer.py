@@ -104,6 +104,7 @@ class CatalogProfileNormalizer:
                 entity_id=capability.entity_id,
                 experience_codes=capability.experience_codes,
                 resolution="RESOLVED",
+                credit=capability.credit,
             )
 
         if len(candidates) == 1:
@@ -112,6 +113,7 @@ class CatalogProfileNormalizer:
                 entity_id=candidates[0],
                 experience_codes=capability.experience_codes,
                 resolution="RESOLVED",
+                credit=capability.credit,
             )
         if len(candidates) > 1:
             return NormalizedCapability(
@@ -119,12 +121,14 @@ class CatalogProfileNormalizer:
                 entity_id=None,
                 experience_codes=capability.experience_codes,
                 resolution="AMBIGUOUS",
+                credit=capability.credit,
             )
         return NormalizedCapability(
             raw_text=capability.raw_text,
             entity_id=None,
             experience_codes=capability.experience_codes,
             resolution="UNRESOLVED",
+            credit=capability.credit,
         )
 
 

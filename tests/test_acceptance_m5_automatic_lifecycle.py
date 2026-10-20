@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import sys
@@ -19,6 +20,27 @@ from jobtology_be.infrastructure.persistence.database import Database
 from jobtology_be.infrastructure.persistence.schema import recompute_requests
 
 pytest_plugins = ("test_acceptance_m5_lifecycle",)
+
+
+def _write_structured_spec_snapshot(path: Path) -> None:
+    """Use the current NCS identity/experience contract for HTTP lifecycle scenarios."""
+    _write_snapshot(path)
+    document = json.loads(path.read_text())
+    snapshot = document["snapshots"][0]
+    entity_id = "ncs:unit:2001020201"
+    requirement_key = "BACKEND_DEVELOPER:2001020201"
+    snapshot["capability_entries"][0].update({
+        "entity_id": entity_id,
+        "aliases": ["API implementation", "2001020201"],
+    })
+    snapshot["requirements"][0].update({
+        "entity_id": entity_id,
+        "requirement_key": requirement_key,
+        # Current NCS specs model proficiency/evidence, not legacy experience codes.
+        "required_experience_codes": [],
+    })
+    snapshot["templates"][0]["outcome_requirement_keys"] = [requirement_key]
+    path.write_text(json.dumps(document))
 
 
 def _run_worker(database_url: str, snapshot_path: Path) -> None:
@@ -61,7 +83,7 @@ def test_configured_api_worker_carries_completion_and_reversal_context(
 ) -> None:
     # Given
     snapshot_path = tmp_path / "published-snapshots.json"
-    _write_snapshot(snapshot_path)
+    _write_structured_spec_snapshot(snapshot_path)
     monkeypatch.setenv("JOBTOLOGY_CORPUS_SNAPSHOT_PATH", str(snapshot_path))
     user_id = uuid4()
     target_by = (datetime.now(UTC) + timedelta(days=30)).isoformat()
@@ -99,14 +121,22 @@ def test_configured_api_worker_carries_completion_and_reversal_context(
             "/api/v1/me/capabilities",
             json={
                 "expected_profile_version": 4,
-                "category": "SELF_REPORTED",
+                "category": "skill",
                 "raw_text": "API implementation",
-                "entity_id": "capability-api",
-                "details": {"experience_codes": []},
+                "proficiency": "GUIDED",
+                "details": {"competency_ids": ["ncs:unit:2001020201"], "evidence": ""},
             },
         )
         assert capability_response.status_code == 201
         assert capability_response.json()["profile_version"] == 5
+        spec_detail = client.get(
+            f"/api/v1/me/capabilities/{capability_response.json()['capability_id']}"
+        )
+        assert spec_detail.status_code == 200
+        assert spec_detail.json()["details"]["competency_ids"] == ["ncs:unit:2001020201"]
+        # Selecting an identity without evidence does not grant partial or full credit.
+        assert spec_detail.json()["matching"]["credit"] == 0.0
+        assert spec_detail.json()["matching"]["status"] == "NEEDS_CLARIFICATION"
 
         # When
         initial_response = client.post(
@@ -210,6 +240,7 @@ def test_configured_api_worker_carries_completion_and_reversal_context(
 
     assert completion_analysis.status_code == 200
     assert completion_analysis.json()["results"]["requirements"][0]["status"] == "SATISFIED"
+    assert completion_analysis.json()["results"]["requirements"][0]["credit"] == 1.0
     assert reversal_response.status_code == 200
     reversal_recompute_id = anyio.run(
         _pending_recompute_id, acceptance_database_url, user_id, 8
@@ -218,7 +249,13 @@ def test_configured_api_worker_carries_completion_and_reversal_context(
 
     with TestClient(_application(acceptance_database_url, user_id)) as client:
         reversal_recompute = client.get(f"/api/v1/recomputations/{reversal_recompute_id}")
+        reversal_analysis = client.get(
+            f"/api/v1/analyses/{reversal_recompute.json()['resulting_analysis_id']}"
+        )
 
     assert reversal_recompute.status_code == 200
     assert reversal_recompute.json()["state"] == "COMPLETED"
     assert reversal_recompute.json()["profile_version"] == 8
+    assert reversal_analysis.status_code == 200
+    assert reversal_analysis.json()["results"]["requirements"][0]["status"] == "UNMET"
+    assert reversal_analysis.json()["results"]["requirements"][0]["credit"] == 0.0

@@ -7,9 +7,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from test_acceptance_m5_lifecycle import _application
 from test_acceptance_m5_worker import (
-    CAPABILITY_ENTITY_ID,
     CAPABILITY_LABEL,
-    EXPERIENCE_CODE,
     StaticSnapshotReader,
     _snapshot,
     process_recompute,
@@ -85,20 +83,22 @@ async def _exercise_configured_mutations(
                 user_id=user_id,
                 expected_profile_version=2,
                 capability_id=None,
-                category="SELF_REPORTED",
+                category="skill",
                 raw_text=CAPABILITY_LABEL,
-                entity_id=CAPABILITY_ENTITY_ID,
-                proficiency=None,
-                details={"experience_codes": [EXPERIENCE_CODE]},
+                entity_id=None,
+                proficiency="GUIDED",
+                details={"evidence": "Implemented the API with guidance and checked its responses."},
             )
         )
         assert capability.profile_version == 3
         capability_context = await _pending_context(database, user_id, 3)
-        assert capability_context.capabilities[0].entity_id == CAPABILITY_ENTITY_ID
-        assert capability_context.completeness.entities_complete
-        assert capability_context.completeness.experience_complete_entity_ids == frozenset(
-            {CAPABILITY_ENTITY_ID}
-        )
+        # An unselected title stays visible but cannot become trusted identity/experience
+        # merely because it matches the pinned catalog's alias.
+        assert capability_context.capabilities[0].raw_text == CAPABILITY_LABEL
+        assert capability_context.capabilities[0].entity_id is None
+        assert capability_context.capabilities[0].credit == 0.0
+        assert not capability_context.completeness.entities_complete
+        assert capability_context.completeness.experience_complete_entity_ids == frozenset()
         await _process_one(store)
 
         preferences = await store.set_route_preferences(
@@ -119,6 +119,7 @@ async def _exercise_configured_mutations(
         assert preference_context.constraints.available_hours_per_week == 3
         assert preference_context.constraints.fastest_path
         assert preference_context.constraints.needs_portfolio
+        assert preference_context.capabilities[0].credit == 0.0
         assert preference_context.calendar[0].starts_at >= preference_context.planning_started_at
         await _process_one(store)
 
@@ -140,6 +141,7 @@ async def _exercise_configured_mutations(
         goal_context = await _pending_context(database, user_id, 5)
         assert goal_context.constraints.target_by == refreshed_target_by
         assert goal_context.snapshot_selection.occupation_id == "BACKEND_DEVELOPER"
+        assert goal_context.capabilities[0].credit == 0.0
         await _process_one(store)
 
         profile = await store.mutate_profile(
@@ -156,7 +158,9 @@ async def _exercise_configured_mutations(
         assert profile.version == 6
         profile_context = await _pending_context(database, user_id, 6)
         assert profile_context.profile_version == 6
-        assert profile_context.capabilities[0].entity_id == CAPABILITY_ENTITY_ID
+        assert profile_context.capabilities[0].raw_text == CAPABILITY_LABEL
+        assert profile_context.capabilities[0].entity_id is None
+        assert profile_context.capabilities[0].credit == 0.0
         await _process_one(store)
 
         deleted = await store.delete_capability(
@@ -244,15 +248,16 @@ async def _exercise_authoritative_free_text_capability(
                 user_id=user_id,
                 expected_profile_version=2,
                 capability_id=None,
-                category="language",
+                category="skill",
                 raw_text="unrecognized free text",
                 entity_id=None,
-                proficiency=None,
-                details={},
+                proficiency="FAMILIAR",
+                details={"evidence": "Practiced the basics with guided examples and small exercises."},
             )
         )
         context = await _pending_context(database, user_id, capability.profile_version)
         assert context.capabilities[0].entity_id is None
+        assert context.capabilities[0].credit == 0.0
         assert context.completeness.entities_complete
     finally:
         await database.dispose()
@@ -293,11 +298,11 @@ async def _exercise_onboarding_replacement(database_url: str, user_id: UUID) -> 
                 user_id=user_id,
                 expected_profile_version=2,
                 capability_id=None,
-                category="language",
+                category="skill",
                 raw_text="manual entry",
                 entity_id=None,
-                proficiency=None,
-                details={},
+                proficiency="FAMILIAR",
+                details={"evidence": "Practiced basic API skills with guided exercises and examples."},
             )
         )
         first = await store.replace_onboarding_capabilities(

@@ -1,0 +1,189 @@
+{
+  "source_urls": [
+    "https://www.onetonline.org/find/descriptor/browse/2.A",
+    "https://www.onetonline.org/find/descriptor/browse/2.B"
+  ],
+  "retrieved_on": "2026-10-20",
+  "translation_status": "EDITORIAL_KO",
+  "license": "O*NET database content, CC BY 4.0; Korean labels are Jobtology translations, not official O*NET translations.",
+  "items": [
+    {
+      "code": "2.A.1.b",
+      "original_label": "Active Listening",
+      "label": "적극적 경청"
+    },
+    {
+      "code": "2.A.1.e",
+      "original_label": "Mathematics",
+      "label": "수학"
+    },
+    {
+      "code": "2.A.1.a",
+      "original_label": "Reading Comprehension",
+      "label": "독해"
+    },
+    {
+      "code": "2.A.1.f",
+      "original_label": "Science",
+      "label": "과학적 사고"
+    },
+    {
+      "code": "2.A.1.d",
+      "original_label": "Speaking",
+      "label": "말하기"
+    },
+    {
+      "code": "2.A.1.c",
+      "original_label": "Writing",
+      "label": "글쓰기"
+    },
+    {
+      "code": "2.A.2.b",
+      "original_label": "Active Learning",
+      "label": "능동적 학습"
+    },
+    {
+      "code": "2.A.2.a",
+      "original_label": "Critical Thinking",
+      "label": "비판적 사고"
+    },
+    {
+      "code": "2.A.2.c",
+      "original_label": "Learning Strategies",
+      "label": "학습 전략"
+    },
+    {
+      "code": "2.A.2.d",
+      "original_label": "Monitoring",
+      "label": "자기 점검"
+    },
+    {
+      "code": "2.B.2.i",
+      "original_label": "Complex Problem Solving",
+      "label": "복합 문제 해결"
+    },
+    {
+      "code": "2.B.5.b",
+      "original_label": "Management of Financial Resources",
+      "label": "재무 자원 관리"
+    },
+    {
+      "code": "2.B.5.c",
+      "original_label": "Management of Material Resources",
+      "label": "물적 자원 관리"
+    },
+    {
+      "code": "2.B.5.d",
+      "original_label": "Management of Personnel Resources",
+      "label": "인적 자원 관리"
+    },
+    {
+      "code": "2.B.5.a",
+      "original_label": "Time Management",
+      "label": "시간 관리"
+    },
+    {
+      "code": "2.B.1.b",
+      "original_label": "Coordination",
+      "label": "협업 조정"
+    },
+    {
+      "code": "2.B.1.e",
+      "original_label": "Instructing",
+      "label": "교육 및 지도"
+    },
+    {
+      "code": "2.B.1.d",
+      "original_label": "Negotiation",
+      "label": "협상"
+    },
+    {
+      "code": "2.B.1.c",
+      "original_label": "Persuasion",
+      "label": "설득"
+    },
+    {
+      "code": "2.B.1.f",
+      "original_label": "Service Orientation",
+      "label": "서비스 지향"
+    },
+    {
+      "code": "2.B.1.a",
+      "original_label": "Social Perceptiveness",
+      "label": "사회적 인지"
+    },
+    {
+      "code": "2.B.4.e",
+      "original_label": "Judgment and Decision Making",
+      "label": "판단과 의사결정"
+    },
+    {
+      "code": "2.B.4.g",
+      "original_label": "Systems Analysis",
+      "label": "시스템 분석"
+    },
+    {
+      "code": "2.B.4.h",
+      "original_label": "Systems Evaluation",
+      "label": "시스템 평가"
+    },
+    {
+      "code": "2.B.3.j",
+      "original_label": "Equipment Maintenance",
+      "label": "장비 유지보수"
+    },
+    {
+      "code": "2.B.3.c",
+      "original_label": "Equipment Selection",
+      "label": "장비 선정"
+    },
+    {
+      "code": "2.B.3.d",
+      "original_label": "Installation",
+      "label": "설치"
+    },
+    {
+      "code": "2.B.3.h",
+      "original_label": "Operation and Control",
+      "label": "운영 및 제어"
+    },
+    {
+      "code": "2.B.3.a",
+      "original_label": "Operations Analysis",
+      "label": "운영 요구 분석"
+    },
+    {
+      "code": "2.B.3.g",
+      "original_label": "Operations Monitoring",
+      "label": "운영 모니터링"
+    },
+    {
+      "code": "2.B.3.e",
+      "original_label": "Programming",
+      "label": "프로그래밍"
+    },
+    {
+      "code": "2.B.3.m",
+      "original_label": "Quality Control Analysis",
+      "label": "품질 관리 분석"
+    },
+    {
+      "code": "2.B.3.l",
+      "original_label": "Repairing",
+      "label": "수리"
+    },
+    {
+      "code": "2.B.3.b",
+      "original_label": "Technology Design",
+      "label": "기술 설계"
+    },
+    {
+      "code": "2.B.3.k",
+      "original_label": "Troubleshooting",
+      "label": "문제 원인 진단"
+    }
+  ],
+  "attribution": "O*NET® 31.0 Database, U.S. Department of Labor, Employment and Training Administration. Used under CC BY 4.0. Jobtology added Korean display labels; these translations are not official, endorsed, or tested by USDOL/ETA.",
+  "license_url": "https://creativecommons.org/licenses/by/4.0/",
+  "database_url": "https://www.onetcenter.org/database.html"
+}

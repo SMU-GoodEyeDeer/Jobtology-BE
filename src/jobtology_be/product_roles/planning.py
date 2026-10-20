@@ -9,10 +9,12 @@ from dataclasses import dataclass, replace
 from typing import Final
 
 from jobtology_be.corpus.snapshot import PublishedCorpusSnapshot
+from jobtology_be.modules.analyses.editorial_models import EditorialAnalysis, SatisfactionStatus
 from jobtology_be.planning.candidate_models import ActivityTemplate, KnownKrwCost
 from jobtology_be.planning.contracts import PlanningConstraints
+from jobtology_be.planning.effort import REMAINING_EFFORT_METHOD, remaining_learning_hours
 
-PRODUCT_PLANNING_POLICY_VERSION: Final = 'PRODUCT_ROLE_PLANNING_V1'
+PRODUCT_PLANNING_POLICY_VERSION: Final = 'PRODUCT_ROLE_PLANNING_V2'
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,10 +29,11 @@ class RuntimePlanningCatalog:
 
 def product_planning_catalog(
     snapshot: PublishedCorpusSnapshot, constraints: PlanningConstraints,
+    analysis: EditorialAnalysis | None = None,
 ) -> RuntimePlanningCatalog:
     if (snapshot.basis_version != 'product-roles-v1'
             or not (snapshot.release.release_id or '').startswith('product-roles-v1-')):
-        return RuntimePlanningCatalog(templates=snapshot.templates)
+        return _remaining_effort(RuntimePlanningCatalog(templates=snapshot.templates), analysis)
     decisions = [('MODELED_ZERO_COST: Pricing is not modeled; product self-study costs are zero, '
                   'not verified market prices.')]
     if constraints.needs_portfolio:
@@ -55,11 +58,39 @@ def product_planning_catalog(
                              '코드 또는 결과물, 실행 예시, 역량 적용 설명을 README와 함께 포트폴리오로 정리한다')
         if constraints.needs_portfolio else template.completion_criteria,
     ) for template in snapshot.templates)
-    return RuntimePlanningCatalog(
+    return _remaining_effort(RuntimePlanningCatalog(
         templates=templates, policy_version=PRODUCT_PLANNING_POLICY_VERSION,
         decisions=tuple(decisions),
         foundational_action_ids=frozenset(template.action_id for template in templates
                                           if template.is_foundational),
         portfolio_action_ids=frozenset(action_ids.values()) if constraints.needs_portfolio else frozenset(),
         action_id_mapping=tuple(sorted(action_ids.items())),
-    )
+    ), analysis)
+
+
+def _remaining_effort(
+    catalog: RuntimePlanningCatalog, analysis: EditorialAnalysis | None,
+) -> RuntimePlanningCatalog:
+    if analysis is None:
+        return catalog
+    evaluations = {item.requirement_key: item for item in analysis.requirements}
+    templates: list[ActivityTemplate] = []
+    decisions = list(catalog.decisions)
+    adjusted = False
+    for template in catalog.templates:
+        outcomes = tuple(evaluations[key] for key in sorted(template.outcome_requirement_keys))
+        # Full satisfaction removes candidate roots. A reviewed prerequisite project
+        # is otherwise kept under the existing source prerequisite policy.
+        credit = min((item.credit for item in outcomes), default=0.0)
+        partial = any(item.status is SatisfactionStatus.PARTIAL for item in outcomes)
+        hours = max(1, remaining_learning_hours(template.estimated_hours, credit)) if partial else template.estimated_hours
+        templates.append(replace(template, estimated_hours=hours))
+        if hours != template.estimated_hours:
+            adjusted = True
+            decisions.append(
+                f'{REMAINING_EFFORT_METHOD}: {template.action_id} base_hours={template.estimated_hours}; '
+                f'least_outcome_credit={credit:g}; remaining_hours={hours}. '
+                'Modeled planning credit, not verified proficiency or hiring probability.'
+            )
+    return replace(catalog, templates=tuple(templates), decisions=tuple(decisions),
+                   policy_version=catalog.policy_version or (REMAINING_EFFORT_METHOD if adjusted else None))

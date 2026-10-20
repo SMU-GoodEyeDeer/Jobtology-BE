@@ -33,6 +33,7 @@ from jobtology_be.application.services.goals import PersistentGoalService
 from jobtology_be.application.services.preferences import PersistentPreferencesService
 from jobtology_be.application.services.profiles import PersistentProfileService
 from jobtology_be.application.services.roadmaps import PersistentRoadmapService
+from jobtology_be.application.specs import SkillCatalog
 from jobtology_be.chat.service import ChatCapabilityService
 from jobtology_be.corpus.role_evidence_graph import Neo4jRoleEvidenceGraph
 from jobtology_be.corpus.source_factory import build_configured_corpus_source
@@ -279,6 +280,14 @@ def create_app(
         app,
         replace(
             dependencies,
+            skill_catalog=dependencies.skill_catalog or SkillCatalog(
+                (lambda: role_holder.snapshots) if role_holder is not None else
+                (lambda: corpus_source.local_snapshot_reader.snapshots)
+                if (corpus_source is not None and settings.corpus_source == 'local_json'
+                    and corpus_source.local_snapshot_reader is not None)
+                else lambda: (),
+                role_holder or dependencies.requirement_metadata,
+            ),
             profile_service=profile_service,
             preferences_service=preferences_service,
             goal_service=goal_service,

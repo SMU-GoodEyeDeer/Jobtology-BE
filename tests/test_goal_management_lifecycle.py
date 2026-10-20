@@ -44,16 +44,17 @@ class Names:
 def catalog_path(tmp_path: Path) -> Path:
     snapshots = []
     for occupation, subject in ((BACKEND, "backend"), (FRONTEND, "frontend")):
+        base_code = '2001020211' if subject == 'backend' else '2001020225'
         snapshots.append({
             "occupation_id": occupation, "basis_version": "reviewed-v1",
             "release": {"release_id": "goal-lifecycle-v1", "state": "PUBLISHED",
                         "reviewed_at": "2026-10-19T00:00:00+00:00"},
             "is_fixture": False,
-            "capability_entries": [{"entity_id": f"skill:{subject}", "aliases": [subject]}],
+            "capability_entries": [{"entity_id": f"ncs:unit:{base_code}", "aliases": [subject, base_code]}],
             "allowed_experience_codes": [],
             "requirements": [{
                 "requirement_key": subject, "label": subject, "necessity": "REQUIRED",
-                "entity_id": f"skill:{subject}", "support_refs": [f"review:{subject}"],
+                "entity_id": f"ncs:unit:{base_code}", "support_refs": [f"review:{subject}"],
             }],
             "templates": [{
                 "action_id": f"study:{subject}", "revision": 1, "title": f"Study {subject}",
@@ -349,22 +350,32 @@ def test_reactivating_legacy_roadmap_requires_consistent_pinned_goal_identity(
         assert response.status_code == (200 if identity == "legacy_results" else 409)
 
 
-def test_role_projection_still_rejects_unknown_explicit_capability_ids(
+def test_role_projection_preserves_global_foreign_specs_without_awarding_current_goal_credit(
     acceptance_database_url: str, catalog_path: Path,
 ) -> None:
     with TestClient(_app(acceptance_database_url, catalog_path)) as client:
         created = client.post('/api/v1/me/goals', json=_goal_payload(1))
         assert created.status_code == 201
-        invalid = client.post('/api/v1/me/capabilities', json={
-            'expected_profile_version': _version(client), 'category': 'LANGUAGE_TOOL',
-            'raw_text': 'backend', 'entity_id': 'unreviewed:unknown-skill',
+        foreign = client.post('/api/v1/me/capabilities', json={
+            'expected_profile_version': _version(client), 'category': 'project',
+            'raw_text': 'frontend project', 'proficiency': 'PRODUCTION',
+            'details': {'competency_ids': ['ncs:unit:2001020225'],
+                        'evidence': 'Built and documented a working frontend project with tests.'},
         })
-        assert invalid.status_code == 201
+        assert foreign.status_code == 201, foreign.text
         request_id = _analyse(client, created.json()['goal_id'])
         anyio.run(_drain, acceptance_database_url, catalog_path)
         result = client.get(f'/api/v1/recomputations/{request_id}').json()
-        assert result['state'] == 'FAILED'
-        assert result['error_code'] == 'INVALID_INPUT'
+        assert result['state'] == 'COMPLETED', result
+        assert result['error_code'] is None
+        analysis = client.get(f"/api/v1/analyses/{result['analysis_id']}").json()
+        assert analysis['results']['requirements'][0]['status'] == 'UNMET'
+        assert analysis['results']['requirements'][0]['credit'] == 0.0
+        saved = client.get(f"/api/v1/me/capabilities/{foreign.json()['capability_id']}")
+        assert saved.status_code == 200
+        assert saved.json()['details']['competency_ids'] == ['ncs:unit:2001020225']
+        assert saved.json()['matching']['status'] == 'UNUSED'
+        assert saved.json()['matching']['credit'] == 0.0
 
 
 def test_profile_can_clear_optional_education_fields_without_inventing_a_major(
@@ -414,14 +425,18 @@ def test_added_and_deleted_capability_persists_and_changes_current_analysis(
         assert analyze_status() == "UNMET"
         created = client.post("/api/v1/me/capabilities", json={
             "expected_profile_version": _version(client),
-            "category": "LANGUAGE_TOOL", "raw_text": "backend",
+            "category": "skill", "raw_text": "backend", "proficiency": "PRODUCTION",
+            "details": {"competency_ids": ["ncs:unit:2001020211"],
+                        "evidence": "FastAPI로 백엔드 인증 API를 구현하고 실제 서비스에서 운영했습니다."},
         })
         assert created.status_code == 201
         capability_id = created.json()["capability_id"]
         detail_url = f"/api/v1/me/capabilities/{capability_id}"
         detail = client.get(detail_url).json()
         assert detail["raw_text"] == "backend"
-        assert detail["category"] == "LANGUAGE_TOOL"
+        assert detail["category"] == "skill"
+        assert detail["matching"]["status"] == "MATCHED"
+        assert detail["matching"]["credit"] == 1
         assert detail["lifecycle"] == "ACTIVE"
         assert client.get("/api/v1/me/capabilities").json()["items"] == [detail]
         assert analyze_status() == "SATISFIED"

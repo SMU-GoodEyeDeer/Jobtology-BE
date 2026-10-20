@@ -22,6 +22,7 @@ from jobtology_be.application.services.goals import GoalService
 from jobtology_be.application.services.preferences import PreferencesService
 from jobtology_be.application.services.profiles import ProfileService
 from jobtology_be.application.services.roadmaps import RoadmapService
+from jobtology_be.application.specs import SkillCatalog
 from jobtology_be.application.weekly_plan_store import WeeklyPlanStore
 from jobtology_be.chat.service import ChatCapabilityService
 from jobtology_be.editorial.reader import DraftReadService
@@ -35,6 +36,7 @@ from jobtology_be.product_roles.checklist import OnboardingChecklistCatalog
 
 @dataclass(frozen=True, slots=True)
 class ApiDependencies:
+    skill_catalog: SkillCatalog | None = None
     identity_provider: IdentityProvider | None = None
     session_store: SessionStore | None = None
     account_service: AccountService | None = None

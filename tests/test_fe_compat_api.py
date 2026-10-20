@@ -152,11 +152,14 @@ def test_analysis_result_projects_unmet_skills_and_metadata() -> None:
     assert response.status_code == 200
     assert response.json()['result'] == {
         'required_pct': 70, 'preferred_pct': None,
+        'weighted_required_pct': None, 'weighted_preferred_pct': None,
+        'weighted_score_method': 'MODELED_COMPETENCY_CREDIT_V1',
         'skills': [
             {'name': '서버 구현', 'type': '필수', 'demand_pct': 32,
              'demand_postings': 16, 'demand_base': 50, 'difficulty': 'NCS 수준 4', 'experienced_pct': None, 'achievement': '학습 40시간',
              'requirement_key': 'required', 'ncs_base_code': '2001020211', 'status': 'UNMET',
              'ncs_level': 4, 'estimated_hours': 40, 'hours_basis': 'OFFICIAL',
+             'credit': 0.0, 'base_estimated_hours': 40,
              'qualifications': [{'code': 'Q1', 'name': 'Q', 'display_name': 'Q', 'kind': 'NATIONAL_TECHNICAL'},
                                 {'code': 'Q2', 'name': None, 'display_name': 'Q2', 'kind': None}]},
             {'name': '고급 분석', 'type': '우대', 'demand_pct': None,
@@ -164,6 +167,7 @@ def test_analysis_result_projects_unmet_skills_and_metadata() -> None:
              'achievement': '학습 20시간 (추정)',
              'requirement_key': 'preferred', 'ncs_base_code': None, 'status': 'NEEDS_INPUT',
              'ncs_level': 6, 'estimated_hours': 20, 'hours_basis': 'ESTIMATED',
+             'credit': 0.0, 'base_estimated_hours': 20,
              'qualifications': []},
         ],
     }
@@ -206,12 +210,52 @@ def test_analysis_without_metadata_does_not_invent_ncs_values() -> None:
          'demand_base': None, 'difficulty': None, 'experienced_pct': None,
          'achievement': None, 'requirement_key': key, 'status': status,
          'ncs_base_code': None, 'ncs_level': None, 'estimated_hours': None,
-         'hours_basis': None, 'qualifications': []}
+         'hours_basis': None, 'qualifications': [], 'credit': 0.0, 'base_estimated_hours': None}
         for name, kind, key, status in [
             ('서버 구현', '필수', 'required', 'UNMET'),
             ('고급 분석', '우대', 'preferred', 'NEEDS_INPUT'),
         ]
     ]
+
+
+def test_partial_skill_response_keeps_modeled_credit_and_remaining_effort_separate_from_source_hours():
+    class PartialQueries(Queries):
+        async def get_analysis(self, user_id: UUID, analysis_id: UUID) -> AnalysisView:
+            original = await super().get_analysis(user_id, analysis_id)
+            return AnalysisView(
+                original.analysis_id, original.goal_id, original.profile_version, original.basis_type,
+                original.basis_version, original.release_id, original.methodology_version,
+                original.status, original.reference_at, {
+                    'required_coverage': {'availability': 'AVAILABLE', 'score': .5,
+                                          'weighted_score': .75},
+                    'requirements': [
+                        {'requirement_key': 'required', 'label': '서버 구현', 'necessity': 'REQUIRED',
+                         'status': 'PARTIAL', 'credit': .5, 'base_estimated_hours': 40,
+                         'estimated_hours': 20},
+                        {'requirement_key': 'done', 'label': '완료 역량', 'necessity': 'REQUIRED',
+                         'status': 'SATISFIED', 'credit': 1.0, 'estimated_hours': 0},
+                    ],
+                },
+            )
+
+    app = FastAPI()
+    app.include_router(analyses_router)
+    app.dependency_overrides[require_authenticated_principal] = principal
+    app.dependency_overrides[require_product_queries] = PartialQueries
+    app.dependency_overrides[require_requirement_metadata] = Metadata
+    with TestClient(app) as client:
+        response = client.get(f'/analyses/{ANALYSIS}')
+    assert response.status_code == 200
+    result = response.json()['result']
+    assert result['required_pct'] == 50
+    assert result['weighted_required_pct'] == 75
+    assert result['weighted_score_method'] == 'MODELED_COMPETENCY_CREDIT_V1'
+    assert len(result['skills']) == 1
+    skill = result['skills'][0]
+    assert (skill['status'], skill['credit']) == ('PARTIAL', .5)
+    assert (skill['base_estimated_hours'], skill['estimated_hours']) == (40, 20)
+    assert skill['hours_basis'] == 'ESTIMATED'
+    assert skill['achievement'] == '추가 학습 20시간 (부분 인정 적용 · 추정)'
 
 
 def test_saved_roadmap_includes_status_version_and_step_title_description() -> None:

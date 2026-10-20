@@ -86,6 +86,7 @@ class SnapshotBackedAnalysisContextFactory:
                         "raw_text": capability.raw_text,
                         "entity_id": capability.entity_id,
                         "experience_codes": tuple(capability.experience_codes),
+                        "credit": capability.credit,
                     }
                     for capability in inputs.capabilities
                 ),

@@ -64,6 +64,7 @@ def build_recompute_artifacts(
     baseline: EditorialBaseline,
     templates: tuple[ActivityTemplate, ...],
     planning_result: PlanningResult,
+    source_templates: tuple[ActivityTemplate, ...] | None = None,
 ) -> RecomputeArtifacts:
     input_snapshot = _input_snapshot(context)
     if planning_result.trace.planning_policy_version is not None:
@@ -88,12 +89,12 @@ def build_recompute_artifacts(
             basis_type="EDITORIAL",
             basis_version=analysis.basis_version,
             release_id=analysis.corpus_release_id,
-            methodology_version="EDITORIAL_CHECKLIST_V1",
+            methodology_version="EDITORIAL_CHECKLIST_PARTIAL_CREDIT_V2",
             status=analysis.analysis_status,
             reference_at=analysis.reference_at,
             input_snapshot=input_snapshot,
             input_hash=_hash(input_snapshot),
-            results=_analysis_results(analysis, planning_result),
+            results=_analysis_results(analysis, planning_result, source_templates or templates, templates),
             is_fixture=analysis.is_fixture,
         ),
         proposal=proposal,
@@ -120,7 +121,8 @@ def _input_snapshot(context: ArtifactContext) -> Mapping[str, JsonValue]:
 
 
 def _analysis_results(
-    analysis: EditorialAnalysis, planning_result: PlanningResult
+    analysis: EditorialAnalysis, planning_result: PlanningResult,
+    source_templates: tuple[ActivityTemplate, ...], templates: tuple[ActivityTemplate, ...],
 ) -> Mapping[str, JsonValue]:
     results: dict[str, JsonValue] = {
         "analysis_id": analysis.analysis_id,
@@ -140,6 +142,10 @@ def _analysis_results(
                 "provenance": tuple(sorted(item.provenance)),
                 "requirement_key": item.requirement_key,
                 "status": item.status,
+                "credit": item.credit,
+                "base_estimated_hours": _requirement_hours(item.requirement_key, source_templates),
+                "estimated_hours": 0 if item.status == 'SATISFIED'
+                else _requirement_hours(item.requirement_key, templates),
                 "support_refs": tuple(sorted(item.support_refs)),
             }
             for item in analysis.requirements
@@ -178,7 +184,14 @@ def _coverage(coverage: Coverage) -> Mapping[str, JsonValue]:
         "score": coverage.score,
         "score_method": coverage.score_method,
         "total_count": coverage.total_count,
+        "weighted_score": coverage.weighted_score,
+        "weighted_score_method": coverage.weighted_score_method,
     }
+
+
+def _requirement_hours(key: str, templates: tuple[ActivityTemplate, ...]) -> int | None:
+    return min((template.estimated_hours for template in templates
+                if key in template.outcome_requirement_keys), default=None)
 
 
 def _proposal(

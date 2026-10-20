@@ -329,3 +329,48 @@ def test_replay_preserves_explicit_identifiers_reference_time_and_empty_state() 
     assert first.analysis_status.value == "INSUFFICIENT_DATA"
     assert first.required_coverage.score is None
     assert first.required_coverage.reason is UnavailableReason.EMPTY_BASELINE
+
+
+@pytest.mark.parametrize('credit,status', [
+    (0.0, SatisfactionStatus.UNMET), (0.25, SatisfactionStatus.PARTIAL),
+    (0.5, SatisfactionStatus.PARTIAL), (0.75, SatisfactionStatus.PARTIAL),
+    (1.0, SatisfactionStatus.SATISFIED),
+])
+def test_modeled_credit_keeps_binary_and_weighted_coverage_distinct(credit, status):
+    engine = EditorialGapAnalyzer(baseline((requirement('api', 'api', RequirementNecessity.REQUIRED),)))
+    evidence = resolved('api').model_copy(update={'credit': credit})
+    result = engine.evaluate(profile(evidence), request(), InputCompleteness(entities_complete=True))
+    assert result.requirements[0].status is status
+    assert result.requirements[0].credit == credit
+    assert result.required_coverage.score == (1 if credit == 1 else 0)
+    assert result.required_coverage.matched_count == (1 if credit == 1 else 0)
+    assert result.required_coverage.weighted_score == credit
+    assert result.required_coverage.weighted_score_method == 'MODELED_COMPETENCY_CREDIT_V1'
+
+
+def test_duplicate_evidence_uses_best_credit_without_summing():
+    engine = EditorialGapAnalyzer(baseline((requirement('api', 'api', RequirementNecessity.REQUIRED),)))
+    evidence = tuple(resolved('api').model_copy(update={'credit': credit}) for credit in (.25, .75, .75))
+    result = engine.evaluate(profile(*evidence), request(), InputCompleteness(entities_complete=True))
+    assert result.requirements[0].status is SatisfactionStatus.PARTIAL
+    assert result.requirements[0].credit == .75
+    assert result.required_coverage.weighted_score == .75
+
+
+def test_credit_cannot_borrow_required_experience_from_another_evidence_record():
+    engine = EditorialGapAnalyzer(baseline((requirement(
+        'api', 'api', RequirementNecessity.REQUIRED, frozenset({'DELIVERED', 'REVIEWED'}),
+    ),)))
+    evidence = (
+        resolved('api', ['DELIVERED']).model_copy(update={'credit': 1.0}),
+        resolved('api', ['REVIEWED']).model_copy(update={'credit': 1.0}),
+        resolved('api', ['DELIVERED', 'REVIEWED']).model_copy(update={'credit': .25}),
+    )
+    result = engine.evaluate(profile(*evidence), request(), InputCompleteness(entities_complete=True))
+    assert result.requirements[0].status is SatisfactionStatus.PARTIAL
+    assert result.requirements[0].credit == .25
+    missing = engine.evaluate(profile(*evidence[:2]), request(), InputCompleteness(
+        entities_complete=True, experience_complete_entity_ids=frozenset({'api'}),
+    ))
+    assert missing.requirements[0].status is SatisfactionStatus.UNMET
+    assert missing.requirements[0].credit == 0

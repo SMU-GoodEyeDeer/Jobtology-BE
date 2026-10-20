@@ -10,7 +10,7 @@ from sqlalchemy import select
 from jobtology_be.application.services.analyses import AnalysisRequestCommand
 from jobtology_be.application.services.analysis_context import AnalysisContextInputs
 from jobtology_be.application.services.preferences import DEFAULT_ROUTE_PREFERENCES
-from jobtology_be.contracts import CapabilityInput
+from jobtology_be.application.specs import capability_inputs
 from jobtology_be.infrastructure.persistence.contracts import (
     MissingRecordError,
     PersistenceConflictError,
@@ -105,6 +105,9 @@ class PostgresAnalysisContextInputSource:
                         user_capabilities.c.raw_text,
                         user_capabilities.c.entity_id,
                         user_capabilities.c.details,
+                        user_capabilities.c.category,
+                        user_capabilities.c.proficiency,
+                        user_capabilities.c.source_completion_event_id,
                     ).where(
                         user_capabilities.c.user_id == user_id,
                         user_capabilities.c.lifecycle == "ACTIVE",
@@ -145,12 +148,16 @@ class PostgresAnalysisContextInputSource:
             raise AnalysisContextInputsUnavailableError("no flexible calendar slots are available")
 
         capabilities = tuple(
-            CapabilityInput(
+            item
+            for capability in capability_rows
+            for item in capability_inputs(
                 raw_text=capability.raw_text,
                 entity_id=capability.entity_id,
-                experience_codes=list(capability_details.experience_codes),
+                category=capability.category, proficiency=capability.proficiency,
+                details=capability.details,
+                completed=capability.source_completion_event_id is not None,
+                today=local_reference_at.date(),
             )
-            for capability, capability_details in zip(capability_rows, details, strict=True)
         )
         experience_complete_entity_ids = frozenset(
             capability.entity_id

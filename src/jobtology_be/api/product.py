@@ -2,7 +2,6 @@ from fastapi import APIRouter
 
 from jobtology_be.api.analyses import router as analyses_router
 from jobtology_be.api.capabilities import router as capabilities_router
-from jobtology_be.api.capability_checklist import router as capability_checklist_router
 from jobtology_be.api.chat import router as chat_router
 from jobtology_be.api.goals import router as goals_router
 from jobtology_be.api.m5_queries import router as m5_queries_router
@@ -11,10 +10,11 @@ from jobtology_be.api.profiles import router as profiles_router
 from jobtology_be.api.roadmap_diffs import router as roadmap_diffs_router
 from jobtology_be.api.roadmap_plan import router as roadmap_plan_router
 from jobtology_be.api.roadmaps import router as roadmaps_router
+from jobtology_be.api.skills import router as skills_router
 
 router = APIRouter(tags=["product"])
 router.include_router(analyses_router)
-router.include_router(capability_checklist_router)
+router.include_router(skills_router)
 router.include_router(capabilities_router)
 router.include_router(chat_router)
 router.include_router(goals_router)

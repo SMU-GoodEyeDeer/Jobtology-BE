@@ -160,6 +160,7 @@ def test_snapshot_backed_context_factory_pins_current_inputs_and_release() -> No
                 raw_text="API implementation",
                 entity_id="capability-api",
                 experience_codes=["DELIVERED"],
+                credit=.5,
             ),
         ),
         completeness=InputCompleteness(
@@ -207,6 +208,8 @@ def test_snapshot_backed_context_factory_pins_current_inputs_and_release() -> No
     assert context.snapshot_selection.release_id == "release-reviewed-v1"
     assert context.snapshot_selection.source == "local_json"
     assert context.capabilities[0].entity_id == "capability-api"
+    assert context.capabilities[0].credit == .5
+    assert context.to_context().capabilities[0].credit == .5
     assert context.reference_at == REFERENCE_AT
     assert context.planning_started_at == REFERENCE_AT
     assert context.to_context().solver_settings.time_limit_seconds == 5.0

@@ -100,11 +100,10 @@ def test_capability_create_uses_an_authenticated_principal_and_returns_persisted
             "/api/v1/me/capabilities",
             json={
                 "expected_profile_version": 3,
-                "category": "SKILL",
+                "category": "skill",
                 "raw_text": "FastAPI",
-                "entity_id": "capability:fastapi",
-                "proficiency": "INTERMEDIATE",
-                "details": {"source": "self"},
+                "proficiency": "GUIDED",
+                "details": {"source": "MANUAL", "evidence": "FastAPI로 로그인 API를 구현하고 테스트했습니다."},
             },
         )
 
@@ -114,15 +113,13 @@ def test_capability_create_uses_an_authenticated_principal_and_returns_persisted
         "capability_id": str(CAPABILITY_ID),
         "profile_version": 4,
     }
-    assert service.command == CapabilityMutationCommand(
-        capability_id=None,
-        expected_profile_version=3,
-        category="SKILL",
-        raw_text="FastAPI",
-        entity_id="capability:fastapi",
-        proficiency="INTERMEDIATE",
-        details={"source": "self"},
-    )
+    assert service.command is not None
+    assert service.command.expected_profile_version == 3
+    assert service.command.category == 'skill'
+    assert service.command.raw_text == 'FastAPI'
+    assert service.command.proficiency == 'GUIDED'
+    assert service.command.entity_id is None
+    assert service.command.details['evidence'] == 'FastAPI로 로그인 API를 구현하고 테스트했습니다.'
 
 
 def test_capability_create_replays_completed_idempotent_request_without_a_second_mutation() -> None:
@@ -138,11 +135,10 @@ def test_capability_create_replays_completed_idempotent_request_without_a_second
     )
     payload = {
         "expected_profile_version": 3,
-        "category": "SKILL",
+        "category": "skill",
         "raw_text": "FastAPI",
-        "entity_id": "capability:fastapi",
-        "proficiency": "INTERMEDIATE",
-        "details": {"source": "self"},
+        "proficiency": "GUIDED",
+        "details": {"source": "MANUAL"},
     }
 
     # When

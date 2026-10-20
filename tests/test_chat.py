@@ -179,7 +179,7 @@ def test_chat_api_returns_reply_and_candidates_and_validates_the_conversation() 
     assert ok.json() == {
         "reply": "멋져요",
         "occupation_id": "BACKEND_DEVELOPER",
-        "candidates": [{"entity_id": CAPABILITY_ENTITY_ID, "label": CAPABILITY_LABEL, "evidence_quote": "API를 배포했어요"}],
+        "candidates": [{"entity_id": CAPABILITY_ENTITY_ID, "label": CAPABILITY_LABEL, "evidence_quote": "API를 배포했어요", "category": None}],
         "suggestions": ["배포 자동화는 어떻게 해?"],
     }
     assert bad.status_code == 422

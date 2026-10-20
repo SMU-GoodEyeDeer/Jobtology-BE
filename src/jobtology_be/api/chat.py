@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator
 
 from jobtology_be.api.identity import AuthenticatedPrincipal, require_authenticated_principal
+from jobtology_be.application.specs import SpecCategory
 from jobtology_be.chat.service import ChatCapabilityService
 from jobtology_be.infrastructure.persistence.rate_limit import (
     AccountRateLimiter,
@@ -24,7 +25,7 @@ class ChatRequest(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
 
     messages: tuple[ChatMessageIn, ...] = Field(min_length=1, max_length=20)
-    mode: Literal["counsel", "onboarding"] = "counsel"
+    mode: Literal["counsel", "onboarding", "spec"] = "counsel"
 
     @field_validator("messages")
     @classmethod
@@ -40,6 +41,7 @@ class ChatCandidateOut(BaseModel):
     entity_id: str
     label: str
     evidence_quote: str
+    category: SpecCategory | None = None
 
 
 class ChatResponse(BaseModel):
@@ -119,7 +121,8 @@ async def send_chat_messages(
         occupation_id=result.occupation_id,
         candidates=tuple(
             ChatCandidateOut(
-                entity_id=item.entity_id, label=item.label, evidence_quote=item.evidence_quote
+                entity_id=item.entity_id, label=item.label, evidence_quote=item.evidence_quote,
+                category=item.category,
             )
             for item in result.candidates
         ),

@@ -58,6 +58,7 @@ class _CapabilityJson(_ContextJson):
     raw_text: str
     entity_id: str | None = None
     experience_codes: tuple[str, ...] = ()
+    credit: float = Field(default=1.0, ge=0, le=1, allow_inf_nan=False, strict=True)
 
 
 class _CompletenessJson(_ContextJson):
@@ -110,6 +111,7 @@ class RecomputeContextDocument(_ContextJson):
                     raw_text=capability.raw_text,
                     entity_id=capability.entity_id,
                     experience_codes=list(capability.experience_codes),
+                    credit=capability.credit,
                 )
                 for capability in self.capabilities
             ),
