@@ -6,7 +6,8 @@ from jobtology_be.application.specs import ResumeFieldName, SkillItem, SpecCateg
 
 PARSER_REVISION = 'jobtology-resume-v1-7541e87'
 MAX_BYTES = 10 * 1024 * 1024
-MAX_PAGES = 3
+MAX_PAGES = 20
+MAX_AI_PAGES = 3
 MAX_TEXT = 50_000
 MAX_BLOCKS = 500
 MAX_BLOCK_TEXT = 1800

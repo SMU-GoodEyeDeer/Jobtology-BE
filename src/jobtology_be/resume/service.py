@@ -26,8 +26,10 @@ from jobtology_be.resume.models import (
     AI_CONCURRENCY,
     AI_DOCUMENT_SECONDS,
     MAX_AI_BLOCKS,
+    MAX_AI_PAGES,
     MAX_AI_TEXT,
     MAX_BYTES,
+    MAX_PAGES,
     MAX_SUGGESTIONS,
     PARSE_SECONDS,
     ParsedResume,
@@ -154,7 +156,7 @@ class ResumeService:
     async def scan(self, user_id: UUID, format: ResumeFormat, stream: AsyncIterator[bytes],
                    occupation_id: str | None = None,
                    disconnected: Callable[[], Awaitable[bool]] | None = None,
-                   *, include_keywords: bool = True) -> ResumeScan:
+                   *, include_keywords: bool = True, max_pdf_pages: int = MAX_PAGES) -> ResumeScan:
         if format not in await asyncio.to_thread(lambda: self.formats):
             raise ResumeError('FORMAT_UNAVAILABLE', 503)
         with self.slot(user_id):
@@ -179,7 +181,7 @@ class ResumeService:
                         raise ResumeError('UPLOAD_TIMEOUT', 408) from None
                     if size == 0:
                         raise ResumeError('EMPTY_DOCUMENT')
-                    parsed = await self._parse(source, directory, disconnected)
+                    parsed = await self._parse(source, directory, disconnected, max_pdf_pages)
                     items = self.catalog.items(occupation_id)
                     suggestions, truncated = (await asyncio.to_thread(literal_suggestions, parsed.blocks, items)
                                               if include_keywords else ((), False))
@@ -198,6 +200,8 @@ class ResumeService:
             raise ResumeError('AI_UNAVAILABLE', 503)
         if scan.page_count is None:
             raise ResumeError('AI_PDF_REQUIRED')
+        if scan.page_count > MAX_AI_PAGES:
+            raise ResumeError('PAGE_LIMIT')
         if (len(scan.blocks) > MAX_AI_BLOCKS or sum(len(block.text) for block in scan.blocks) > MAX_AI_TEXT
                 or 'TEXT_TRUNCATED' in scan.warnings):
             raise ResumeError('AI_DOCUMENT_LIMIT')
@@ -258,7 +262,8 @@ class ResumeService:
             }
 
     async def _parse(self, source: Path, directory: Path,
-                     disconnected: Callable[[], Awaitable[bool]] | None = None) -> ParsedResume:
+                     disconnected: Callable[[], Awaitable[bool]] | None = None,
+                     max_pdf_pages: int = MAX_PAGES) -> ParsedResume:
         result_path = directory / 'result.json'
         # No application credentials in the child environment. No shell expansion.
         env = {key: value for key, value in os.environ.items()
@@ -276,7 +281,7 @@ class ResumeService:
         if 'PYTHONPATH' in env:
             env['PYTHONPATH'] = os.pathsep.join(str(Path(item).resolve()) for item in env['PYTHONPATH'].split(os.pathsep) if item)
         process = await asyncio.create_subprocess_exec(
-            sys.executable, '-m', 'jobtology_be.resume.worker', str(source), str(result_path),
+            sys.executable, '-m', 'jobtology_be.resume.worker', str(source), str(result_path), str(max_pdf_pages),
             cwd=directory, env=env, start_new_session=True,
             stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
         )

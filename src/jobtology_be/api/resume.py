@@ -19,6 +19,7 @@ from jobtology_be.llm.client import LlmUnavailableError
 from jobtology_be.resume.models import (
     AI_CONCURRENCY,
     MAX_AI_BLOCKS,
+    MAX_AI_PAGES,
     MAX_AI_TEXT,
     MAX_BYTES,
     MAX_PAGES,
@@ -76,6 +77,7 @@ async def status(
         'max_pdf_pages': MAX_PAGES, 'parse_timeout_seconds': PARSE_SECONDS,
         'ai_available': service.llm is not None, 'ai_provider': service.provider_label,
         'ai_formats': ['pdf'], 'ai_max_paragraphs': MAX_AI_BLOCKS, 'ai_max_characters': MAX_AI_TEXT,
+        'ai_max_pdf_pages': MAX_AI_PAGES,
         'ai_concurrency': AI_CONCURRENCY,
         'retention': 'REQUEST_ONLY',
     }
@@ -133,7 +135,7 @@ async def analyze(
         # Consume the upload before StreamingResponse starts listening for disconnects.
         # The parser enforces three actual PDF pages before any model request.
         scan = await service.scan(principal.user_id, format, request.stream(), occupation_id,
-                                  request.is_disconnected, include_keywords=False)
+                                  request.is_disconnected, include_keywords=False, max_pdf_pages=MAX_AI_PAGES)
         service.validate_analysis(scan)
     except ResumeError as error:
         return _error(error, operation='analyze', started=started, format=format)

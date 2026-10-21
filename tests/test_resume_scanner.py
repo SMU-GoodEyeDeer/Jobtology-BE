@@ -81,6 +81,8 @@ def test_real_authenticated_scan_includes_table_text_and_exact_evidence_without_
         status = client.get('/api/v1/me/resume/status')
         response = client.post('/api/v1/me/resume/scan?format=docx', content=content)
     assert status.json()['retention'] == 'REQUEST_ONLY'
+    assert status.json()['max_pdf_pages'] == 20
+    assert status.json()['ai_max_pdf_pages'] == 3
     assert status.json()['ai_available'] is False
     assert response.status_code == 200, response.text
     result = response.json()
@@ -207,6 +209,39 @@ def test_pdf_page_limit_encryption_and_image_only_ocr_notice(tmp_path):
         preflight(path)
 
 
+def test_normal_pdf_scan_keeps_twenty_page_limit_while_ai_preflight_rejects_four(tmp_path):
+    path = tmp_path / 'input.pdf'
+    writer = PdfWriter()
+    for _ in range(20):
+        writer.add_blank_page(width=100, height=100)
+    writer.write(path)
+    assert preflight(path) == 20
+    with pytest.raises(DocumentRejected, match='PAGE_LIMIT'):
+        preflight(path, max_pdf_pages=3)
+
+
+@pytest.mark.parametrize('suffix', ['docx', 'hwpx'])
+def test_non_pdf_layout_counts_do_not_limit_scanning(tmp_path, monkeypatch, suffix):
+    import runpy
+    from pathlib import Path
+
+    from jobtology_be.document_processor import DocIR
+    from jobtology_be.document_processor.models import PageInfo
+    from jobtology_be.resume.worker import extract
+
+    source = tmp_path / f'input.{suffix}'
+    if suffix == 'docx':
+        source.write_bytes(docx_bytes())
+    else:
+        probe = runpy.run_path(str(Path(__file__).parents[1] / 'experiments/resume_import/verify_processor.py'))
+        probe['make_hwpx'](source)
+    doc = DocIR.from_file(source)
+    doc.pages = [PageInfo(page_number=index + 1) for index in range(21)]
+    monkeypatch.setattr(DocIR, 'from_file', classmethod(lambda cls, *args, **kwargs: doc))
+    result = extract(source)
+    assert result.blocks and result.page_count is None
+
+
 def test_keyword_boundaries_do_not_turn_javascript_into_java():
     item = catalog().items()[0].model_copy(update={'aliases': ('Java',), 'label': 'Java', 'original_label': 'Java'})
     assert not literal_suggestions((block('JavaScript로 API를 구현했습니다.'),), (item,))[0]
@@ -298,7 +333,8 @@ assert pathlib.Path(os.environ['HOME']) == pathlib.Path.cwd()
 pathlib.Path(sys.argv[1]).write_text(json.dumps({'ok': True, 'result': {
     'blocks': [], 'warnings': [], 'skipped_pages': []}}))
 '''
-        return await original(sys.executable, '-c', code, args[-1], **kwargs)
+        assert args[-1] == '20'
+        return await original(sys.executable, '-c', code, args[-2], **kwargs)
     monkeypatch.setattr(module.asyncio, 'create_subprocess_exec', native_probe)
     service = ResumeService(catalog(), root=tmp_path, formats=('docx',))
     async def stream():
@@ -388,7 +424,7 @@ def test_parser_isolation_failure_is_a_retryable_server_error_and_erases_upload(
 pathlib.Path(sys.argv[1]).write_text(json.dumps({
     'ok': False, 'code': 'PARSER_ISOLATION_UNAVAILABLE', 'error_type': 'OSError'}))
 '''
-        return await original(sys.executable, '-c', code, args[-1], **kwargs)
+        return await original(sys.executable, '-c', code, args[-2], **kwargs)
     monkeypatch.setattr(module.asyncio, 'create_subprocess_exec', failed_isolation)
     app, service = application(tmp_path)
     with TestClient(app) as client:

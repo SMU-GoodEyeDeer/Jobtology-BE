@@ -32,7 +32,7 @@ def _paragraphs(paragraphs):
                 yield from _paragraphs(cell.paragraphs)
 
 
-def preflight(path: Path) -> int | None:
+def preflight(path: Path, *, max_pdf_pages: int = MAX_PAGES) -> int | None:
     suffix = path.suffix
     magic = path.read_bytes()[:8]
     if suffix == '.pdf':
@@ -42,7 +42,7 @@ def preflight(path: Path) -> int | None:
         pdf = PdfReader(path)
         if pdf.is_encrypted:
             raise DocumentRejected('ENCRYPTED_DOCUMENT')
-        if len(pdf.pages) > MAX_PAGES:
+        if len(pdf.pages) > max_pdf_pages:
             raise DocumentRejected('PAGE_LIMIT')
         return len(pdf.pages)
     elif suffix in {'.doc', '.hwp'}:
@@ -147,9 +147,9 @@ def visible_docx(path: Path) -> tuple[Path, bool]:
     return destination, removed
 
 
-def extract(path: Path) -> ParsedResume:
+def extract(path: Path, *, max_pdf_pages: int = MAX_PAGES) -> ParsedResume:
     is_pdf = path.suffix == '.pdf'
-    page_count = preflight(path)
+    page_count = preflight(path, max_pdf_pages=max_pdf_pages)
     warnings = ['EXTRACTED_TEXT_REVIEW', 'KEYWORDS_ARE_NOT_PROOF']
     if path.suffix == '.docx':
         path, hidden = visible_docx(path)
@@ -157,7 +157,7 @@ def extract(path: Path) -> ParsedResume:
             warnings.append('HIDDEN_TEXT_REMOVED')
     from jobtology_be.document_processor import DocIR, DocumentInput, read_document
     doc = DocIR.from_file(path, config={'image_output': 'off'})
-    if len(doc.pages) > MAX_PAGES:
+    if is_pdf and len(doc.pages) > max_pdf_pages:
         raise DocumentRejected('PAGE_LIMIT')
     skipped = tuple(page.page_number for page in doc.pages if page.parse_skip_reason)
     if skipped:
@@ -229,6 +229,9 @@ def main() -> None:
     signal.signal(signal.SIGALRM, lambda *_: os.killpg(os.getpgrp(), signal.SIGKILL))
     signal.alarm(60)
     path, output = map(Path, sys.argv[1:3])
+    max_pdf_pages = int(sys.argv[3]) if len(sys.argv) > 3 else MAX_PAGES
+    if not 1 <= max_pdf_pages <= MAX_PAGES:
+        raise ValueError('invalid PDF page limit')
     try:
         from jobtology_be.resume.isolation import restrict_parser_network
         restrict_parser_network()
@@ -238,7 +241,7 @@ def main() -> None:
         }))
         return
     try:
-        result = {'ok': True, 'result': extract(path).model_dump(mode='json')}
+        result = {'ok': True, 'result': extract(path, max_pdf_pages=max_pdf_pages).model_dump(mode='json')}
     except DocumentRejected as error:
         result = {'ok': False, 'code': str(error)}
     except Exception as error:  # noqa: BLE001 -- isolate arbitrary third-party parser failures.

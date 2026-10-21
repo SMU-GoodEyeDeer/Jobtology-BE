@@ -89,6 +89,8 @@ def test_parallel_extraction_streams_out_of_order_with_a_hard_concurrency_bound(
                     await asyncio.sleep(.06 if text.endswith('0') else .01)
                     if text.endswith('1'):
                         raise LlmUnavailableError('synthetic private failure')
+                    if text.endswith('2'):
+                        raise RuntimeError('synthetic unexpected client failure')
                     return {'entries': [entry(text)]}
                 finally:
                     self.active -= 1
@@ -102,8 +104,9 @@ def test_parallel_extraction_streams_out_of_order_with_a_hard_concurrency_bound(
         assert llm.maximum == 4 and llm.active == 0
         assert paragraphs[0]['block_id'] != blocks[0].block_id
         assert [event['completed'] for event in paragraphs] == list(range(1, 10))
-        assert sum(len(event['suggestions']) for event in paragraphs) == 8
-        assert events[-1]['type'] == 'done' and events[-1]['failed'] == 1
+        assert sum(len(event['suggestions']) for event in paragraphs) == 7
+        assert [event['error_code'] for event in paragraphs if event['error_code']] == ['AI_UNAVAILABLE'] * 2
+        assert events[-1]['type'] == 'done' and events[-1]['failed'] == 2
         with service.slot(USER):
             pass
     asyncio.run(exercise())
@@ -222,6 +225,13 @@ def test_dense_three_page_documents_are_rejected_before_model_calls(tmp_path):
     from jobtology_be.resume.service import ResumeError
     with pytest.raises(ResumeError, match='AI_DOCUMENT_LIMIT'):
         service.validate_analysis(document(blocks))
+
+
+def test_ai_validation_rejects_normal_scan_with_more_than_three_pages(tmp_path):
+    from jobtology_be.resume.service import ResumeError
+    service = ResumeService(catalog(), llm=object(), root=tmp_path)
+    with pytest.raises(ResumeError, match='PAGE_LIMIT'):
+        service.validate_analysis(document((block(),)).model_copy(update={'page_count': 4}))
 
 
 def test_preview_drops_active_html_network_styles_and_preserves_anchor_tables():

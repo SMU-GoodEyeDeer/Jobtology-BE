@@ -158,4 +158,6 @@ async def extract_paragraph(
         return ParagraphExtraction(block_id=block.block_id, error_code='AI_TIMEOUT')
     except LlmUnavailableError:
         return ParagraphExtraction(block_id=block.block_id, error_code='AI_UNAVAILABLE')
+    except Exception:  # noqa: BLE001 -- isolate unexpected client failures to this paragraph.
+        return ParagraphExtraction(block_id=block.block_id, error_code='AI_UNAVAILABLE')
     return validated_entries(result.get('entries'), block, choices)
