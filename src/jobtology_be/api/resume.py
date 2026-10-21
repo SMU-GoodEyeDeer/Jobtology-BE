@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import time
 from typing import Annotated
@@ -6,7 +7,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from starlette.requests import ClientDisconnect
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, StreamingResponse
 
 from jobtology_be.api.chat import require_chat_rate_limiter
 from jobtology_be.api.identity import AuthenticatedPrincipal, require_authenticated_principal
@@ -16,6 +17,10 @@ from jobtology_be.infrastructure.persistence.rate_limit import (
 )
 from jobtology_be.llm.client import LlmUnavailableError
 from jobtology_be.resume.models import (
+    AI_CONCURRENCY,
+    MAX_AI_BLOCKS,
+    MAX_AI_PAGES,
+    MAX_AI_TEXT,
     MAX_BYTES,
     MAX_PAGES,
     PARSE_SECONDS,
@@ -71,6 +76,9 @@ async def status(
         'formats': await asyncio.to_thread(lambda: service.formats), 'max_bytes': MAX_BYTES,
         'max_pdf_pages': MAX_PAGES, 'parse_timeout_seconds': PARSE_SECONDS,
         'ai_available': service.llm is not None, 'ai_provider': service.provider_label,
+        'ai_formats': ['pdf'], 'ai_max_paragraphs': MAX_AI_BLOCKS, 'ai_max_characters': MAX_AI_TEXT,
+        'ai_max_pdf_pages': MAX_AI_PAGES,
+        'ai_concurrency': AI_CONCURRENCY,
         'retention': 'REQUEST_ONLY',
     }
 
@@ -99,6 +107,56 @@ async def scan(
         return _error(error, operation='scan', started=started, format=format)
     except ClientDisconnect:
         return Response(status_code=499, headers={'Cache-Control': 'no-store'})
+
+
+@router.post('/me/resume/analyze', response_class=StreamingResponse)
+async def analyze(
+    request: Request,
+    principal: Annotated[AuthenticatedPrincipal, Depends(require_authenticated_principal)],
+    service: Annotated[ResumeService, Depends(require_resume_service)],
+    limiter: Annotated[AccountRateLimiter | None, Depends(require_chat_rate_limiter)],
+    format: Annotated[ResumeFormat, Query()] = 'pdf',
+    ai_consent: Annotated[bool, Query()] = False,
+    occupation_id: Annotated[str | None, Query(max_length=128)] = None,
+):
+    """One structured call per paragraph, concurrently; no classification stage or account writes."""
+    started = time.monotonic()
+    await _quota(limiter, principal)
+    try:
+        if format != 'pdf':
+            raise ResumeError('AI_PDF_REQUIRED')
+        if not ai_consent:
+            raise ResumeError('AI_CONSENT_REQUIRED')
+        if service.llm is None:
+            raise ResumeError('AI_UNAVAILABLE', 503)
+        length = request.headers.get('content-length')
+        if length and (not length.isdigit() or len(length) > 20 or int(length) > MAX_BYTES):
+            raise ResumeError('FILE_TOO_LARGE', 413)
+        # Consume the upload before StreamingResponse starts listening for disconnects.
+        # The parser enforces three actual PDF pages before any model request.
+        scan = await service.scan(principal.user_id, format, request.stream(), occupation_id,
+                                  request.is_disconnected, include_keywords=False, max_pdf_pages=MAX_AI_PAGES)
+        service.validate_analysis(scan)
+    except ResumeError as error:
+        return _error(error, operation='analyze', started=started, format=format)
+    except ClientDisconnect:
+        return Response(status_code=499, headers={'Cache-Control': 'no-store'})
+
+    async def events():
+        try:
+            async for event in service.analyze_events(
+                principal.user_id, scan, occupation_id, request.is_disconnected,
+            ):
+                yield json.dumps(event, ensure_ascii=False) + '\n'
+        except ResumeError as error:
+            if error.code == 'CLIENT_DISCONNECTED':
+                return
+            response = _error(error, operation='analyze', started=started, format=format)
+            yield json.dumps({'type': 'error', **json.loads(response.body)}) + '\n'
+
+    return StreamingResponse(events(), media_type='application/x-ndjson', headers={
+        'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no',
+    })
 
 
 @router.post('/me/resume/interpret', response_model=ResumeInterpretResponse)

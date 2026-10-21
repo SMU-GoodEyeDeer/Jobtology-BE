@@ -1,6 +1,6 @@
 # Résumé import feasibility
 
-**Implementation update:** The initial scanner is now implemented end to end. See [the current API, retention, bounds and limitations](../resume-scanner.md). It uses stateless request-only processing and a plain-text review UI; the persistent job endpoints/24-hour storage discussed below remain design alternatives, not active APIs.
+**Implementation update:** The scanner is implemented end to end with stateless processing, sanitized HTML/text review and optional PDF-only paragraph AI extraction (three pages maximum). See [the current API, retention, bounds and limitations](../resume-scanner.md). The persistent job endpoints/24-hour storage discussed below remain design alternatives, not active APIs.
 
 Assessed 2026-10-20 on `feat/functionality-improvements`. **Feasible as an internal BE module with a review-before-save flow.** Following the monolith decision, the processor source is copied into `jobtology_be.document_processor`, dependencies/native bundles ship with BE, and Python 3.12 is retained. See [the implemented library integration](../document-processing.md). A public upload API, OCR integration, LLM résumé extraction, and production import UI remain separate work.
 

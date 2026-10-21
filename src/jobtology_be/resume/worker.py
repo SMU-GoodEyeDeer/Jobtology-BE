@@ -1,4 +1,4 @@
-"""One bounded child process per upload. No raw HTML or document styles leave this process."""
+"""One bounded child process per upload. Only inert, reduced preview HTML leaves it."""
 import hashlib
 import json
 import os
@@ -32,7 +32,7 @@ def _paragraphs(paragraphs):
                 yield from _paragraphs(cell.paragraphs)
 
 
-def preflight(path: Path) -> None:
+def preflight(path: Path, *, max_pdf_pages: int = MAX_PAGES) -> int | None:
     suffix = path.suffix
     magic = path.read_bytes()[:8]
     if suffix == '.pdf':
@@ -42,8 +42,9 @@ def preflight(path: Path) -> None:
         pdf = PdfReader(path)
         if pdf.is_encrypted:
             raise DocumentRejected('ENCRYPTED_DOCUMENT')
-        if len(pdf.pages) > MAX_PAGES:
+        if len(pdf.pages) > max_pdf_pages:
             raise DocumentRejected('PAGE_LIMIT')
+        return len(pdf.pages)
     elif suffix in {'.doc', '.hwp'}:
         if magic != b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1':
             raise DocumentRejected('FORMAT_MISMATCH')
@@ -146,9 +147,9 @@ def visible_docx(path: Path) -> tuple[Path, bool]:
     return destination, removed
 
 
-def extract(path: Path) -> ParsedResume:
+def extract(path: Path, *, max_pdf_pages: int = MAX_PAGES) -> ParsedResume:
     is_pdf = path.suffix == '.pdf'
-    preflight(path)
+    page_count = preflight(path, max_pdf_pages=max_pdf_pages)
     warnings = ['EXTRACTED_TEXT_REVIEW', 'KEYWORDS_ARE_NOT_PROOF']
     if path.suffix == '.docx':
         path, hidden = visible_docx(path)
@@ -156,7 +157,7 @@ def extract(path: Path) -> ParsedResume:
             warnings.append('HIDDEN_TEXT_REMOVED')
     from jobtology_be.document_processor import DocIR, DocumentInput, read_document
     doc = DocIR.from_file(path, config={'image_output': 'off'})
-    if is_pdf and len(doc.pages) > MAX_PAGES:
+    if is_pdf and len(doc.pages) > max_pdf_pages:
         raise DocumentRejected('PAGE_LIMIT')
     skipped = tuple(page.page_number for page in doc.pages if page.parse_skip_reason)
     if skipped:
@@ -189,6 +190,7 @@ def extract(path: Path) -> ParsedResume:
                     block_id=hashlib.sha256(identity.encode()).hexdigest()[:24], text=fragment,
                     text_hash=hashlib.sha256(fragment.encode()).hexdigest(),
                     page=paragraph.page_number if is_pdf and paragraph.page_number and paragraph.page_number <= MAX_PAGES else None,
+                    source_node_id=paragraph.node_id, source_start=offset,
                 ))
                 count += len(fragment)
             if truncated:
@@ -200,7 +202,20 @@ def extract(path: Path) -> ParsedResume:
         warnings.append('TEXT_TRUNCATED')
     if not blocks:
         warnings.append('NO_READABLE_TEXT')
-    return ParsedResume(blocks=tuple(blocks), warnings=tuple(warnings), skipped_pages=skipped)
+    from jobtology_be.document_processor import render_review_html
+    from jobtology_be.resume.preview import safe_preview
+    try:
+        preview = render_review_html(document=DocumentInput(doc_ir=doc), annotations=[], title='이력서')
+        preview_html = safe_preview(preview.html) if preview.ok and preview.html else None
+    except Exception:  # noqa: BLE001 -- optional rendering must not discard readable text.
+        preview_html = None
+    if preview_html is None:
+        warnings.append('PREVIEW_UNAVAILABLE')
+    return ParsedResume(
+        blocks=tuple(blocks), warnings=tuple(warnings), skipped_pages=skipped,
+        page_count=page_count,
+        preview_html=preview_html,
+    )
 
 
 def main() -> None:
@@ -214,6 +229,9 @@ def main() -> None:
     signal.signal(signal.SIGALRM, lambda *_: os.killpg(os.getpgrp(), signal.SIGKILL))
     signal.alarm(60)
     path, output = map(Path, sys.argv[1:3])
+    max_pdf_pages = int(sys.argv[3]) if len(sys.argv) > 3 else MAX_PAGES
+    if not 1 <= max_pdf_pages <= MAX_PAGES:
+        raise ValueError('invalid PDF page limit')
     try:
         from jobtology_be.resume.isolation import restrict_parser_network
         restrict_parser_network()
@@ -223,7 +241,7 @@ def main() -> None:
         }))
         return
     try:
-        result = {'ok': True, 'result': extract(path).model_dump(mode='json')}
+        result = {'ok': True, 'result': extract(path, max_pdf_pages=max_pdf_pages).model_dump(mode='json')}
     except DocumentRejected as error:
         result = {'ok': False, 'code': str(error)}
     except Exception as error:  # noqa: BLE001 -- isolate arbitrary third-party parser failures.

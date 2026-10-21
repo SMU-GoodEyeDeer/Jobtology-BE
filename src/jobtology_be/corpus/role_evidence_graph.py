@@ -7,13 +7,20 @@ from pydantic import BaseModel, ConfigDict
 from jobtology_be.application.requirement_metadata import RequirementMetadataLookup
 from jobtology_be.corpus.neo4j_client import Neo4jQueryResult, Neo4jReadClient, Neo4jReadQuery
 from jobtology_be.corpus.neo4j_queries import (
+    ROLE_CONTEXT_ONET_FIELDS,
+    ROLE_CONTEXT_ONET_QUERY_ID,
     ROLE_EVIDENCE_NCS_FIELDS,
     ROLE_EVIDENCE_NCS_QUERY_ID,
     ROLE_EVIDENCE_ONET_FIELDS,
     ROLE_EVIDENCE_ONET_QUERY_ID,
 )
 from jobtology_be.corpus.neo4j_repository import Neo4jRepositoryResponseError
+from jobtology_be.infrastructure.persistence.live_source_feed import (
+    LiveSourceFeed,
+    LiveSourceReadError,
+)
 from jobtology_be.product_roles.models import ProductRolePolicy, RolePolicy
+from jobtology_be.product_roles.posting_context import posting_context_policy
 
 EvidenceNodeKind = Literal[
     "role",
@@ -28,6 +35,7 @@ EvidenceNodeKind = Literal[
 EvidenceEdgeKind = Literal[
     "MAPPED_TO", "EVIDENCED_BY", "HAS_COMPETENCY", "MATCHED_ONET", "ESSENTIAL_SKILL", "HOT_TECHNOLOGY",
     "QUALIFIED_BY",
+    "CONTEXT_FOR",
 ]
 
 _POSTING_SAMPLE_LIMIT: Final = 3
@@ -103,6 +111,13 @@ class _NcsOccupationRow(_Row):
     excluded_associations: int = 0
 
 
+class _OnetContextRow(_Row):
+    id: str
+    code: str
+    name: str
+    postings: int | None = None
+
+
 class _Skill(_Row):
     id: str
     name: str
@@ -132,12 +147,13 @@ class EvidenceNode(BaseModel):
     detail: str | None = None
     weight: int | None = None
     ncs_category: str | None = None
+    occupation_code: str | None = None
     ncs_base_code: str | None = None
     requirement_key: str | None = None
     qualification_code: str | None = None
     evidence_sources: tuple[EvidenceSource, ...] = ()
     excluded_associations: int = 0
-    basis: Literal["METADATA_INFERRED", "REFERENCE"] = "REFERENCE"
+    basis: Literal["METADATA_INFERRED", "REFERENCE", "APPLICATION_CONTEXT_SELECTION"] = "REFERENCE"
     review_statuses: tuple[str, ...] = ()
     stages: tuple[str, ...] = ()
 
@@ -149,7 +165,7 @@ class EvidenceEdge(BaseModel):
     target: str
     kind: EvidenceEdgeKind
     weight: int | None = None
-    basis: Literal["METADATA_INFERRED", "REFERENCE"] = "REFERENCE"
+    basis: Literal["METADATA_INFERRED", "REFERENCE", "APPLICATION_CONTEXT_SELECTION"] = "REFERENCE"
     evidence_sources: tuple[EvidenceSource, ...] = ()
     review_statuses: tuple[str, ...] = ()
     stages: tuple[str, ...] = ()
@@ -164,6 +180,7 @@ class RoleEvidenceGraph(BaseModel):
     name: str
     nodes: tuple[EvidenceNode, ...]
     edges: tuple[EvidenceEdge, ...]
+    warnings: tuple[Literal['POSTING_CONTEXT_UNAVAILABLE'], ...] = ()
 
 
 @dataclass(slots=True)
@@ -181,6 +198,7 @@ def build_role_evidence_graph(
     ncs_rows: tuple[_NcsOccupationRow, ...],
     onet_rows: tuple[_OnetOccupationRow, ...],
     requirement_metadata: RequirementMetadataLookup | None = None,
+    *, context_onet_rows: tuple[_OnetContextRow, ...] = (),
 ) -> RoleEvidenceGraph:
     root = f"role:{role.occupation_id}"
     graph = _GraphBuilder({root: EvidenceNode(id=root, kind="role", label=role.name)})
@@ -230,6 +248,7 @@ def build_role_evidence_graph(
                 id=match.id, kind="onet_occupation", label=match.name,
                 detail=f"O*NET {match.code} · 같은 공고 {match.shared:,}건에서 함께 매칭",
                 weight=match.shared,
+                occupation_code=match.code,
                 basis="METADATA_INFERRED",
                 review_statuses=tuple(match.review_statuses), stages=tuple(match.stages),
             ), EvidenceEdge(source=ncs.id, target=match.id, kind="MATCHED_ONET", weight=match.shared,
@@ -238,6 +257,26 @@ def build_role_evidence_graph(
                             catalog_pins=tuple(match.catalog_pins)))
             if (onet := onet_by_id.get(match.id)) is not None:
                 _link_onet_details(graph, onet)
+    for context in context_onet_rows:
+        graph.link(root, EvidenceNode(
+            id=context.id, kind="onet_occupation", label=context.name,
+            detail=f"O*NET {context.code} · 목표 직무의 탐색용 참고 직업\n"
+                   "NCS와의 동등성이나 역량 충족을 뜻하지 않아요.",
+            occupation_code=context.code, basis="APPLICATION_CONTEXT_SELECTION",
+        ), EvidenceEdge(source=root, target=context.id, kind="CONTEXT_FOR",
+                        basis="APPLICATION_CONTEXT_SELECTION"))
+        if context.postings:
+            posting_id = f"postings:onet:{context.code}"
+            graph.link(context.id, EvidenceNode(
+                id=posting_id, kind="posting_evidence", label=f"추정 연결 {context.postings:,}건",
+                detail=f"O*NET {context.code} · 최신 원문·분류 기준의 추정 연결 수\n"
+                       "연결 수는 중복을 제외한 공고 수와 다를 수 있어요.",
+                weight=context.postings, occupation_code=context.code,
+                basis="METADATA_INFERRED",
+            ), EvidenceEdge(source=context.id, target=posting_id, kind="EVIDENCED_BY",
+                            weight=context.postings, basis="METADATA_INFERRED"))
+        if (onet := onet_by_id.get(context.id)) is not None:
+            _link_onet_details(graph, onet)
     return RoleEvidenceGraph(
         occupation_id=role.occupation_id,
         name=role.name,
@@ -289,6 +328,7 @@ class Neo4jRoleEvidenceGraph:
     policy: ProductRolePolicy
     client: Neo4jReadClient = field(repr=False)
     requirement_metadata: RequirementMetadataLookup | None = field(default=None, repr=False)
+    context_feed: LiveSourceFeed | None = field(default=None, repr=False)
 
     async def graph(self, occupation_id: str) -> RoleEvidenceGraph | None:
         role = next((r for r in self.policy.roles if r.occupation_id == occupation_id), None)
@@ -306,7 +346,28 @@ class Neo4jRoleEvidenceGraph:
             },
         ))
         ncs_rows = _records(ncs_result, ROLE_EVIDENCE_NCS_FIELDS, _NcsOccupationRow, len(codes))
-        onet_ids = sorted({match.id for row in ncs_rows for match in row.onet})
+        context_codes = posting_context_policy().roles.get(occupation_id, ())
+        context_rows = ()
+        warnings = ()
+        if context_codes:
+            context_result = await self.client.execute(Neo4jReadQuery(
+                query_id=ROLE_CONTEXT_ONET_QUERY_ID,
+                parameters={"codes": list(context_codes), "limit": len(context_codes)},
+            ))
+            context_rows = _records(context_result, ROLE_CONTEXT_ONET_FIELDS, _OnetContextRow, len(context_codes))
+            if context_rows:
+                if self.context_feed is None:
+                    warnings = ('POSTING_CONTEXT_UNAVAILABLE',)
+                else:
+                    try:
+                        context = await self.context_feed.occupation_context(list(context_codes), 1, 0)
+                        counts = {row.occupation_code: row.current_associations
+                                  for row in context.summary.by_occupation if row.occupation_scheme == 'ONET'}
+                        context_rows = tuple(row.model_copy(update={'postings': counts.get(row.code, 0)})
+                                             for row in context_rows)
+                    except LiveSourceReadError:
+                        warnings = ('POSTING_CONTEXT_UNAVAILABLE',)
+        onet_ids = sorted({match.id for row in ncs_rows for match in row.onet} | {row.id for row in context_rows})
         onet_rows: tuple[_OnetOccupationRow, ...] = ()
         if onet_ids:
             onet_result = await self.client.execute(Neo4jReadQuery(
@@ -319,4 +380,6 @@ class Neo4jRoleEvidenceGraph:
             onet_rows = _records(
                 onet_result, ROLE_EVIDENCE_ONET_FIELDS, _OnetOccupationRow, len(onet_ids)
             )
-        return build_role_evidence_graph(role, ncs_rows, onet_rows, self.requirement_metadata)
+        graph = build_role_evidence_graph(role, ncs_rows, onet_rows, self.requirement_metadata,
+                                         context_onet_rows=context_rows)
+        return graph.model_copy(update={'warnings': warnings})

@@ -623,11 +623,23 @@ API 또는 저장된 사용자 데이터를 대체하지 않습니다. 두 모�
 ### 그래프 노드에서 실제 자료 열기
 
 `GET /api/v2/roles/{occupation_id}/evidence-graph`의 노드는 선택적 구조화 필드를 제공합니다.
-`ncs_category`는 NCS 직무/공고 집계 노드의 공고 목록 필터, `ncs_base_code`는 능력단위 탐색,
+`ncs_category`는 NCS 직무/공고 집계 노드의 공고 목록 필터, `occupation_code`는 NCS 또는
+O*NET 직업/공고 집계 노드의 일반 직무 필터이며 있으면 우선 사용합니다. `ncs_base_code`는 능력단위 탐색,
 `qualification_code`는 자격 시험 일정 조회에 사용합니다. `requirement_key`는 현재 승인된 직무
 메타데이터와 일치할 때만 제공되며, 원본 그래프 노드라는 이유만으로 분석 요구사항으로 간주하지 않습니다.
 공고 집계 노드 ID는 실제 개별 공고 ID가 아닙니다. 먼저 필터된 공고 목록을 조회하고 실제
 `posting_id`로 상세를 여세요. 원본 ID나 표시 문자열을 분해해 제품 요구사항을 추정하지 마세요.
+
+NCS 공고 동시 매칭과 별개로 `posting_context.v1.json`의 참고 O*NET 직업도 표시합니다.
+이 역할 연결은 `CONTEXT_FOR` / `APPLICATION_CONTEXT_SELECTION`이며 NCS 동등성이나
+승인된 역량 요구가 아닙니다. O*NET 상세는 선택한 최신 Neo4j 노드 ID에 고정하고, 공고 연결 수는
+공고 UI와 동일한 catalog 읽기 API의 `current_associations`를 사용합니다. 집계를 읽지 못하면
+`warnings: ["POSTING_CONTEXT_UNAVAILABLE"]`로 알리고 직업·역량 노드는 유지합니다.
+기준이 바뀐 NCS 연결을 최신 공고로 되살리거나 원본 실행 ID를 덮어쓰지 않습니다.
+
+그래프는 관계별 표본입니다(NCS 능력단위 3개, O*NET 핵심 역량 2개/기술 4개, NCS별 자격 2개 상한).
+범례 숫자는 현재 그래프에 표시된 노드 수이며 전체 카탈로그나 내 스펙 수가 아닙니다.
+보유 역량은 표시된 표본 중 기존 충족 조건을 만족하는 역량만 강조합니다. 빈 범례에는 0과 안내를 표시합니다.
 
 NCS 1–8수준 설명은 [공식 수준체계](https://www.ncs.go.kr/mobile/rm01/TH10200103.do)를
 참고합니다. 학력/자격의 대략적인 비유는 응시 자격, 학력 동등성, 개인 숙련도 판정이 아닙니다.
@@ -643,4 +655,4 @@ NCS 1–8수준 설명은 [공식 수준체계](https://www.ncs.go.kr/mobile/rm0
 
 ### Résumé scanner
 
-Onboarding and My Info share **내 스펙 → 이력서에서 가져오기**. The authenticated status, raw-binary scan, and explicit selected-passage interpretation endpoints are documented in [resume-scanner.md](resume-scanner.md). A scan does not mutate the profile or call AI. Review each draft in the existing spec editor, require an explicit experience-level choice, then save with ordinary capability versioning/idempotency and full readback. Imported specs use `DOCUMENT_IMPORT` plus typed source quotation/span metadata. No SQL migration or new secret is required; deploy the BE first. Original files are request-only temporary data, and OCR/automatic education-profile writes are not implemented.
+Onboarding and My Info share **내 스펙 → 이력서에서 가져오기**. The authenticated status, raw-binary scan, PDF-only streamed paragraph extraction, and explicit selected-passage interpretation endpoints are documented in [resume-scanner.md](resume-scanner.md). An ordinary scan does not mutate the profile or call AI; document AI requires consent and at most three PDF pages, 64 blocks and 12,000 characters. Both paths support a sanitized sandboxed HTML preview with exact quotation highlights. Review each draft in the existing editor, choose an experience level for competency-bearing entries, then save with ordinary capability versioning/idempotency and full readback. `education`/`other` entries are information records with no proficiency requirement or competency credit. Imported specs use `DOCUMENT_IMPORT` plus source quotation/span metadata and verbatim `imported_fields`; partial dates remain as written. No SQL migration or new secret is required; deploy the BE first. Original files are request-only temporary data, and OCR/automatic education-profile writes are not implemented.
