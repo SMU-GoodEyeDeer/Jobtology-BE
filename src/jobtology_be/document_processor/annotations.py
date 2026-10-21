@@ -27,6 +27,44 @@ from .style_types import (
     normalize_list_marker,
 )
 
+# Shared with the inert résumé viewer; never accept document-provided stylesheets.
+REVIEW_CSS = """
+  body {
+    max-width: 1100px;
+    margin: 2em auto;
+    padding: 0 1rem;
+    line-height: 1.6;
+    color: #1a1a1a;
+    font-family: serif;
+    background:#f5f5f2;
+  }
+  p {
+    margin: 0 0 0.45em 0;
+  }
+  table {
+    border-collapse: collapse;
+    margin: 8px 0 12px 0;
+  }
+  td p {
+    line-height: 1.0;
+  }
+  img {
+    max-width: 100%;
+    height: auto;
+  }
+  mark {
+    cursor: help;
+  }
+  .document-unpaged {
+    max-width: 900px;
+    margin: 0 auto;
+  }
+  .document-column-group {
+    margin: 0 0 0.45em 0;
+  }
+"""
+
+
 _NATIVE_CELL_ALIGNMENT_DOC_TYPES = {"docx", "hwpx", "hwp"}
 
 
@@ -1154,39 +1192,7 @@ def _render_annotated_html(
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{escape(resolved_title)}</title>
 <style>
-  body {{
-    max-width: 1100px;
-    margin: 2em auto;
-    padding: 0 1rem;
-    line-height: 1.6;
-    color: #1a1a1a;
-    font-family: serif;
-    background:#f5f5f2;
-  }}
-  p {{
-    margin: 0 0 0.45em 0;
-  }}
-  table {{
-    border-collapse: collapse;
-    margin: 8px 0 12px 0;
-  }}
-  td p {{
-    line-height: 1.0;
-  }}
-  img {{
-    max-width: 100%;
-    height: auto;
-  }}
-  mark {{
-    cursor: help;
-  }}
-  .document-unpaged {{
-    max-width: 900px;
-    margin: 0 auto;
-  }}
-  .document-column-group {{
-    margin: 0 0 0.45em 0;
-  }}
+{REVIEW_CSS}
 </style>
 </head>
 <body>

@@ -203,9 +203,10 @@ def extract(path: Path, *, max_pdf_pages: int = MAX_PAGES) -> ParsedResume:
     if not blocks:
         warnings.append('NO_READABLE_TEXT')
     from jobtology_be.document_processor import render_review_html
-    from jobtology_be.resume.preview import safe_preview
+    from jobtology_be.resume.preview import safe_preview, source_annotations
     try:
-        preview = render_review_html(document=DocumentInput(doc_ir=doc), annotations=[], title='이력서')
+        preview = render_review_html(document=DocumentInput(doc_ir=doc),
+                                     annotations=source_annotations(doc, blocks), title='이력서')
         preview_html = safe_preview(preview.html) if preview.ok and preview.html else None
     except Exception:  # noqa: BLE001 -- optional rendering must not discard readable text.
         preview_html = None
