@@ -61,10 +61,13 @@ class PostgresAnalysisContextInputSource:
             raise AnalysisContextInputsUnavailableError("reference time must be timezone-aware")
 
         async with self.database.sessions.begin() as session:
+            # HTTP idempotency already locks the profile on another connection.
+            # Inputs are read-only; locking here makes that request wait on itself.
+            # Submission rechecks the version under its write lock before enqueueing,
+            # so concurrent standalone edits cannot publish mixed-version inputs.
             profile_version = await session.scalar(
                 select(profiles.c.version)
                 .where(profiles.c.user_id == user_id)
-                .with_for_update()
             )
             if profile_version != command.expected_profile_version:
                 raise PersistenceConflictError(resource="profile")
