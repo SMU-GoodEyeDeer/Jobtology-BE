@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
 import anyio
@@ -18,6 +19,8 @@ from jobtology_be.corpus.neo4j_client import (
     Neo4jTransportError,
 )
 from jobtology_be.corpus.neo4j_queries import (
+    ROLE_CONTEXT_ONET_FIELDS,
+    ROLE_CONTEXT_ONET_QUERY_ID,
     ROLE_EVIDENCE_NCS_FIELDS,
     ROLE_EVIDENCE_NCS_QUERY_ID,
     ROLE_EVIDENCE_ONET_FIELDS,
@@ -25,12 +28,25 @@ from jobtology_be.corpus.neo4j_queries import (
 )
 from jobtology_be.corpus.neo4j_repository import Neo4jRepositoryResponseError
 from jobtology_be.corpus.role_evidence_graph import Neo4jRoleEvidenceGraph
+from jobtology_be.infrastructure.persistence.live_source_feed import LiveSourceReadError
 from jobtology_be.product_roles.models import ProductRolePolicy
 
 POLICY = ProductRolePolicy.model_validate_json(
     (Path(__file__).resolve().parents[1] / "config/product_roles/policy.v1.json").read_text()
 )
 PYTHON = {"id": "tech:python", "name": "Python", "in_demand": True}
+
+
+class ContextFeed:
+    def __init__(self):
+        self.calls = []
+
+    async def occupation_context(self, codes, limit, offset):
+        self.calls.append((codes, limit, offset))
+        return SimpleNamespace(summary=SimpleNamespace(by_occupation=[
+            SimpleNamespace(occupation_scheme='ONET', occupation_code='15-1252.00', current_associations=11),
+            SimpleNamespace(occupation_scheme='NCS', occupation_code='20010202', current_associations=99),
+        ]))
 
 
 def _ncs_row(code: str, name: str, onet_code: str) -> tuple[JsonValue, ...]:
@@ -60,11 +76,14 @@ class FakeNeo4jClient:
     ncs_rows: tuple[tuple[JsonValue, ...], ...]
     onet_rows: tuple[tuple[JsonValue, ...], ...]
     queries: list[Neo4jReadQuery] = field(default_factory=list)
+    context_rows: tuple[tuple[JsonValue, ...], ...] = ()
 
     async def execute(self, query: Neo4jReadQuery) -> Neo4jQueryResult:
         self.queries.append(query)
         if query.query_id == ROLE_EVIDENCE_NCS_QUERY_ID:
             return Neo4jQueryResult(ROLE_EVIDENCE_NCS_FIELDS, self.ncs_rows, "r")
+        if query.query_id == ROLE_CONTEXT_ONET_QUERY_ID:
+            return Neo4jQueryResult(ROLE_CONTEXT_ONET_FIELDS, self.context_rows, "r")
         assert query.query_id == ROLE_EVIDENCE_ONET_QUERY_ID
         return Neo4jQueryResult(ROLE_EVIDENCE_ONET_FIELDS, self.onet_rows, "r")
 
@@ -90,7 +109,8 @@ def test_role_graph_links_policy_ncs_codes_through_postings_to_onet_details() ->
     # Then
     assert graph is not None
     assert client.queries[0].parameters["codes"] == ["20010202", "20010204"]
-    assert client.queries[1].parameters["ids"] == ["onet:15-1242.00", "onet:15-1252.00"]
+    assert client.queries[1].parameters["codes"] == ["15-1252.00"]
+    assert client.queries[2].parameters["ids"] == ["onet:15-1242.00", "onet:15-1252.00"]
     kinds = {node.id: node.kind for node in graph.nodes}
     assert kinds["role:BACKEND_DEVELOPER"] == "role"
     assert kinds["ncs:occupation:20010202"] == "ncs_occupation"
@@ -128,6 +148,58 @@ def test_graph_never_links_details_from_another_revision_of_the_same_onet_code()
     assert "onet:old-revision" not in node_ids
     assert all(edge.source in node_ids and edge.target in node_ids for edge in graph.edges)
     assert not any(edge.kind in {"ESSENTIAL_SKILL", "HOT_TECHNOLOGY"} for edge in graph.edges)
+
+
+def test_current_onet_context_survives_when_all_ncs_posting_mappings_are_stale() -> None:
+    client = _backend_client()
+    ncs = list(client.ncs_rows[0])
+    ncs[3:5] = [0, []]
+    ncs[6] = []
+    ncs[8] = [ncs[8][1]]
+    client.ncs_rows = (tuple(ncs),)
+    client.onet_rows = (_onet_row("15-1252.00"),)
+    client.context_rows = (("onet:15-1252.00", "15-1252.00", "Software Developers"),)
+    feed = ContextFeed()
+    graph = anyio.run(Neo4jRoleEvidenceGraph(policy=POLICY, client=client, context_feed=feed).graph, "BACKEND_DEVELOPER")
+    nodes = {node.id: node for node in graph.nodes}
+    assert nodes['ncs:occupation:20010202'].weight == 0
+    assert nodes['ncs:occupation:20010202'].excluded_associations == 3
+    assert 'postings:20010202' not in nodes
+    assert nodes['onet:15-1252.00'].basis == 'APPLICATION_CONTEXT_SELECTION'
+    assert nodes['onet:15-1252.00'].requirement_key is None
+    assert nodes['postings:onet:15-1252.00'].occupation_code == '15-1252.00'
+    assert nodes['postings:onet:15-1252.00'].weight == 11
+    assert not graph.warnings
+    assert feed.calls == [(['15-1252.00'], 1, 0)]
+    assert 'skill:critical' in nodes and 'tech:python' in nodes
+    assert not any(edge.kind == 'MATCHED_ONET' for edge in graph.edges)
+    assert any(edge.kind == 'CONTEXT_FOR' and edge.basis == 'APPLICATION_CONTEXT_SELECTION' for edge in graph.edges)
+    assert all(edge.source in nodes and edge.target in nodes for edge in graph.edges)
+
+
+def test_context_and_co_matched_onet_nodes_share_one_identity_and_detail_branch() -> None:
+    client = _backend_client()
+    client.context_rows = (("onet:15-1252.00", "15-1252.00", "Software Developers"),)
+    graph = anyio.run(Neo4jRoleEvidenceGraph(policy=POLICY, client=client, context_feed=ContextFeed()).graph, "BACKEND_DEVELOPER")
+    assert len([node for node in graph.nodes if node.id == 'onet:15-1252.00']) == 1
+    assert len([edge for edge in graph.edges if edge.source == 'onet:15-1252.00' and edge.kind == 'HOT_TECHNOLOGY']) == 1
+    assert sum(edge.kind == 'MATCHED_ONET' for edge in graph.edges) == 2
+    assert sum(edge.kind == 'CONTEXT_FOR' for edge in graph.edges) == 1
+
+
+@pytest.mark.parametrize('configured', [False, True])
+def test_posting_feed_unavailability_keeps_catalog_nodes_with_an_explicit_warning(configured):
+    class UnavailableFeed:
+        async def occupation_context(self, *args):
+            raise LiveSourceReadError(503)
+    client = _backend_client()
+    client.context_rows = (("onet:15-1252.00", "15-1252.00", "Software Developers"),)
+    graph = anyio.run(Neo4jRoleEvidenceGraph(
+        policy=POLICY, client=client, context_feed=UnavailableFeed() if configured else None,
+    ).graph, "BACKEND_DEVELOPER")
+    assert graph.warnings == ('POSTING_CONTEXT_UNAVAILABLE',)
+    assert any(node.kind == 'onet_occupation' for node in graph.nodes)
+    assert not any(node.id.startswith('postings:onet:') for node in graph.nodes)
 
 
 def test_graph_deep_link_requirement_uses_verified_role_metadata() -> None:

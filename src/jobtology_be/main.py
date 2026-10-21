@@ -202,6 +202,7 @@ def create_app(
             policy=ProductRolePolicy.model_validate_json(policy_path.read_text()),
             client=neo4j_client,
             requirement_metadata=role_holder,
+            context_feed=live_source_feed,
         )
     if settings.auth_enabled and session_store is None:
         if database is None:

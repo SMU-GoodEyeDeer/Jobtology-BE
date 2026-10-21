@@ -105,6 +105,7 @@ _ENRICHMENT_STATEMENT: Final = (
 
 ROLE_EVIDENCE_NCS_QUERY_ID: Final = Neo4jReadQueryId("role-evidence.ncs-occupations")
 ROLE_EVIDENCE_ONET_QUERY_ID: Final = Neo4jReadQueryId("role-evidence.onet-occupations")
+ROLE_CONTEXT_ONET_QUERY_ID: Final = Neo4jReadQueryId("role-evidence.onet-context")
 
 ROLE_EVIDENCE_NCS_FIELDS: Final = (
     "id",
@@ -119,6 +120,14 @@ ROLE_EVIDENCE_NCS_FIELDS: Final = (
     "excluded_associations",
 )
 ROLE_EVIDENCE_ONET_FIELDS: Final = ("id", "code", "name", "skills", "technologies")
+ROLE_CONTEXT_ONET_FIELDS: Final = ("id", "code", "name")
+
+# Resolve current catalog identities independently of NCS co-matches. Posting
+# counts come from the same current-source feed used by the posting detail UI.
+_ROLE_CONTEXT_ONET_STATEMENT: Final = (
+    "MATCH (x:onetCatalogObject:occupation) WHERE x.code IN $codes AND x.current = true "
+    "RETURN x.id AS id, x.code AS code, x.name AS name ORDER BY x.code LIMIT $limit"
+)
 
 # Per NCS occupation: inferred posting count, a few sample postings, the latest
 # current-version competency units (reviewed posting links first), the O*NET
@@ -232,6 +241,10 @@ NEO4J_CORPUS_READ_QUERY_CATALOG: Final = Neo4jReadQueryCatalog(
         Neo4jReadQueryDefinition(
             query_id=ROLE_EVIDENCE_ONET_QUERY_ID,
             statement=_ROLE_EVIDENCE_ONET_STATEMENT,
+        ),
+        Neo4jReadQueryDefinition(
+            query_id=ROLE_CONTEXT_ONET_QUERY_ID,
+            statement=_ROLE_CONTEXT_ONET_STATEMENT,
         ),
     )
 )

@@ -82,11 +82,14 @@ async def role_posting_context(
         404: {"model": ErrorResponse, "description": "The product role is unknown."},
         503: {"model": ErrorResponse, "description": "The native Neo4j graph is unavailable."},
     },
-    summary="Read a product role's recommendation-evidence graph from Neo4j",
+    summary="Read a product role's bounded evidence graph and discovery context",
     description=(
         "Returns a bounded graph for one product role: its mapped NCS occupations, "
         "model-inferred posting counts, NCS competency units, and the O*NET occupations, "
         "essential skills, and hot technologies matched through the same postings. "
+        "Independent role-level O*NET reference branches use curated discovery context, "
+        "not NCS equivalence. Their current posting-association counts use the same "
+        "catalog feed as the posting UI. Missing counts are disclosed in warnings. "
         "Posting-to-occupation links are model-inferred staging data, not reviewed requirements."
     ),
 )
