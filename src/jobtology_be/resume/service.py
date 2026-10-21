@@ -16,11 +16,19 @@ from functools import cached_property
 from pathlib import Path
 from uuid import UUID
 
+import anyio
+
 from jobtology_be.application.specs import SkillCatalog
 from jobtology_be.llm.client import LlmClient, LlmMessage
+from jobtology_be.resume.extraction import extract_paragraph
 from jobtology_be.resume.matching import literal_suggestions, validated_ai_picks
 from jobtology_be.resume.models import (
+    AI_CONCURRENCY,
+    AI_DOCUMENT_SECONDS,
+    MAX_AI_BLOCKS,
+    MAX_AI_TEXT,
     MAX_BYTES,
+    MAX_SUGGESTIONS,
     PARSE_SECONDS,
     ParsedResume,
     ResumeFormat,
@@ -145,7 +153,8 @@ class ResumeService:
 
     async def scan(self, user_id: UUID, format: ResumeFormat, stream: AsyncIterator[bytes],
                    occupation_id: str | None = None,
-                   disconnected: Callable[[], Awaitable[bool]] | None = None) -> ResumeScan:
+                   disconnected: Callable[[], Awaitable[bool]] | None = None,
+                   *, include_keywords: bool = True) -> ResumeScan:
         if format not in await asyncio.to_thread(lambda: self.formats):
             raise ResumeError('FORMAT_UNAVAILABLE', 503)
         with self.slot(user_id):
@@ -172,13 +181,81 @@ class ResumeService:
                         raise ResumeError('EMPTY_DOCUMENT')
                     parsed = await self._parse(source, directory, disconnected)
                     items = self.catalog.items(occupation_id)
-                    suggestions, truncated = await asyncio.to_thread(literal_suggestions, parsed.blocks, items)
+                    suggestions, truncated = (await asyncio.to_thread(literal_suggestions, parsed.blocks, items)
+                                              if include_keywords else ((), False))
                     data = parsed.model_dump()
+                    if not include_keywords:
+                        data['warnings'] = tuple(warning for warning in data['warnings']
+                                                 if warning != 'KEYWORDS_ARE_NOT_PROOF') + ('AI_ENTRIES_REQUIRE_REVIEW',)
                     if not any(item.source == 'NCS' for item in items):
                         data['warnings'] = (*data['warnings'], 'NCS_CATALOG_UNAVAILABLE')
                     if truncated:
                         data['warnings'] = (*data['warnings'], 'SUGGESTIONS_TRUNCATED')
                     return ResumeScan(**data, document_sha256=digest.hexdigest(), suggestions=suggestions)
+
+    def validate_analysis(self, scan: ResumeScan) -> None:
+        if self.llm is None:
+            raise ResumeError('AI_UNAVAILABLE', 503)
+        if scan.page_count is None:
+            raise ResumeError('AI_PDF_REQUIRED')
+        if (len(scan.blocks) > MAX_AI_BLOCKS or sum(len(block.text) for block in scan.blocks) > MAX_AI_TEXT
+                or 'TEXT_TRUNCATED' in scan.warnings):
+            raise ResumeError('AI_DOCUMENT_LIMIT')
+
+    async def analyze_events(
+        self, user_id: UUID, scan: ResumeScan, occupation_id: str | None,
+        disconnected: Callable[[], Awaitable[bool]] | None = None,
+    ):
+        self.validate_analysis(scan)
+        with self.slot(user_id):
+            yield {'type': 'scan', 'scan': scan.model_dump(mode='json')}
+            items = self.catalog.items(occupation_id)
+            semaphore = asyncio.Semaphore(AI_CONCURRENCY)
+
+            async def run(index, block):
+                async with semaphore:
+                    if disconnected is not None and await disconnected():
+                        raise ResumeError('CLIENT_DISCONNECTED', 499)
+                    context = scan.blocks[index - 1].text if index else ''
+                    return await extract_paragraph(self.llm, block, items, context)
+
+            tasks = [asyncio.create_task(run(index, block)) for index, block in enumerate(scan.blocks)]
+            completed = failed = count = rejected = omitted = 0
+            timed_out = False
+            try:
+                try:
+                    async with asyncio.timeout(AI_DOCUMENT_SECONDS):
+                        for task in asyncio.as_completed(tasks):
+                            result = await task
+                            if disconnected is not None and await disconnected():
+                                raise ResumeError('CLIENT_DISCONNECTED', 499)
+                            completed += 1
+                            failed += result.error_code is not None
+                            rejected += result.rejected_count
+                            admitted = result.suggestions[:MAX_SUGGESTIONS - count]
+                            omitted += len(result.suggestions) - len(admitted)
+                            count += len(admitted)
+                            yield {
+                                'type': 'paragraph', 'block_id': result.block_id,
+                                'completed': completed, 'total': len(scan.blocks),
+                                'suggestions': [item.model_dump(mode='json') for item in admitted],
+                                'error_code': result.error_code, 'rejected_count': result.rejected_count,
+                            }
+                except TimeoutError:
+                    timed_out = True
+            finally:
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                # Starlette disconnects use level cancellation; finish closing all
+                # model connections before releasing the account/capacity lock.
+                with anyio.CancelScope(shield=True):
+                    await asyncio.gather(*tasks, return_exceptions=True)
+            yield {
+                'type': 'done', 'completed': completed, 'total': len(scan.blocks),
+                'failed': failed + len(scan.blocks) - completed, 'rejected_count': rejected,
+                'omitted_count': omitted, 'timed_out': timed_out,
+            }
 
     async def _parse(self, source: Path, directory: Path,
                      disconnected: Callable[[], Awaitable[bool]] | None = None) -> ParsedResume:

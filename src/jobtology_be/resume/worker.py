@@ -1,4 +1,4 @@
-"""One bounded child process per upload. No raw HTML or document styles leave this process."""
+"""One bounded child process per upload. Only inert, reduced preview HTML leaves it."""
 import hashlib
 import json
 import os
@@ -32,7 +32,7 @@ def _paragraphs(paragraphs):
                 yield from _paragraphs(cell.paragraphs)
 
 
-def preflight(path: Path) -> None:
+def preflight(path: Path) -> int | None:
     suffix = path.suffix
     magic = path.read_bytes()[:8]
     if suffix == '.pdf':
@@ -44,6 +44,7 @@ def preflight(path: Path) -> None:
             raise DocumentRejected('ENCRYPTED_DOCUMENT')
         if len(pdf.pages) > MAX_PAGES:
             raise DocumentRejected('PAGE_LIMIT')
+        return len(pdf.pages)
     elif suffix in {'.doc', '.hwp'}:
         if magic != b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1':
             raise DocumentRejected('FORMAT_MISMATCH')
@@ -148,7 +149,7 @@ def visible_docx(path: Path) -> tuple[Path, bool]:
 
 def extract(path: Path) -> ParsedResume:
     is_pdf = path.suffix == '.pdf'
-    preflight(path)
+    page_count = preflight(path)
     warnings = ['EXTRACTED_TEXT_REVIEW', 'KEYWORDS_ARE_NOT_PROOF']
     if path.suffix == '.docx':
         path, hidden = visible_docx(path)
@@ -156,7 +157,7 @@ def extract(path: Path) -> ParsedResume:
             warnings.append('HIDDEN_TEXT_REMOVED')
     from jobtology_be.document_processor import DocIR, DocumentInput, read_document
     doc = DocIR.from_file(path, config={'image_output': 'off'})
-    if is_pdf and len(doc.pages) > MAX_PAGES:
+    if len(doc.pages) > MAX_PAGES:
         raise DocumentRejected('PAGE_LIMIT')
     skipped = tuple(page.page_number for page in doc.pages if page.parse_skip_reason)
     if skipped:
@@ -189,6 +190,7 @@ def extract(path: Path) -> ParsedResume:
                     block_id=hashlib.sha256(identity.encode()).hexdigest()[:24], text=fragment,
                     text_hash=hashlib.sha256(fragment.encode()).hexdigest(),
                     page=paragraph.page_number if is_pdf and paragraph.page_number and paragraph.page_number <= MAX_PAGES else None,
+                    source_node_id=paragraph.node_id, source_start=offset,
                 ))
                 count += len(fragment)
             if truncated:
@@ -200,7 +202,20 @@ def extract(path: Path) -> ParsedResume:
         warnings.append('TEXT_TRUNCATED')
     if not blocks:
         warnings.append('NO_READABLE_TEXT')
-    return ParsedResume(blocks=tuple(blocks), warnings=tuple(warnings), skipped_pages=skipped)
+    from jobtology_be.document_processor import render_review_html
+    from jobtology_be.resume.preview import safe_preview
+    try:
+        preview = render_review_html(document=DocumentInput(doc_ir=doc), annotations=[], title='이력서')
+        preview_html = safe_preview(preview.html) if preview.ok and preview.html else None
+    except Exception:  # noqa: BLE001 -- optional rendering must not discard readable text.
+        preview_html = None
+    if preview_html is None:
+        warnings.append('PREVIEW_UNAVAILABLE')
+    return ParsedResume(
+        blocks=tuple(blocks), warnings=tuple(warnings), skipped_pages=skipped,
+        page_count=page_count,
+        preview_html=preview_html,
+    )
 
 
 def main() -> None:

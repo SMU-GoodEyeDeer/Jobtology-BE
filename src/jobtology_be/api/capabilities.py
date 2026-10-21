@@ -51,11 +51,15 @@ class CapabilityMutationRequest(BaseModel):
     expected_profile_version: StrictInt = Field(ge=1)
     category: SpecCategory
     raw_text: StrictStr = Field(min_length=1, max_length=500)
-    proficiency: Proficiency
+    proficiency: Proficiency | None = None
     details: SpecDetails
 
     @model_validator(mode='after')
     def category_fields(self):
+        if self.category not in {'education', 'other'} and self.proficiency is None:
+            raise ValueError('choose a self-reported proficiency')
+        if self.category in {'education', 'other'} and self.details.competency_ids:
+            raise ValueError('education and other records do not establish competency credit')
         if self.category == 'test' and self.details.score is None:
             raise ValueError('test scores need a numeric result')
         if self.category == 'certification' and not self.details.issuer:

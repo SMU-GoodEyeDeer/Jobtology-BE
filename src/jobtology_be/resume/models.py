@@ -2,16 +2,21 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
 
-from jobtology_be.application.specs import SkillItem, SpecCategory
+from jobtology_be.application.specs import ResumeFieldName, SkillItem, SpecCategory
 
 PARSER_REVISION = 'jobtology-resume-v1-7541e87'
 MAX_BYTES = 10 * 1024 * 1024
-MAX_PAGES = 20
+MAX_PAGES = 3
 MAX_TEXT = 50_000
 MAX_BLOCKS = 500
 MAX_BLOCK_TEXT = 1800
-MAX_SUGGESTIONS = 30
+MAX_SUGGESTIONS = 200
 PARSE_SECONDS = 60
+MAX_AI_BLOCKS = 64
+MAX_AI_TEXT = 12_000
+AI_CONCURRENCY = 4
+AI_PARAGRAPH_SECONDS = 30
+AI_DOCUMENT_SECONDS = 120
 
 type ResumeFormat = Literal['pdf', 'docx', 'hwpx', 'hwp', 'doc']
 
@@ -22,6 +27,8 @@ class ResumeBlock(BaseModel):
     text: str = Field(max_length=MAX_BLOCK_TEXT)
     text_hash: str = Field(pattern=r'^[a-f0-9]{64}$')
     page: int | None = Field(default=None, ge=1, le=MAX_PAGES)
+    source_node_id: str | None = Field(default=None, max_length=160)
+    source_start: int = Field(default=0, ge=0)
 
 
 class ParsedResume(BaseModel):
@@ -29,6 +36,8 @@ class ParsedResume(BaseModel):
     blocks: tuple[ResumeBlock, ...] = Field(max_length=MAX_BLOCKS)
     warnings: tuple[str, ...] = Field(max_length=30)
     skipped_pages: tuple[int, ...] = ()
+    page_count: int | None = Field(default=None, ge=1, le=MAX_PAGES)
+    preview_html: str | None = Field(default=None, max_length=500_000)
 
 
 class ResumeSuggestion(BaseModel):
@@ -44,6 +53,7 @@ class ResumeSuggestion(BaseModel):
     method: Literal['KEYWORD', 'AI_ASSISTED']
     score: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     score_max: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    fields: dict[ResumeFieldName, str] = Field(default_factory=dict, max_length=15)
 
 
 class ResumeScan(ParsedResume):

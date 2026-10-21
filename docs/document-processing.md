@@ -102,8 +102,13 @@ messages. The frontend displays the matching request reference for support.
 The authenticated `/api/v1/me/resume/scan` endpoint streams uploads into a private
 request directory and runs the bounded child parser from this image. Files are
 removed when the request finishes; crash leftovers are swept after 15 minutes.
-The frontend renders extracted text and exact source highlights, without exposing
-the processor's HTML. Keyword suggestions are reviewed before saving through the
-normal capability API; AI fallback requires explicit selected-passage consent.
+The frontend renders extracted text and a sanitized, sandboxed HTML preview with
+exact source highlights. Keyword suggestions are reviewed before saving through the
+normal capability API. The optional `/me/resume/analyze` endpoint accepts only
+PDFs of at most three physical pages and requires consent. It streams one structured
+extraction per paragraph block with four concurrent calls, using the existing LLM
+configuration. Partial failures preserve successful suggestions. See
+[resume-scanner.md](resume-scanner.md) for text/request limits and event details.
+Selected-passage AI fallback retains separate consent.
 OCR and automatic profile writes remain unsupported. See the
 [résumé integration design](plans/resume-import-feasibility.md) for limits.

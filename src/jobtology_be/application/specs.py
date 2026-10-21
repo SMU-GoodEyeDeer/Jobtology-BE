@@ -29,7 +29,11 @@ from jobtology_be.contracts import CapabilityInput
 from jobtology_be.corpus.snapshot import PublishedCorpusSnapshot
 from jobtology_be.modules.analyses.editorial_models import ReleaseState
 
-type SpecCategory = Literal['skill', 'certification', 'test', 'project', 'experience']
+type SpecCategory = Literal['skill', 'certification', 'test', 'project', 'experience', 'education', 'other']
+type ResumeFieldName = Literal[
+    'school', 'degree', 'major', 'organization', 'role', 'started_on', 'ended_on',
+    'issuer', 'credential_code', 'issued_on', 'expires_on', 'score', 'score_max', 'score_unit', 'url',
+]
 type Proficiency = Literal['FAMILIAR', 'GUIDED', 'INDEPENDENT', 'PRODUCTION']
 CREDIT = {'FAMILIAR': .25, 'GUIDED': .5, 'INDEPENDENT': .75, 'PRODUCTION': 1.0}
 MIN_EVIDENCE_LENGTH = 20
@@ -73,12 +77,21 @@ class SpecDetails(BaseModel):
     score_unit: str | None = Field(default=None, max_length=64)
     organization: str | None = Field(default=None, max_length=200)
     role: str | None = Field(default=None, max_length=200)
+    school: str | None = Field(default=None, max_length=200)
+    degree: str | None = Field(default=None, max_length=200)
+    major: str | None = Field(default=None, max_length=200)
+    imported_fields: dict[ResumeFieldName, str] = Field(default_factory=dict, max_length=15)
     url: HttpUrl | None = None
 
     @model_validator(mode='after')
     def valid_details(self) -> Self:
         if (self.source == 'DOCUMENT_IMPORT') != (self.document_evidence is not None):
             raise ValueError('document imports require source evidence')
+        if self.imported_fields and (self.document_evidence is None or any(
+            not value or len(value) > 500 or value not in self.document_evidence.quote
+            for value in self.imported_fields.values()
+        )):
+            raise ValueError('imported fields require exact source evidence')
         if len(set(self.competency_ids)) != len(self.competency_ids):
             raise ValueError('choose each competency once')
         if any(not value or len(value) > 128 for value in self.competency_ids):
@@ -117,6 +130,8 @@ class SpecMatching(BaseModel):
 
 
 def spec_credit(details: SpecDetails, proficiency: str | None, category: str, today: date) -> float:
+    if category in {'education', 'other'}:
+        return 0.0
     if category in {'certification', 'test'} and details.expires_on and details.expires_on < today:
         return 0.0
     if category in {'certification', 'test'} and details.issued_on and details.issued_on > today:
@@ -222,6 +237,9 @@ class SkillCatalog:
             # Internal roadmap completion records retain their own provenance.
             ids = (entry.entity_id,) if entry.source_completion_event_id else ()
             details = SpecDetails(competency_ids=ids)
+        if entry.category in {'education', 'other'}:
+            return SpecMatching(status='UNUSED', credit=0, competencies=(),
+                                message='학력·기타 정보로 보관해요. 역량 점수에는 자동 반영하지 않아요.')
         global_items = {item.entity_id: item for item in self.items()}
         role_items = {item.entity_id: item for item in self.items(occupation_id)} if occupation_id else {}
         selected = tuple(global_items[key].model_copy(update={
