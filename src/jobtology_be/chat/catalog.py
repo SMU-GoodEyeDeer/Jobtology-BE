@@ -1,0 +1,258 @@
+import asyncio
+import time
+from collections import OrderedDict
+from dataclasses import dataclass, field
+from hashlib import sha256
+from typing import Protocol
+from urllib.parse import urlencode
+
+from jobtology_be.application.m5_queries import M5DataUnavailableError
+from jobtology_be.application.specs import SkillCatalog
+from jobtology_be.chat.catalog_queries import EXPAND_ID, NODE_ID, SEARCH_ID
+from jobtology_be.chat.workspace_models import EvidenceGraph, GraphNode, edge, merge_graphs
+from jobtology_be.corpus.neo4j_client import Neo4jQueryApiError, Neo4jReadClient, Neo4jReadQuery
+from jobtology_be.infrastructure.persistence.live_source_feed import (
+    LiveSourceFeed,
+    LiveSourceReadError,
+)
+from jobtology_be.modules.analyses.editorial_models import ReleaseState
+
+
+class CatalogRetriever(Protocol):
+    async def search(self, query: str, offset: int = 0) -> EvidenceGraph: ...
+    async def expand(self, node_id: str, offset: int = 0) -> EvidenceGraph: ...
+    async def posting(self, posting_id: str) -> EvidenceGraph: ...
+    async def node(self, node_id: str) -> EvidenceGraph: ...
+
+
+@dataclass
+class SharedCatalogRetriever:
+    client: Neo4jReadClient | None
+    feed: LiveSourceFeed | None = None
+    skills: SkillCatalog | None = None
+    # Only public catalog reads are cached. This object never accepts account data.
+    _cache: OrderedDict = field(default_factory=OrderedDict, repr=False)
+    _lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+
+    async def _read(self, operation: str, value: str, offset: int) -> EvidenceGraph:
+        if self.client is None:
+            return EvidenceGraph(warnings=("CATALOG_PARTIALLY_UNAVAILABLE",))
+        key = (operation, sha256(value.encode()).hexdigest(), offset)
+        async with self._lock:
+            now = time.monotonic()
+            cached = self._cache.get(key)
+            if cached and cached[0] > now:
+                self._cache.move_to_end(key)
+                return cached[1]
+        if operation == "search":
+            terms = list(dict.fromkeys(value.casefold().split()))[:6]
+            if not terms:
+                return EvidenceGraph()
+            query = Neo4jReadQuery(query_id=SEARCH_ID,
+                                   parameters={"terms": terms, "offset": offset, "limit": 25})
+        else:
+            query = Neo4jReadQuery(query_id=EXPAND_ID,
+                                   parameters={"node_id": value, "offset": offset, "limit": 25})
+        result = await self.client.execute(query)
+        fields = ("node",) if operation == "search" else ("node", "source", "target", "kind")
+        if result.fields != fields or len(result.rows) > 25:
+            raise ValueError("invalid catalog response")
+        nodes, edges = {}, {}
+        for row in result.rows[:24]:
+            record = dict(zip(fields, row, strict=True))
+            node = GraphNode.model_validate(record["node"])
+            nodes[node.id] = node
+            if operation == "expand":
+                item = edge(record["source"], record["target"], record["kind"], "REFERENCE")
+                edges[item.id] = item
+        graph = EvidenceGraph(nodes=tuple(nodes.values()), edges=tuple(edges.values()),
+                              truncated=len(result.rows) == 25)
+        async with self._lock:
+            self._cache[key] = (time.monotonic() + 30, graph)
+            while len(self._cache) > 64:
+                self._cache.popitem(last=False)
+        return graph
+
+    async def _neo4j_search(self, query: str, offset: int = 0) -> EvidenceGraph:
+        graph = await self._read("search", query[:120].strip(), offset)
+        # A search starts from the full catalog, then brings in a small number of
+        # actual neighboring facts so the answer can explain relationships too.
+        async def neighborhood(node):
+            try:
+                async with asyncio.timeout(2):
+                    return await self.expand(node.id)
+            except (TimeoutError, ValueError, LiveSourceReadError):
+                return EvidenceGraph(warnings=("CATALOG_PARTIALLY_UNAVAILABLE",))
+        async def safe_neighborhood(node):
+            try:
+                return await neighborhood(node)
+            except Neo4jQueryApiError:
+                return EvidenceGraph(warnings=("CATALOG_PARTIALLY_UNAVAILABLE",))
+        if graph.nodes:
+            neighbors = await asyncio.gather(*(safe_neighborhood(n) for n in graph.nodes[:2]))
+            graph = merge_graphs(graph, *neighbors)
+        return graph
+
+    def _approved_search(self, query: str, offset: int) -> EvidenceGraph:
+        if self.skills is None:
+            return EvidenceGraph()
+        matches = self.skills.search(query)
+        skill_offset = offset // 24 * 12
+        activity_offset = offset // 24 * 8
+        selected = matches[skill_offset:skill_offset + 12]
+        nodes = [GraphNode(id=item.entity_id, kind="ncs_competency" if item.source == "NCS" else "onet_skill",
+                          label=item.label, detail=f"{item.original_label} · {', '.join(item.aliases[:8])}",
+                          source_id=item.source, ncs_base_code=item.entity_id.rsplit(":", 1)[-1]
+                          if item.source == "NCS" else None) for item in selected]
+        links = []
+        try:
+            snapshots = self.skills.snapshots()
+        except M5DataUnavailableError:
+            snapshots = ()
+        terms = query.casefold().split()[:6]
+        activities = []
+        for snapshot in snapshots:
+            if snapshot.is_fixture or snapshot.release.state is not ReleaseState.PUBLISHED:
+                continue
+            requirements = {item.requirement_key: item for item in snapshot.requirements}
+            aliases = {item.entity_id: ' '.join(item.aliases) for item in snapshot.capability_entries}
+            for template in snapshot.templates:
+                text = template.title + ' ' + ' '.join(
+                    requirements[key].label + ' ' + aliases.get(requirements[key].entity_id, '')
+                    for key in template.outcome_requirement_keys if key in requirements)
+                if any(term in text.casefold() for term in terms):
+                    activities.append((snapshot, requirements, template))
+        for snapshot, requirements, template in activities[activity_offset:activity_offset + 8]:
+            key = f"template:{snapshot.occupation_id}:{template.action_id}:{template.revision}"
+            nodes.append(GraphNode(id=key, kind="activity", label=template.title,
+                                   detail=f"승인된 학습 활동 · 예상 {template.estimated_hours}시간 · 비용은 아직 모델링하지 않아요.",
+                                   source_pin=snapshot.release.release_id, basis="REFERENCE"))
+            for outcome in template.outcome_requirement_keys:
+                req = requirements.get(outcome)
+                if req:
+                    nodes.append(GraphNode(id=req.entity_id, kind="ncs_competency", label=req.label,
+                                           source_pin=snapshot.release.release_id, basis="REVIEWED_REQUIREMENT"))
+                    links.append(edge(key, req.entity_id, "TEACHES", "REVIEWED_REQUIREMENT"))
+        return EvidenceGraph(nodes=tuple({n.id: n for n in nodes}.values()), edges=tuple(links),
+                             truncated=len(matches) > skill_offset + 12 or len(activities) > activity_offset + 8)
+
+    async def search(self, query: str, offset: int = 0) -> EvidenceGraph:
+        query = query[:120].strip()
+        async def postings():
+            if self.feed is None:
+                return EvidenceGraph()
+            page_offset = offset // 24 * 6
+            result = await self.feed.postings(query[:120], None, None, None, 6, page_offset)
+            return EvidenceGraph(nodes=tuple(self._posting_node(item) for item in result.items),
+                                 truncated=result.total > page_offset + len(result.items))
+        # Failure of one public source must not discard the others.
+        async def safe(operation):
+            try:
+                async with asyncio.timeout(6):
+                    return await operation
+            except (TimeoutError, ValueError, LiveSourceReadError, Neo4jQueryApiError):
+                return EvidenceGraph(warnings=("CATALOG_PARTIALLY_UNAVAILABLE",))
+        native, jobs = await asyncio.gather(safe(self._neo4j_search(query, offset)), safe(postings()))
+        # The approved catalog has its own page sizes, so map the shared page cursor.
+        return merge_graphs(native, jobs, self._approved_search(query, offset))
+
+    async def expand(self, node_id: str, offset: int = 0) -> EvidenceGraph:
+        approved = self._approved_neighbors(node_id, offset)
+        if approved is not None:
+            return approved
+        anchor, found = await asyncio.gather(self.node(node_id), self._read("expand", node_id, offset))
+        return merge_graphs(anchor, found)
+
+    def _approved_neighbors(self, node_id: str, offset: int) -> EvidenceGraph | None:
+        # Application role IDs and normalized competency IDs are not necessarily
+        # native Neo4j node IDs. Expand their approved artifact relationships directly.
+        if self.skills is None or not node_id.startswith(("role:", "ncs:unit:")):
+            return None
+        try:
+            snapshots = self.skills.snapshots()
+        except M5DataUnavailableError:
+            return None
+        nodes, links, matches = [], [], []
+        for snapshot in snapshots:
+            if snapshot.is_fixture or snapshot.release.state is not ReleaseState.PUBLISHED:
+                continue
+            role_id = f"role:{snapshot.occupation_id}"
+            if node_id == role_id:
+                display = getattr(self.skills.metadata, "display_name", None)
+                nodes.append(GraphNode(id=role_id, kind="role", label=(display(snapshot.occupation_id) if display else None) or snapshot.occupation_id,
+                                       source_pin=snapshot.release.release_id))
+                for req in snapshot.requirements:
+                    matches.append((snapshot, role_id, req))
+            elif any(req.entity_id == node_id for req in snapshot.requirements):
+                reqs = {r.requirement_key: r for r in snapshot.requirements if r.entity_id == node_id}
+                for template in snapshot.templates:
+                    if reqs.keys() & template.outcome_requirement_keys:
+                        matches.append((snapshot, template, next(iter(reqs.values()))))
+        if not matches:
+            return None
+        for snapshot, source, req in matches[offset:offset + 24]:
+            nodes.append(GraphNode(id=req.entity_id, kind="ncs_competency", label=req.label,
+                                   requirement_key=req.requirement_key, source_pin=snapshot.release.release_id,
+                                   basis="REVIEWED_REQUIREMENT"))
+            if isinstance(source, str):
+                links.append(edge(source, req.entity_id, "REQUIRES", "REVIEWED_REQUIREMENT"))
+            else:
+                key = f"template:{snapshot.occupation_id}:{source.action_id}:{source.revision}"
+                nodes.append(GraphNode(id=key, kind="activity", label=source.title,
+                    detail=f"예상 {source.estimated_hours}시간 · 비용은 아직 모델링하지 않아요.",
+                    source_pin=snapshot.release.release_id))
+                links.append(edge(key, req.entity_id, "TEACHES", "REVIEWED_REQUIREMENT"))
+        return EvidenceGraph(nodes=tuple({n.id: n for n in nodes}.values()), edges=tuple(links),
+                             truncated=len(matches) > offset + 24)
+
+    async def node(self, node_id: str) -> EvidenceGraph:
+        if node_id.startswith("posting:"):
+            return await self.posting(node_id)
+        if self.skills:
+            item = next((item for item in self.skills.items() if item.entity_id == node_id), None)
+            if item:
+                return EvidenceGraph(nodes=(GraphNode(id=item.entity_id, label=item.label,
+                    kind="ncs_competency" if item.source == "NCS" else "onet_skill",
+                    detail=f"{item.original_label} · {', '.join(item.aliases[:8])}", source_id=item.source),))
+            if node_id.startswith("template:"):
+                try:
+                    snapshots = self.skills.snapshots()
+                except M5DataUnavailableError:
+                    snapshots = ()
+                for snapshot in snapshots:
+                    if snapshot.is_fixture or snapshot.release.state is not ReleaseState.PUBLISHED:
+                        continue
+                    for template in snapshot.templates:
+                        if node_id != f"template:{snapshot.occupation_id}:{template.action_id}:{template.revision}":
+                            continue
+                        node = GraphNode(id=node_id, kind="activity", label=template.title,
+                            detail=f"승인된 학습 활동 · 예상 {template.estimated_hours}시간 · 비용은 아직 모델링하지 않아요.",
+                            source_pin=snapshot.release.release_id, basis="REFERENCE")
+                        nodes, links = [node], []
+                        for req in snapshot.requirements:
+                            if req.requirement_key in template.outcome_requirement_keys:
+                                nodes.append(GraphNode(id=req.entity_id, kind="ncs_competency", label=req.label,
+                                    basis="REVIEWED_REQUIREMENT", source_pin=snapshot.release.release_id))
+                                links.append(edge(node_id, req.entity_id, "TEACHES", "REVIEWED_REQUIREMENT"))
+                        return EvidenceGraph(nodes=tuple(nodes), edges=tuple(links))
+        if self.client is None:
+            return EvidenceGraph()
+        result = await self.client.execute(Neo4jReadQuery(query_id=NODE_ID,
+            parameters={"node_id": node_id, "limit": 1}))
+        if result.fields != ("node",) or len(result.rows) > 1:
+            raise ValueError("invalid catalog node response")
+        return EvidenceGraph(nodes=tuple(GraphNode.model_validate(row[0]) for row in result.rows))
+
+    def _posting_node(self, item) -> GraphNode:
+        return GraphNode(id=f"posting:{item.posting_id}", kind="posting", label=item.title or "채용공고",
+                         detail=f"{item.organization_name or ''} · 마감 {item.deadline_at or item.closing_date or item.deadline_kind or '확인 필요'}\n"
+                                f"학력 {item.education or '미정'} · 지역 {', '.join(item.regions)}",
+                         source_id=item.source_id,
+                         source_pin=item.source_provenance.run_id if item.source_provenance else None,
+                         href="/postings?" + urlencode({"posting": item.posting_id}), basis="REFERENCE")
+
+    async def posting(self, posting_id: str) -> EvidenceGraph:
+        if self.feed is None:
+            return EvidenceGraph()
+        result = await self.feed.posting(posting_id.removeprefix("posting:"))
+        return EvidenceGraph(nodes=(self._posting_node(result.item),))

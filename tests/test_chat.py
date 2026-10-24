@@ -139,6 +139,27 @@ def test_service_offers_no_candidates_without_an_active_targeted_goal() -> None:
     assert result.occupation_id is None
 
 
+def test_explicit_goal_overrides_the_first_active_goal_and_rejects_foreign_ids():
+    from dataclasses import replace
+    from unittest.mock import AsyncMock
+    from uuid import uuid4
+
+    from jobtology_be.infrastructure.persistence.contracts import MissingRecordError
+    llm = FakeLlm({"reply": "좋아요", "candidates": [], "suggestions": []})
+    service = _service(llm)
+    goal = anyio.run(service.queries.list_goals, USER_ID)[0]
+    selected = uuid4()
+    queries = type("Queries", (), {
+        "list_goals": AsyncMock(return_value=(replace(goal, occupation_id="OTHER_ROLE"), replace(goal, goal_id=selected))),
+        "list_capabilities": AsyncMock(return_value=()),
+    })()
+    service = replace(service, queries=queries)
+    result = anyio.run(service.respond, USER_ID, (LlmMessage("user", "내 목표"),), "counsel", selected)
+    assert result.occupation_id == "BACKEND_DEVELOPER"
+    with pytest.raises(MissingRecordError):
+        anyio.run(service.respond, USER_ID, (LlmMessage("user", "내 목표"),), "counsel", uuid4())
+
+
 class StaticIdentityProvider:
     async def current_principal(self) -> AuthenticatedPrincipal:
         return AuthenticatedPrincipal(user_id=USER_ID)

@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 from jobtology_be.application.queries import CapabilityView, GoalView
 from jobtology_be.application.specs import SpecCategory, capability_inputs
 from jobtology_be.corpus.snapshot import PublishedCorpusSnapshot
-from jobtology_be.infrastructure.persistence.contracts import JsonValue
+from jobtology_be.infrastructure.persistence.contracts import JsonValue, MissingRecordError
 from jobtology_be.llm.client import LlmClient, LlmMessage
 
 MAX_CANDIDATES: Final = 3
@@ -197,11 +197,15 @@ class ChatCapabilityService:
     display_name: Callable[[str], str | None]
 
     async def respond(
-        self, user_id: UUID, messages: Sequence[LlmMessage], mode: ChatMode = "counsel"
+        self, user_id: UUID, messages: Sequence[LlmMessage], mode: ChatMode = "counsel",
+        goal_id: UUID | None = None,
     ) -> ChatReply:
         goals = await self.queries.list_goals(user_id)
+        if goal_id is not None and not any(goal.goal_id == goal_id for goal in goals):
+            raise MissingRecordError(resource="goal")
         occupation_id = next(
-            (goal.occupation_id for goal in goals if goal.status == "ACTIVE" and goal.occupation_id),
+            (goal.occupation_id for goal in goals if goal.occupation_id and
+             (goal.goal_id == goal_id if goal_id is not None else goal.status == "ACTIVE")),
             None,
         )
         snapshot = next(
@@ -223,7 +227,8 @@ class ChatCapabilityService:
             allowed = tuple({item.entity_id: item for item in all_allowed}.values())
         elif snapshot is not None:
             goal_timezone = next((goal.timezone for goal in goals
-                                  if goal.status == "ACTIVE" and goal.occupation_id == occupation_id), "UTC")
+                                  if goal.occupation_id == occupation_id and
+                                  (goal.goal_id == goal_id if goal_id is not None else goal.status == "ACTIVE")), "UTC")
             today = datetime.now(ZoneInfo(goal_timezone)).date()
             owned = frozenset(
                 item.entity_id

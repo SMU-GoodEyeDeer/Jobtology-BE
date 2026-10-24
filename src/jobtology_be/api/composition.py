@@ -12,7 +12,11 @@ from jobtology_be.api.auth_session import (
 )
 from jobtology_be.api.capabilities import require_capability_service
 from jobtology_be.api.capability_checklist import require_onboarding_checklist
-from jobtology_be.api.chat import require_chat_rate_limiter, require_chat_service
+from jobtology_be.api.chat import (
+    require_chat_rate_limiter,
+    require_chat_service,
+    require_chat_workspace,
+)
 from jobtology_be.api.dependencies import ApiDependencies
 from jobtology_be.api.editorial_drafts import require_editorial_drafts
 from jobtology_be.api.goals import require_goal_service
@@ -322,6 +326,8 @@ def register_api_dependencies(app: FastAPI, dependencies: ApiDependencies, setti
             return chat_service
 
         app.dependency_overrides[require_chat_service] = get_injected_chat_service
+    if dependencies.chat_workspace is not None:
+        app.dependency_overrides[require_chat_workspace] = lambda: dependencies.chat_workspace
     if (chat_rate_limiter := dependencies.chat_rate_limiter) is not None:
         def get_injected_chat_rate_limiter() -> AccountRateLimiter:
             return chat_rate_limiter

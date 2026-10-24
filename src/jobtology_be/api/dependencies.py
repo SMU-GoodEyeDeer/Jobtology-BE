@@ -25,6 +25,7 @@ from jobtology_be.application.services.roadmaps import RoadmapService
 from jobtology_be.application.specs import SkillCatalog
 from jobtology_be.application.weekly_plan_store import WeeklyPlanStore
 from jobtology_be.chat.service import ChatCapabilityService
+from jobtology_be.chat.workspace import ChatWorkspaceService
 from jobtology_be.editorial.reader import DraftReadService
 from jobtology_be.infrastructure.persistence.live_source_feed import LiveSourceFeed
 from jobtology_be.infrastructure.persistence.rate_limit import AccountRateLimiter
@@ -63,6 +64,7 @@ class ApiDependencies:
     capability_service: CapabilityService | None = None
     onboarding_checklist: OnboardingChecklistCatalog | None = None
     chat_service: ChatCapabilityService | None = None
+    chat_workspace: ChatWorkspaceService | None = None
     chat_rate_limiter: AccountRateLimiter | None = None
     idempotency_store: IdempotencyStore | None = None
     weekly_plan_store: WeeklyPlanStore | None = None

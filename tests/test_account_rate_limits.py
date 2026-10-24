@@ -46,7 +46,7 @@ class StubChatService:
         self.calls = 0
 
     async def respond(
-        self, user_id: UUID, messages: Sequence[LlmMessage], mode: str
+        self, user_id: UUID, messages: Sequence[LlmMessage], mode: str, goal_id: UUID | None = None
     ) -> ChatReply:
         self.calls += 1
         return ChatReply(reply="hello", occupation_id=None, candidates=())
