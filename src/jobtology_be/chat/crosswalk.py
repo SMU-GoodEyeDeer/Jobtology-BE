@@ -44,6 +44,7 @@ def crosswalk_graph(response: CrosswalkResponse, anchor_id: str | None = None,
             detail += f" · 같은 공고 {shared}건"
         if review:
             detail += f" · {'사람' if review.reviewer_kind == 'HUMAN' else '보조'} 검토: {review.note[:300]}"
+        source_quote, target_quote = item.evidence.get("source_quote"), item.evidence.get("target_quote")
         edges.append(GraphEdge(
             id=f"crosswalk:{item.mapping_id}", source=source_id, target=target_id,
             kind=f"CROSSWALK_{item.relation}", basis=basis, explanation=detail,
@@ -51,6 +52,9 @@ def crosswalk_graph(response: CrosswalkResponse, anchor_id: str | None = None,
             catalog_freshness=item.catalog_freshness,
             review_status="UNREVIEWED" if review is None else f"{review.reviewer_kind}_REVIEWED",
             source_run_id=item.source.catalog_pin, catalog_pin=item.target.catalog_pin,
+            mapping_version=item.version[:128] if item.version else None,
+            source_quote=source_quote[:600] if isinstance(source_quote, str) else None,
+            target_quote=target_quote[:600] if isinstance(target_quote, str) else None,
         ))
     return EvidenceGraph(nodes=tuple(nodes.values()), edges=tuple(edges),
                          truncated=response.total > response.offset + len(response.items))

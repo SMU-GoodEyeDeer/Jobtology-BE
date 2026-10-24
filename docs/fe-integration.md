@@ -713,3 +713,26 @@ Classification edges are paged in groups of 24 using the existing expansion
 offset. A posting with no valid specific classification retains its metadata and
 returns `POSTING_CLASSIFICATIONS_MISSING`; broad source NCS prefixes are not
 expanded into invented specific occupations. No further catalog SQL is needed.
+
+Chat questions with `focus_node_ids` now preload connected public evidence rather
+than relying on the model to choose an expansion tool. A focused posting is
+resolved again on the server; up to one current NCS and one current O*NET
+occupation are expanded in parallel with a seven-second timeout per read.
+Historical or unknown inferred classifications remain labelled and do not
+automatically acquire current catalog skills. Selected NCS/O*NET catalog nodes,
+product roles and occupation-based posting groups are also expanded directly.
+Failures preserve available evidence and report
+`FOCUSED_SOURCE_UNAVAILABLE` through the existing SSE progress/tool events.
+
+Planner context prioritizes a connected, three-hop neighborhood of up to 24
+nodes/40 relationships. The final 32-source/80-relationship evidence ledger
+reserves room for this neighborhood before unrelated ranked records. Mapping
+edges now include bounded `source_quote`, `target_quote` and `mapping_version`
+alongside review state and pins, so these details reach the LLM as well as the
+inspector. Both prompts treat them as untrusted evidence, never instructions.
+
+The frontend keeps the question's reference ID when the inspector closes on
+mobile and for follow-up questions. The removable reference label shows this
+scope; conversation/graph resets and account, goal or profile changes clear it.
+Only IDs are sent. Public facts are read by the server and private records remain
+scoped to the authenticated account. No additional SQL is required.

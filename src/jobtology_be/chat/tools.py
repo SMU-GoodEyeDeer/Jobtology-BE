@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from jobtology_be.chat.catalog import CatalogRetriever
+from jobtology_be.chat.evidence import focus_neighborhood
 from jobtology_be.chat.personal import PersonalRetriever
 from jobtology_be.chat.workspace_models import EvidenceGraph, sources_for
 
@@ -79,11 +80,20 @@ class ReadTools:
         return await self.catalog.expand(args.node_id)
 
 
-def tool_output(graph: EvidenceGraph) -> str:
+def tool_output(graph: EvidenceGraph, focus_ids: tuple[str, ...] = (), *, source_limit: int = 10,
+                relationship_limit: int = 12) -> str:
+    focused = focus_neighborhood(graph, focus_ids, source_limit)
     nodes = {n.id: n for n in graph.nodes}
+    ordered = {n.id: n for n in (*focused.nodes, *graph.nodes)}
+    selected = tuple(ordered)[:source_limit]
+    links = sorted((link for link in graph.edges if link.source in selected and link.target in selected),
+                   key=lambda link: (not (link.source in focus_ids or link.target in focus_ids),
+                                     not link.kind.startswith("CROSSWALK_")))
+    sources = {s.id: s for s in sources_for(graph)}
     return json.dumps({"sources": [{"id": s.id, "title": s.title[:180], "text": s.text[:300], "basis": s.basis,
+                                    "kind": nodes[s.id].kind, "source_pin": s.source_pin,
                                     "occupation_code": nodes[s.id].occupation_code, "ncs_base_code": nodes[s.id].ncs_base_code}
-                                   for s in sources_for(graph)[:10]],
-                       "relationships": [e.model_dump(mode="json") for e in graph.edges[:12]],
-                       "truncated": graph.truncated or len(graph.nodes) > 10 or len(graph.edges) > 12,
+                                   for key in selected for s in (sources[key],)],
+                       "relationships": [e.model_dump(mode="json") for e in links[:relationship_limit]],
+                       "truncated": graph.truncated or len(graph.nodes) > source_limit or len(graph.edges) > len(links[:relationship_limit]),
                        "warnings": graph.warnings}, ensure_ascii=False)
