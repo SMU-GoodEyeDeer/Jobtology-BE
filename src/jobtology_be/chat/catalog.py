@@ -13,6 +13,7 @@ from jobtology_be.application.m5_queries import M5DataUnavailableError
 from jobtology_be.application.specs import SkillCatalog
 from jobtology_be.chat.catalog_queries import EXPAND_ID, NODE_ID, PARENTS_ID, SEARCH_ID
 from jobtology_be.chat.crosswalk import crosswalk_graph
+from jobtology_be.chat.posting_connections import posting_connections
 from jobtology_be.chat.workspace_models import (
     EvidenceGraph,
     GraphEdge,
@@ -31,7 +32,7 @@ from jobtology_be.modules.analyses.editorial_models import ReleaseState
 class CatalogRetriever(Protocol):
     async def search(self, query: str, offset: int = 0) -> EvidenceGraph: ...
     async def expand(self, node_id: str, offset: int = 0) -> EvidenceGraph: ...
-    async def posting(self, posting_id: str) -> EvidenceGraph: ...
+    async def posting(self, posting_id: str, offset: int = 0) -> EvidenceGraph: ...
     async def node(self, node_id: str) -> EvidenceGraph: ...
     async def search_postings(self, query: str, occupation_code: str | None = None, offset: int = 0) -> EvidenceGraph: ...
 
@@ -218,7 +219,7 @@ class SharedCatalogRetriever:
         if node_id.startswith("postings:"):
             return await self.search_postings("", node_id.removeprefix("postings:").removeprefix("onet:"), offset // 24 * 6)
         if node_id.startswith("posting:"):
-            return await self.posting(node_id)
+            return await self.posting(node_id, offset)
         approved = self._approved_neighbors(node_id, offset)
         if approved is not None:
             found = approved
@@ -386,8 +387,8 @@ class SharedCatalogRetriever:
             edge(group.id, node.id, "SEARCH_RESULT", "APPLICATION_CONTEXT_SELECTION") for node in nodes),
             truncated=result.total > offset + len(result.items))
 
-    async def posting(self, posting_id: str) -> EvidenceGraph:
+    async def posting(self, posting_id: str, offset: int = 0) -> EvidenceGraph:
         if self.feed is None:
             return EvidenceGraph()
         result = await self.feed.posting(posting_id.removeprefix("posting:"))
-        return EvidenceGraph(nodes=(self._posting_node(result.item),))
+        return posting_connections(result.item, self._posting_node(result.item), offset)

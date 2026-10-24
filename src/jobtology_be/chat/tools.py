@@ -36,7 +36,7 @@ DESCRIPTIONS = {
     "search_catalog": "Search internal NCS/O*NET skills/occupations, qualifications, exams, publications and approved learning activities using a short Korean/English term.",
     "search_postings": "Search JobKorea/ALIO postings. Supply a short query and occupation_code=null for keyword search, or query='' and a known NCS/O*NET occupation code for inferred associations. Historical/stale associations stay labeled and are not verified requirements.",
     "get_posting": "Read available metadata of a posting node already retrieved. The source may not include full duties, benefits or salary; do not invent missing fields.",
-    "expand_connections": "Expand a known graph node, including virtual posting groups, into real catalog or inferred posting connections. Never infer competency credit from a posting association.",
+    "expand_connections": "Expand a known graph node, including posting nodes and virtual posting groups, into real catalog or inferred posting connections. A posting expands into its source NCS or inferred NCS/O*NET occupations; expand those occupations to explore catalog skills. Catalog skills are reference context, not verified requirements of that posting. Never infer competency credit from a posting association.",
 }
 TOOLS = [{"type": "function", "name": name, "description": DESCRIPTIONS[name],
           "strict": True, "parameters": model.model_json_schema()} for name, model in TOOL_MODELS.items()]

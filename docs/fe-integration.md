@@ -698,3 +698,18 @@ remain on the edges, and existing node provenance is preserved. These are
 exploration-only connections: no crosswalk changes saved specs, analysis credit or
 roadmaps. This graph rendering update needs matching BE/FE versions but no further
 catalog SQL after 033–035.
+
+Expanding an individual `posting:{posting_id}` through `/api/v1/chat/catalog`
+also returns its specific eight-digit source NCS classifications and inferred
+NCS/O*NET occupations. `SOURCE_NCS_CLASSIFICATION` edges retain source provenance;
+`INFERRED_POSTING_OCCUPATION` edges retain the association ID, review state,
+original source/catalog pins and freshness. The occupation concept IDs reuse
+existing category nodes, whose catalog metadata must not be overwritten by the
+posting association. Expanding an occupation then exposes its actual catalog
+competencies/skills as reference context, not verified requirements of that job.
+The chatbot's `get_posting` and `expand_connections` tools use the same graph.
+
+Classification edges are paged in groups of 24 using the existing expansion
+offset. A posting with no valid specific classification retains its metadata and
+returns `POSTING_CLASSIFICATIONS_MISSING`; broad source NCS prefixes are not
+expanded into invented specific occupations. No further catalog SQL is needed.
