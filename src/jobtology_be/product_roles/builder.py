@@ -91,7 +91,9 @@ def build_product_roles(inputs: ProductRoleInputs, policy: ProductRolePolicy) ->
         "input_qualifications": [qualification.model_dump(mode="json")
                                  for qualification in sorted(
                                      inputs.qualifications,
-                                     key=lambda item: (item.competency_code, item.qualification_code),
+                                     key=lambda item: (item.competency_code, item.qualification_code,
+                                                       json.dumps(item.model_dump(mode="json"),
+                                                                  sort_keys=True, ensure_ascii=False)),
                                  )],
         "input_evidence": [evidence.model_dump(mode="json")
                            for evidence in sorted(inputs.evidence,

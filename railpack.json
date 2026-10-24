@@ -6,15 +6,15 @@
     "dotnet": "8.0"
   },
   "deploy": {
-    "aptPackages": ["...", "curl", "libicu-dev", "fontconfig", "libseccomp2"],
+    "aptPackages": ["...", "curl", "wget", "libicu-dev", "fontconfig", "libseccomp2"],
     "variables": {
       "JOBTOLOGY_AUTH_ENABLED": "false",
       "JOBTOLOGY_GUEST_SESSIONS_ENABLED": "false",
       "JOBTOLOGY_PRODUCT_ROLES_ENABLED": "true",
-      "JOBTOLOGY_PRODUCT_ROLE_ARTIFACT_APPROVAL_PATH": "/app/config/product_roles/approvals/524f1e46a84ef9df3c8b859333bb73caa9243593edd2393fd27bb8a0650f7bd4.json",
+      "JOBTOLOGY_PRODUCT_ROLE_ARTIFACT_APPROVAL_PATH": "/app/config/product_roles/approvals/a550c8f91685408cb5903eb67ffcf8e1b8eab6be3d3fc39501d7c654f192908e.json",
       "JOBTOLOGY_INPROCESS_WORKER_ENABLED": "true",
       "JOBTOLOGY_CAPABILITY_LIST_AUTHORITATIVE": "true"
     },
-    "startCommand": "uvicorn jobtology_be.main:app --host 0.0.0.0 --port ${PORT:-8000}"
+    "startCommand": "mise exec -- uvicorn jobtology_be.main:app --host 0.0.0.0 --port ${PORT:-8000}"
   }
 }

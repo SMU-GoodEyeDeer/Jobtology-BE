@@ -1,5 +1,6 @@
 import json
 from datetime import datetime
+from itertools import permutations
 from pathlib import Path
 
 import pytest
@@ -83,3 +84,15 @@ def test_artifact_approval_requires_timezone_aware_review_time() -> None:
             "sha256": "a" * 64, "approved_by": "test owner",
             "reviewed_at": datetime.fromisoformat("2026-10-05T09:00:00"),
         })
+
+
+def test_duplicate_qualification_keys_have_a_canonical_order_in_the_review_digest() -> None:
+    policy = ProductRolePolicy.model_validate_json(POLICY.read_text())
+    inputs = _inputs()
+    qualification = inputs.qualifications[0]
+    rows = tuple(qualification.model_copy(update={"qualification_name": name, "minimum_training_hours": hours})
+                 for name, hours in (("Q", 45), ("Q", 60), (None, 0), (None, None)))
+    drafts = [build_product_roles(inputs.model_copy(update={"qualifications": order}), policy)
+              for order in permutations(rows)]
+    assert len({draft.digest for draft in drafts}) == 1
+    assert len({draft.document for draft in drafts}) == 1

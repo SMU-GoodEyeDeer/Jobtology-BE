@@ -44,6 +44,12 @@ identical inputs, so exposing these display fields does not require a new approv
 
 All runtime flags default to **off**:
 
+The repository deployment config now selects the replacement artifact
+`a550c8f9…192908e`. Its [2026-10-24 technical review](product-role-review-20261024.md)
+reconstructs the exact previous approved artifact and verifies unchanged catalog
+content/planning values under refreshed source pins. Activation is proposed for
+owner review and merge; the running fallback image still uses the old approval.
+
 | Environment variable | Effect when enabled |
 |---|---|
 | `JOBTOLOGY_PRODUCT_ROLES_ENABLED` | Load role inputs at startup and enable occupations/analysis from the generated release. Requires `JOBTOLOGY_CATALOG_DATABASE_URL` and the product database. A failed load keeps occupations and analysis at 503 without preventing process startup. |
