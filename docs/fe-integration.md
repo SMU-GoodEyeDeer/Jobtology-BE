@@ -682,5 +682,19 @@ catalog node IDs and canonical NCS unit/O*NET element aliases. `PROPOSED` links
 remain related-item suggestions; `APPROVED` retains the actual reviewer and the
 `RELATED`, `PARTIAL` or `EXACT` comparison scope. Catalog pins, quoted evidence,
 rule version and freshness remain visible. Missing creation times stay null.
-Graph expansion adds these as exploration-only edges and preserves the existing
-anchor's meaning. No crosswalk changes saved specs, analysis credit or roadmaps.
+The response also includes `graph` with mapping edges and, when Neo4j is available,
+the actual NCS `CLASSIFIED_AS` and O*NET occupation-to-skill/category relationships.
+Optional `context_nodes` is a comma-separated list of up to 48 visible catalog IDs;
+it resolves current canonical aliases and prioritizes visible parent occupations.
+Historical endpoints keep their versioned IDs and do not acquire current parent
+relationships. Parent lookup is bounded and cached; a failed lookup preserves the
+mapping with `CROSSWALK_UNAVAILABLE` rather than hiding the inspector.
+
+The chat canvas loads mappings for up to two visible O*NET occupations in the
+background and initially adds only edges between existing nodes. Opening a mapping
+inspector adds its mapped endpoints and category connections automatically; each
+mapping's display button focuses that connection. Proposed/partial/reviewed labels
+remain on the edges, and existing node provenance is preserved. These are
+exploration-only connections: no crosswalk changes saved specs, analysis credit or
+roadmaps. This graph rendering update needs matching BE/FE versions but no further
+catalog SQL after 033–035.

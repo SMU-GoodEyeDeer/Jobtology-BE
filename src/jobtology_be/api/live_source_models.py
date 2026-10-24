@@ -2,6 +2,7 @@ from typing import ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from jobtology_be.chat.workspace_models import EvidenceGraph
 from jobtology_be.infrastructure.persistence.contracts import JsonValue
 
 type DateText = str
@@ -218,6 +219,7 @@ class CrosswalkResponse(LiveRead):
     offset: int = Field(ge=0)
     total: int = Field(ge=0)
     items: list[CrosswalkMapping]
+    graph: EvidenceGraph | None = None
 
 
 class NcsUnitItem(LiveRead):

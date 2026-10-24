@@ -10,7 +10,7 @@ from test_live_source_api import POSTING, Identity
 from jobtology_be.api.dependencies import ApiDependencies
 from jobtology_be.api.live_source_models import CrosswalkResponse, PostingResponse
 from jobtology_be.chat.catalog import SharedCatalogRetriever
-from jobtology_be.chat.catalog_queries import NODE_ID
+from jobtology_be.chat.catalog_queries import NODE_ID, PARENTS_ID
 from jobtology_be.chat.crosswalk import crosswalk_graph
 from jobtology_be.corpus.neo4j_client import Neo4jQueryResult
 from jobtology_be.infrastructure.persistence.live_source_feed import LiveSourceReadError
@@ -54,7 +54,9 @@ def test_crosswalk_route_requires_authentication_and_binds_filters():
     feed.crosswalk.assert_awaited_once_with("ncs:unit:2001020413", 24, 0)
 
 
-@pytest.mark.parametrize("query", ["limit=0", "limit=101", "offset=-1", "node_id=", "node_id=a&node_id=b", "unknown=x"])
+@pytest.mark.parametrize("query", ["limit=0", "limit=101", "offset=-1", "node_id=", "node_id=a&node_id=b", "unknown=x",
+    "node_id=a&context_nodes=a,,b", "node_id=a&context_nodes=" + ",".join(str(i) for i in range(49)),
+    "node_id=a&context_nodes=" + "x" * 501, "node_id=a&context_nodes=a&context_nodes=b"])
 def test_crosswalk_rejects_invalid_queries_without_reading(query):
     feed = SimpleNamespace(crosswalk=AsyncMock())
     with TestClient(create_app(Settings(), dependencies=ApiDependencies(identity_provider=Identity(), live_source_feed=feed))) as client:
@@ -106,6 +108,39 @@ def test_current_catalog_aliases_remain_connected_without_collapsing_historical_
     item["source_freshness"] = "CURRENT"
     assert crosswalk_graph(response(item), "ncs:unit:2001020413").edges[0].source == "ncs:unit:2001020413"
     assert crosswalk_graph(response(item), "onet:skill:2.B.3.e").edges[0].target == "onet:skill:2.B.3.e"
+
+
+def test_crosswalk_api_returns_actual_category_connections_with_existing_aliases():
+    item = mapping()
+    item["source_freshness"] = "CURRENT"
+    item["source"] = {**item["source"], "id": "ncs:unit:2001020413_23v1"}
+    async def read(query):
+        assert query.query_id == PARENTS_ID
+        assert "ncs:unit:2001020413_23v1" in query.parameters["ids"]
+        assert "onet:occupation:software" in query.parameters["context_ids"]
+        return Neo4jQueryResult(fields=("node", "source", "target", "kind"), rows=(
+            ({"id": "ncs:occupation:20010204", "kind": "ncs_occupation", "label": "DB엔지니어링"},
+             "ncs:unit:2001020413_23v1", "ncs:occupation:20010204", "CLASSIFIED_AS"),
+            ({"id": "onet:occupation:software", "kind": "onet_occupation", "label": "Software Developers"},
+             "onet:occupation:software", "onet:skill:programming", "ONET_ESSENTIAL_SKILL"),
+        ), query_type=None)
+    feed = SimpleNamespace(crosswalk=AsyncMock(return_value=response(item)))
+    workspace = SimpleNamespace(catalog=SharedCatalogRetriever(SimpleNamespace(execute=read), feed))
+    with TestClient(create_app(Settings(), dependencies=ApiDependencies(identity_provider=Identity(), live_source_feed=feed, chat_workspace=workspace))) as client:
+        result = client.get("/api/v2/live/crosswalk", params={"node_id": "ncs:unit:2001020413", "context_nodes": "ncs:unit:2001020413,onet:occupation:software"})
+    assert result.status_code == 200
+    graph = result.json()["graph"]
+    assert {edge["kind"] for edge in graph["edges"]} == {"CROSSWALK_RELATED", "CLASSIFIED_AS", "ONET_ESSENTIAL_SKILL"}
+    ids = {node["id"] for node in graph["nodes"]}
+    assert all(edge["source"] in ids and edge["target"] in ids for edge in graph["edges"])
+    assert "ncs:unit:2001020413" in ids and "ncs:unit:2001020413_23v1" not in ids
+
+
+def test_historical_crosswalk_does_not_claim_current_category_relationships():
+    client = SimpleNamespace(execute=AsyncMock())
+    data = anyio.run(SharedCatalogRetriever(client).crosswalk_connections, response(mapping()), "ncs:unit:2001020413")
+    client.execute.assert_not_awaited()
+    assert len(data.edges) == 1 and data.edges[0].source_freshness == "STALE"
 
 
 def test_posting_keeps_source_categories_separate_from_inferred_classifications():
