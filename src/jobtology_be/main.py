@@ -35,7 +35,10 @@ from jobtology_be.application.services.preferences import PersistentPreferencesS
 from jobtology_be.application.services.profiles import PersistentProfileService
 from jobtology_be.application.services.roadmaps import PersistentRoadmapService
 from jobtology_be.application.specs import SkillCatalog
+from jobtology_be.chat.catalog import SharedCatalogRetriever
+from jobtology_be.chat.personal import PersonalRetriever
 from jobtology_be.chat.service import ChatCapabilityService
+from jobtology_be.chat.workspace import ChatWorkspaceService
 from jobtology_be.corpus.role_evidence_graph import Neo4jRoleEvidenceGraph
 from jobtology_be.corpus.source_factory import build_configured_corpus_source
 from jobtology_be.editorial.reader import DraftReadService, load_drafts
@@ -280,6 +283,15 @@ def create_app(
         skill_catalog, llm=llm_client,
         provider_label={'openai_api_key': 'OpenAI', 'chatgpt_oauth': 'ChatGPT'}.get(settings.llm_provider),
     )
+    chat_workspace = dependencies.chat_workspace
+    if chat_workspace is None and product_queries and m5_queries and preferences_service:
+        neo4j_read = corpus_source.neo4j_read_client if corpus_source else None
+        chat_workspace = ChatWorkspaceService(
+            personal=PersonalRetriever(product_queries, m5_queries, preferences_service, skill_catalog,
+                                       role_holder or dependencies.requirement_metadata, weekly_plan_store),
+            llm=llm_client,
+            catalog=SharedCatalogRetriever(neo4j_read, live_source_feed, skill_catalog),
+        )
     app = create_api_shell(
         database_lifespan(
             database, corpus_source, source_catalog_resource, role_holder, inprocess_worker,
@@ -324,6 +336,7 @@ def create_app(
             capability_service=capability_service,
             onboarding_checklist=onboarding_checklist,
             chat_service=chat_service,
+            chat_workspace=chat_workspace,
             chat_rate_limiter=chat_rate_limiter,
             idempotency_store=idempotency_store,
             session_store=session_store,

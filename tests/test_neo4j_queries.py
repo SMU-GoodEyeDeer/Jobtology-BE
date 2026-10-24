@@ -1,3 +1,4 @@
+from jobtology_be.chat.catalog_queries import WORKSPACE_QUERIES
 from jobtology_be.corpus.neo4j_queries import (
     GET_ENRICHMENT_QUERY_ID,
     GET_PUBLICATION_BY_ID_QUERY_ID,
@@ -20,6 +21,7 @@ def test_catalog_registers_only_fixed_observed_read_definitions() -> None:
 
     # Then
     assert query_ids == (
+        *(q.query_id for q in WORKSPACE_QUERIES),
         LIST_OCCUPATIONS_QUERY_ID,
         LIST_PUBLICATIONS_QUERY_ID,
         GET_PUBLICATION_BY_ID_QUERY_ID,

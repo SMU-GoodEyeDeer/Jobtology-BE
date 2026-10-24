@@ -1,11 +1,17 @@
+import asyncio
+import json
 from typing import Annotated, ClassVar, Literal
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator
+from starlette.responses import StreamingResponse
 
 from jobtology_be.api.identity import AuthenticatedPrincipal, require_authenticated_principal
 from jobtology_be.application.specs import SpecCategory
 from jobtology_be.chat.service import ChatCapabilityService
+from jobtology_be.chat.workspace import READ_ERRORS, ChatWorkspaceService
+from jobtology_be.chat.workspace_models import CatalogRequest, EvidenceGraph, WorkspaceEvidence
 from jobtology_be.infrastructure.persistence.rate_limit import (
     AccountRateLimiter,
     RateLimitUnavailableError,
@@ -26,6 +32,8 @@ class ChatRequest(BaseModel):
 
     messages: tuple[ChatMessageIn, ...] = Field(min_length=1, max_length=20)
     mode: Literal["counsel", "onboarding", "spec"] = "counsel"
+    goal_id: UUID | None = None
+    focus_node_ids: tuple[Annotated[StrictStr, Field(min_length=1, max_length=500)], ...] = Field(default=(), max_length=8)
 
     @field_validator("messages")
     @classmethod
@@ -67,6 +75,86 @@ def require_chat_rate_limiter() -> AccountRateLimiter | None:
     return None
 
 
+def require_chat_workspace() -> ChatWorkspaceService | None:
+    return None
+
+
+async def _quota(principal, limiter):
+    if limiter is None:
+        raise HTTPException(status_code=503)
+    try:
+        decision = await limiter.consume(principal.user_id)
+    except RateLimitUnavailableError as error:
+        raise HTTPException(status_code=503) from error
+    if not decision.allowed:
+        raise HTTPException(status_code=429, headers={"Retry-After": str(decision.retry_after_seconds)})
+
+
+@router.get("/chat/context", response_model=WorkspaceEvidence)
+async def chat_context(
+    response: Response,
+    principal: Annotated[AuthenticatedPrincipal, Depends(require_authenticated_principal)],
+    workspace: Annotated[ChatWorkspaceService | None, Depends(require_chat_workspace)],
+    limiter: Annotated[AccountRateLimiter | None, Depends(require_chat_rate_limiter)],
+    goal_id: UUID | None = None,
+) -> WorkspaceEvidence:
+    if workspace is None:
+        raise HTTPException(status_code=503)
+    response.headers["Cache-Control"] = "no-store"
+    await _quota(principal, limiter)
+    try:
+        return await workspace.context(principal.user_id, goal_id)
+    except READ_ERRORS as error:
+        raise HTTPException(status_code=503) from error
+
+
+@router.post("/chat/catalog", response_model=EvidenceGraph)
+async def chat_catalog(
+    request: CatalogRequest,
+    principal: Annotated[AuthenticatedPrincipal, Depends(require_authenticated_principal)],
+    workspace: Annotated[ChatWorkspaceService | None, Depends(require_chat_workspace)],
+    limiter: Annotated[AccountRateLimiter | None, Depends(require_chat_rate_limiter)],
+) -> EvidenceGraph:
+    if workspace is None or workspace.catalog is None:
+        raise HTTPException(status_code=503)
+    if not request.node_id and len(request.q.strip()) < 2:
+        raise HTTPException(status_code=422)
+    await _quota(principal, limiter)
+    try:
+        async with asyncio.timeout(8):
+            return (await workspace.catalog.expand(request.node_id, request.offset) if request.node_id
+                    else await workspace.catalog.search(request.q, request.offset))
+    except READ_ERRORS as error:
+        raise HTTPException(status_code=503) from error
+
+
+@router.post("/chat/stream")
+async def stream_chat(
+    request: ChatRequest,
+    principal: Annotated[AuthenticatedPrincipal, Depends(require_authenticated_principal)],
+    workspace: Annotated[ChatWorkspaceService | None, Depends(require_chat_workspace)],
+    limiter: Annotated[AccountRateLimiter | None, Depends(require_chat_rate_limiter)],
+) -> StreamingResponse:
+    if workspace is None or workspace.llm is None:
+        raise HTTPException(status_code=503)
+    if request.mode != "counsel":
+        raise HTTPException(status_code=422)
+    await _quota(principal, limiter)
+    try:
+        # Ownership and initial read errors retain normal HTTP statuses before streaming.
+        context = await workspace.context(principal.user_id, request.goal_id, request.messages[-1].text)
+    except READ_ERRORS as error:
+        raise HTTPException(status_code=503) from error
+    async def stream():
+        async for event in workspace.events(context, tuple(
+            LlmMessage(role=m.role, text=m.text) for m in request.messages
+        ), request.focus_node_ids):
+            yield json.dumps(event, ensure_ascii=False) + "\n"
+    return StreamingResponse(stream(), media_type="application/x-ndjson", headers={
+        "Cache-Control": "no-store", "X-Accel-Buffering": "no",
+    })
+
+
 @router.get(
     "/chat/status",
     response_model=ChatStatusResponse,
@@ -75,8 +163,9 @@ def require_chat_rate_limiter() -> AccountRateLimiter | None:
 )
 async def chat_status(
     service: Annotated[ChatCapabilityService | None, Depends(require_chat_service)],
+    workspace: Annotated[ChatWorkspaceService | None, Depends(require_chat_workspace)],
 ) -> ChatStatusResponse:
-    return ChatStatusResponse(available=service is not None)
+    return ChatStatusResponse(available=service is not None or workspace is not None and workspace.llm is not None)
 
 
 @router.post(
@@ -118,6 +207,7 @@ async def send_chat_messages(
             principal.user_id,
             tuple(LlmMessage(role=message.role, text=message.text) for message in request.messages),
             request.mode,
+            request.goal_id,
         )
     except LlmUnavailableError as error:
         raise HTTPException(status_code=503) from error

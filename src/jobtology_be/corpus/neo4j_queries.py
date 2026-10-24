@@ -2,6 +2,7 @@
 
 from typing import Final
 
+from jobtology_be.chat.catalog_queries import WORKSPACE_QUERIES
 from jobtology_be.corpus.neo4j_client import (
     Neo4jReadQueryCatalog,
     Neo4jReadQueryDefinition,
@@ -214,6 +215,7 @@ _ROLE_EVIDENCE_ONET_STATEMENT: Final = (
 
 NEO4J_CORPUS_READ_QUERY_CATALOG: Final = Neo4jReadQueryCatalog(
     definitions=(
+        *WORKSPACE_QUERIES,
         Neo4jReadQueryDefinition(
             query_id=LIST_OCCUPATIONS_QUERY_ID,
             statement=_OCCUPATIONS_STATEMENT,
