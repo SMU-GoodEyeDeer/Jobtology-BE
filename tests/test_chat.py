@@ -73,6 +73,14 @@ def test_select_suggestions_trims_dedupes_and_bounds_model_questions() -> None:
     assert select_suggestions(None) == ()
 
 
+def test_suggestions_reject_assistant_advice_and_preserve_user_requests() -> None:
+    assert select_suggestions([
+        "등록한 자격·프로젝트에 구체적인 역량과 20자 이상의 경험 설명을 추가한 뒤 분석을 다시 실행하세요.",
+        "먼저 데이터베이스 구현과 애플리케이션 배포를 실제 프로젝트로 보완하세요.",
+        "내 프로젝트에서 어떤 근거를 더 설명하면 좋을까?", "SQL 공부 순서 알려줘",
+    ]) == ("내 프로젝트에서 어떤 근거를 더 설명하면 좋을까?", "SQL 공부 순서 알려줘")
+
+
 def test_allowed_capabilities_excludes_requirements_the_user_already_has() -> None:
     snapshot = _snapshot()
 

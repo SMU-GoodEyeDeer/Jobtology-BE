@@ -68,6 +68,16 @@ def test_native_reads_are_iterative_and_answer_text_arrives_before_validated_gra
     assert events[-1] == {"type": "done"}
 
 
+def test_final_answer_keeps_user_questions_instead_of_assistant_instructions():
+    model = NativeModel([])
+    model.answer.update(suggestions=["먼저 데이터베이스 구현과 애플리케이션 배포를 실제 프로젝트로 보완하세요.",
+                                     "어떤 프로젝트부터 시작할까?", "SQL 공부 순서 알려줘"])
+    events = anyio.run(collect, ChatWorkspaceService(None, model))
+    answer = next(e["data"] for e in events if e["type"] == "answer")
+    assert answer["suggestions"] == ["어떤 프로젝트부터 시작할까?", "SQL 공부 순서 알려줘"]
+    assert "사용자 관점" in model.requests[-1]["instructions"]
+
+
 def test_personal_tool_scope_is_server_owned_and_injected_user_id_is_rejected():
     model = NativeModel([[call("invalid", "read_personal_records", {"query": "경험", "user_id": str(uuid4())}),
                           call("valid", "read_personal_records", {"query": "경험"})], []])

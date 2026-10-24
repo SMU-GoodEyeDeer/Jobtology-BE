@@ -178,7 +178,10 @@ def select_suggestions(raw: object) -> tuple[str, ...]:
         if not isinstance(item, str):
             continue
         text = re.sub(r"\s+", " ", item).strip()
-        if text and len(text) <= MAX_SUGGESTION_LENGTH:
+        if (
+            text and len(text) <= MAX_SUGGESTION_LENGTH
+            and re.search(r"(?:[?？]|(?:알려|설명해|보여|추천해|비교해|정리해)\s*줘)[.!]?$", text)
+        ):
             _ = selected.setdefault(text.casefold(), text)
     return tuple(selected.values())[:MAX_SUGGESTIONS]
 
