@@ -212,13 +212,14 @@ def build_role_evidence_graph(
             ncs_category=ncs.code,
             evidence_sources=tuple(ncs.evidence_sources), excluded_associations=ncs.excluded_associations,
         ), EvidenceEdge(source=root, target=ncs.id, kind="MAPPED_TO"))
-        if ncs.postings > 0:
+        if ncs.postings > 0 or ncs.excluded_associations > 0:
             posting_id = f"postings:{ncs.code}"
             titles = [posting.title for posting in ncs.sample_postings if posting.title]
             graph.link(ncs.id, EvidenceNode(
-                id=posting_id, kind="posting_evidence", label=f"추정 공고 {ncs.postings:,}건",
-                detail="\n".join(titles) or None, weight=ncs.postings,
+                id=posting_id, kind="posting_evidence", label=f"추정 공고 {ncs.postings:,}건" if ncs.postings else f"과거 공고 연결 {ncs.excluded_associations:,}건",
+                detail="\n".join(titles) if ncs.postings else "기준이 바뀐 과거 연결이에요. 현재 연결이나 역량 요구로 반영하지 않아요.", weight=ncs.postings,
                 ncs_category=ncs.code,
+                excluded_associations=ncs.excluded_associations,
                 evidence_sources=tuple(ncs.evidence_sources), basis="METADATA_INFERRED",
             ), EvidenceEdge(source=ncs.id, target=posting_id, kind="EVIDENCED_BY", weight=ncs.postings,
                             basis="METADATA_INFERRED", evidence_sources=tuple(

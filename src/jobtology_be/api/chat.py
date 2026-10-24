@@ -3,7 +3,7 @@ import json
 from typing import Annotated, ClassVar, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator
 from starlette.responses import StreamingResponse
 
@@ -19,6 +19,7 @@ from jobtology_be.infrastructure.persistence.rate_limit import (
 from jobtology_be.llm.client import LlmMessage, LlmUnavailableError
 
 router = APIRouter(tags=["chat"])
+CHAT_HEARTBEAT_SECONDS = 10
 
 class ChatMessageIn(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
@@ -131,6 +132,7 @@ async def chat_catalog(
 @router.post("/chat/stream")
 async def stream_chat(
     request: ChatRequest,
+    http_request: Request,
     principal: Annotated[AuthenticatedPrincipal, Depends(require_authenticated_principal)],
     workspace: Annotated[ChatWorkspaceService | None, Depends(require_chat_workspace)],
     limiter: Annotated[AccountRateLimiter | None, Depends(require_chat_rate_limiter)],
@@ -145,13 +147,34 @@ async def stream_chat(
         context = await workspace.context(principal.user_id, request.goal_id, request.messages[-1].text)
     except READ_ERRORS as error:
         raise HTTPException(status_code=503) from error
+    sse = "text/event-stream" in http_request.headers.get("accept", "")
     async def stream():
-        async for event in workspace.events(context, tuple(
+        iterator = workspace.events(context, tuple(
             LlmMessage(role=m.role, text=m.text) for m in request.messages
-        ), request.focus_node_ids):
-            yield json.dumps(event, ensure_ascii=False) + "\n"
-    return StreamingResponse(stream(), media_type="application/x-ndjson", headers={
+        ), request.focus_node_ids, user_id=principal.user_id)
+        pending = asyncio.create_task(anext(iterator))
+        try:
+            while True:
+                completed, _ = await asyncio.wait({pending}, timeout=CHAT_HEARTBEAT_SECONDS)
+                if not completed:
+                    yield ": keep-alive\n\n" if sse else "\n"
+                    continue
+                try:
+                    event = pending.result()
+                except StopAsyncIteration:
+                    break
+                if sse:
+                    yield f"event: {event['type']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
+                elif event["type"] not in {"tool", "answer_delta"}:
+                    yield json.dumps(event, ensure_ascii=False) + "\n"
+                pending = asyncio.create_task(anext(iterator))
+        finally:
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+            await iterator.aclose()
+    return StreamingResponse(stream(), media_type="text/event-stream" if sse else "application/x-ndjson", headers={
         "Cache-Control": "no-store", "X-Accel-Buffering": "no",
+        "Vary": "Accept",
     })
 
 

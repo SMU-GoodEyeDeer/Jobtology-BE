@@ -19,10 +19,14 @@ shows retrieved evidence and short explanations, not an internal model reasoning
   requests only; the original `/chat/messages` onboarding/spec modes remain.
   Accepts at most 20 messages of 2,000 characters and eight bounded focus IDs.
   Ownership/initial read failures use ordinary HTTP statuses before streaming.
-  The response is NDJSON with `evidence`, `progress`, `answer`, `done` or safe
-  `error` events, `no-store` and `X-Accel-Buffering: no`. Evidence and progress arrive
-  before the final structured answer. The answer is emitted after validation,
-  rather than streaming unchecked model text. EOF without `done` is an interruption.
+  Send `Accept: text/event-stream` for POST SSE with `evidence`, `progress`, `tool`,
+  `answer_delta`, `answer`, `done` or safe `error` events. SSE uses matching `event`
+  names and JSON `data`, with a comment heartbeat every ten idle seconds.
+  `answer_delta` previews only the answer's reply text; citations and graph actions
+  arrive in the fully validated `answer`. Interrupted previews remain marked
+  incomplete and are excluded from subsequent conversation context. EOF without
+  `done` is an interruption. The default remains NDJSON for older clients and omits
+  the new tool/text events. Both formats use `no-store` and `X-Accel-Buffering: no`.
 
 ## Retrieval and provenance
 
@@ -52,12 +56,27 @@ arbitrary URLs, writes, model-generated queries and external web search are excl
 Posting search exposes the feed's available metadata; missing full duties or unmodeled
 prices must not be invented. O*NET reference associations never imply NCS equivalence.
 
-The model first selects at most three approved reads (`search_catalog`, `get_posting`,
-`expand_connections`), then produces one structured answer. Source, node and edge IDs
+The model uses native Responses function calls in a bounded loop. Registered read
+tools are `read_personal_records`, `search_catalog`, `search_postings`, `get_posting`
+and `expand_connections`. Tool results can inform the next read. Account and goal
+scope are server-owned; tools cannot supply account IDs. Detail/expansion requires
+retrieved node IDs, and posting occupation filters require a retrieved occupation.
+Arguments use strict schemas, an allowlisted dispatcher and no generated queries.
+The final model call produces one structured answer. Source, node and edge IDs
 are checked against the bounded evidence ledger. A selected public graph node can be
 resolved through the same catalog allowlist. Suggested learning links are separately
 validated and always marked `PROPOSED`/`SUGGESTED_LINK`; they do not alter assessment.
 The UI can add/highlight/focus/filter/expand evidence and replay a cited answer's graph.
+
+Posting groups expand into actual posting nodes. Keyword hits attach to a search
+context with `SEARCH_RESULT` edges, rather than pretending to prove occupational
+requirements. Occupation associations retain their original association ID, source
+and catalog pins, review state and separate freshness flags. Historical groups are
+visible as historical; their current-evidence weight remains zero. The frontend
+initially expands one posting group, preferring an available O*NET group, and offers
+the remaining groups through normal expansion. Closed status and deadlines belong
+to the posting itself and are separate from association freshness. See
+[the NCS revalidation report](chat-posting-revalidation-20261024.md).
 
 ## Bounds and failure behavior
 
@@ -69,14 +88,20 @@ The UI can add/highlight/focus/filter/expand evidence and replay a cited answer'
   Additional sources use smaller page sizes mapped to the shared cursor.
 - The cumulative graph retains at most 160 nodes/320 edges. Initial personal evidence
   and account/goal roots are protected; older catalog nodes are evicted so new searches continue to work.
+  Personal relationships are protected within the edge bound; other edges keep the
+  newest retrievals and refreshed relationships.
   The UI discloses a partial view and supports reset/paging.
-- Model selection has an 18-second deadline; answering has 40 seconds; the overall
+- Native retrieval defaults to three model rounds and six tool calls total, with
+  at most three reads in flight. Each tool has a seven-second deadline. Each
+  retrieval model round has an 18-second deadline; answering has 40 seconds; the overall
   stream has 75 seconds after initial reads. Four streams per API process are allowed,
   with a two-second capacity wait. The existing PostgreSQL per-account quota applies
   across workers. There are no automatic model retries.
 - Only public native reads are cached (30-second TTL, at most 64 keys). Personal
   records and model answers are not cached or logged. Independent source failures
-  preserve successful evidence and disclose warnings. Cancellation closes work and
+  preserve successful evidence and disclose warnings. Tool start/completion/failure
+  status is streamed without raw arguments, credentials or internal reasoning.
+  Cancellation closes work and
   releases the stream slot; previously accepted provider work may already be billed.
 
 ## Frontend and deployment
@@ -93,6 +118,21 @@ Deploy the matching BE before the FE. No application migration, catalog SQL migr
 new credentials or model/provider change is required. The existing configured LLM is
 used with structured outputs and `store:false`; this does not change provider retention
 terms. The existing Neo4j Query API and live catalog connections remain server-side.
+
+Optional server settings (no changes required for the default behavior):
+
+| Environment variable | Default | Allowed values |
+| --- | --- | --- |
+| `JOBTOLOGY_CHAT_TOOL_CHOICE` | `auto` | `auto`, `required`, `none` |
+| `JOBTOLOGY_CHAT_TOOL_MAX_ROUNDS` | `3` | 1–4 |
+| `JOBTOLOGY_CHAT_TOOL_MAX_CALLS` | `6` | 1–12 |
+| `JOBTOLOGY_CHAT_PARALLEL_TOOL_CALLS` | `true` | boolean |
+
+`required` forces tool use during each retrieval round; the answer call always has
+tools disabled. `none` skips retrieval calls and answers using initial evidence.
+There are no model-generated writes or external web tools. Existing onboarding,
+spec and résumé workflows retain their `complete_json` path.
+
 Literal catalog name/code search is bounded by the Query API transaction deadline;
 large production catalogs should be profiled before introducing a full-text index.
 The NVL chunk is larger than the previous renderer and loads only on the graph page.
@@ -101,7 +141,11 @@ The NVL chunk is larger than the previous renderer and loads only on the graph p
 
 `tests/test_chat_workspace.py` covers account/goal scoping, modeled partial credit,
 stale analysis, stored schedule/dependencies, invented IDs, proposed links, partial
-failure, stream cancellation and ownership before headers. Existing chat tests protect
+failure, stream cancellation and ownership before headers. Native-tool tests cover
+iterative/parallel reads, budgets, principal scoping, duplicate call IDs and idle
+heartbeats. Provider SSE tests cover both clients, split Unicode and incomplete/error
+responses. Posting tests cover group expansion, search edges and preserved stale pins.
+Existing chat tests protect
 onboarding/spec behavior and quotas. FE tests cover stream framing/validation, graph
 bounds, selected-goal propagation, stale-response cancellation and citation replay.
 
@@ -113,5 +157,9 @@ JOBTOLOGY_CHAT_NEO4J_TEST_URL=http://127.0.0.1:27474/db/neo4j/query/v2 \
 ```
 
 That fixture seeds and removes unique synthetic nodes and rejects non-loopback URLs.
-Browser QA uses local synthetic API fixtures; it makes no provider requests. Real-model
+Browser QA uses local synthetic API fixtures; it makes no provider requests. A bounded
+live smoke test on 2026-10-24 used the existing `chatgpt_oauth` / `gpt-5.6-luna`
+configuration, public catalog records and a synthetic account graph. It completed a
+native posting-group expansion (six nodes) and incremental answer stream with a matching
+validated final reply. No real résumé or private profile was submitted. Broad model
 answer quality and production-scale search latency still need operational evaluation.

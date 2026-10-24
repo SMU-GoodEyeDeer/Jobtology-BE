@@ -291,6 +291,8 @@ def create_app(
                                        role_holder or dependencies.requirement_metadata, weekly_plan_store),
             llm=llm_client,
             catalog=SharedCatalogRetriever(neo4j_read, live_source_feed, skill_catalog),
+            max_tool_rounds=settings.chat_tool_max_rounds, max_tool_calls=settings.chat_tool_max_calls,
+            parallel_tool_calls=settings.chat_parallel_tool_calls, tool_choice=settings.chat_tool_choice,
         )
     app = create_api_shell(
         database_lifespan(

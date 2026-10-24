@@ -1,4 +1,6 @@
 import asyncio
+import json
+import re
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -9,7 +11,13 @@ from urllib.parse import urlencode
 from jobtology_be.application.m5_queries import M5DataUnavailableError
 from jobtology_be.application.specs import SkillCatalog
 from jobtology_be.chat.catalog_queries import EXPAND_ID, NODE_ID, SEARCH_ID
-from jobtology_be.chat.workspace_models import EvidenceGraph, GraphNode, edge, merge_graphs
+from jobtology_be.chat.workspace_models import (
+    EvidenceGraph,
+    GraphEdge,
+    GraphNode,
+    edge,
+    merge_graphs,
+)
 from jobtology_be.corpus.neo4j_client import Neo4jQueryApiError, Neo4jReadClient, Neo4jReadQuery
 from jobtology_be.infrastructure.persistence.live_source_feed import (
     LiveSourceFeed,
@@ -23,6 +31,16 @@ class CatalogRetriever(Protocol):
     async def expand(self, node_id: str, offset: int = 0) -> EvidenceGraph: ...
     async def posting(self, posting_id: str) -> EvidenceGraph: ...
     async def node(self, node_id: str) -> EvidenceGraph: ...
+    async def search_postings(self, query: str, occupation_code: str | None = None, offset: int = 0) -> EvidenceGraph: ...
+
+
+def posting_group(code: str) -> GraphNode:
+    if not re.fullmatch(r"[0-9]{8}|[0-9]{2}-[0-9]{4}\.[0-9]{2}", code):
+        raise ValueError("invalid occupation code")
+    scheme = "onet:" if "-" in code else ""
+    return GraphNode(id=f"postings:{scheme}{code}", kind="posting_evidence", label=f"채용공고 연결 · {code}",
+                     occupation_code=code, basis="METADATA_INFERRED",
+                     detail="메타데이터로 추론한 직무 연결이에요. 과거·미확인 연결은 별도로 표시하며 역량 요구로 인정하지 않아요.")
 
 
 @dataclass
@@ -141,10 +159,7 @@ class SharedCatalogRetriever:
         async def postings():
             if self.feed is None:
                 return EvidenceGraph()
-            page_offset = offset // 24 * 6
-            result = await self.feed.postings(query[:120], None, None, None, 6, page_offset)
-            return EvidenceGraph(nodes=tuple(self._posting_node(item) for item in result.items),
-                                 truncated=result.total > page_offset + len(result.items))
+            return await self.search_postings(query, offset=offset // 24 * 6)
         # Failure of one public source must not discard the others.
         async def safe(operation):
             try:
@@ -157,6 +172,10 @@ class SharedCatalogRetriever:
         return merge_graphs(native, jobs, self._approved_search(query, offset))
 
     async def expand(self, node_id: str, offset: int = 0) -> EvidenceGraph:
+        if node_id.startswith("postings:"):
+            return await self.search_postings("", node_id.removeprefix("postings:").removeprefix("onet:"), offset // 24 * 6)
+        if node_id.startswith("posting:"):
+            return await self.posting(node_id)
         approved = self._approved_neighbors(node_id, offset)
         if approved is not None:
             return approved
@@ -206,6 +225,8 @@ class SharedCatalogRetriever:
                              truncated=len(matches) > offset + 24)
 
     async def node(self, node_id: str) -> EvidenceGraph:
+        if node_id.startswith("postings:"):
+            return EvidenceGraph(nodes=(posting_group(node_id.removeprefix("postings:").removeprefix("onet:")),))
         if node_id.startswith("posting:"):
             return await self.posting(node_id)
         if self.skills:
@@ -244,12 +265,54 @@ class SharedCatalogRetriever:
         return EvidenceGraph(nodes=tuple(GraphNode.model_validate(row[0]) for row in result.rows))
 
     def _posting_node(self, item) -> GraphNode:
-        return GraphNode(id=f"posting:{item.posting_id}", kind="posting", label=item.title or "채용공고",
-                         detail=f"{item.organization_name or ''} · 마감 {item.deadline_at or item.closing_date or item.deadline_kind or '확인 필요'}\n"
-                                f"학력 {item.education or '미정'} · 지역 {', '.join(item.regions)}",
+        def bounded(value):
+            if isinstance(value, str):
+                return value[:300]
+            if isinstance(value, list):
+                return [str(v)[:80] for v in value[:8]]
+            return value
+        return GraphNode(id=f"posting:{item.posting_id}", kind="posting", label=(item.title or "채용공고")[:180],
+                         detail=json.dumps({key: bounded(getattr(item, key, None)) for key in (
+                             "source_status", "closing_date", "deadline_at", "deadline_kind", "ongoing", "source_id",
+                             "organization_name", "education", "regions", "employment_types", "recruitment_type",
+                             "headcount", "date_posted", "application_start_at", "application_start_date")}, ensure_ascii=False),
                          source_id=item.source_id,
                          source_pin=item.source_provenance.run_id if item.source_provenance else None,
                          href="/postings?" + urlencode({"posting": item.posting_id}), basis="REFERENCE")
+
+    async def search_postings(self, query: str, occupation_code: str | None = None, offset: int = 0) -> EvidenceGraph:
+        if self.feed is None:
+            return EvidenceGraph(warnings=("POSTING_CONTEXT_UNAVAILABLE",))
+        if occupation_code:
+            group = posting_group(occupation_code)
+            result = await self.feed.occupation_context([occupation_code], 6, offset)
+            nodes = {group.id: group}
+            links = []
+            for association in result.items:
+                if association.posting is None:
+                    continue
+                node = self._posting_node(association.posting)
+                nodes[node.id] = node
+                links.append(GraphEdge(id=f"association:{association.association_id}", source=group.id, target=node.id,
+                    kind="INFERRED_POSTING_CONTEXT", basis="METADATA_INFERRED", association_id=association.association_id,
+                    source_freshness=association.source_freshness, catalog_freshness=association.catalog_freshness,
+                    review_status=association.review_status,
+                    source_run_id=getattr(getattr(association, "source_pins", None), "run_id", None),
+                    catalog_pin=getattr(getattr(association, "catalog_pins", None), "pin", None),
+                    explanation="추론 직무 연결 · 원문 " + association.source_freshness + " · 분류 " + association.catalog_freshness))
+            return EvidenceGraph(nodes=tuple(nodes.values()), edges=tuple(links), truncated=result.total > offset + len(result.items))
+        query = query[:120].strip()
+        if len(query) < 2:
+            raise ValueError("posting search requires a query or occupation")
+        result = await self.feed.postings(query, None, None, None, 6, offset)
+        group = GraphNode(id="posting-search:" + sha256(query.encode()).hexdigest()[:16], kind="posting_evidence",
+                          label=f"공고 검색 · {query}", detail="검색어에 일치한 공고예요. 직무 연결이나 역량 요구를 검증한 결과가 아니에요.",
+                          href="/postings?" + urlencode({"q": query}),
+                          basis="APPLICATION_CONTEXT_SELECTION")
+        nodes = tuple(self._posting_node(item) for item in result.items)
+        return EvidenceGraph(nodes=(group, *nodes) if nodes else (), edges=tuple(
+            edge(group.id, node.id, "SEARCH_RESULT", "APPLICATION_CONTEXT_SELECTION") for node in nodes),
+            truncated=result.total > offset + len(result.items))
 
     async def posting(self, posting_id: str) -> EvidenceGraph:
         if self.feed is None:
