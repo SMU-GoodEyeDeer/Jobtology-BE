@@ -1,7 +1,8 @@
 import base64
 import json
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
+from contextlib import aclosing
 from dataclasses import dataclass, field
 from typing import Final, Literal, Protocol, override
 
@@ -11,6 +12,7 @@ from pydantic import BaseModel, ValidationError
 
 from jobtology_be.infrastructure.persistence.contracts import JsonValue
 from jobtology_be.llm.credentials import CredentialStore, CredentialStoreError, OAuthCredentials
+from jobtology_be.llm.streaming import ProviderStreamError, response_events
 
 type ChatRole = Literal["user", "assistant"]
 
@@ -37,6 +39,11 @@ class LlmUnavailableError(Exception):
 
 
 class LlmClient(Protocol):
+    def stream_response(self, *, instructions: str, input: list[dict], tools: list[dict],
+                        tool_choice: str = "auto", parallel_tool_calls: bool = True,
+                        schema_name: str | None = None, schema: Mapping[str, JsonValue] | None = None
+                        ) -> AsyncIterator[dict[str, JsonValue]]: ...
+
     async def complete_json(
         self,
         *,
@@ -90,11 +97,34 @@ def _parse(text: str) -> dict[str, JsonValue]:
     return parsed
 
 
+def _stream_body(model, instructions, input, tools, tool_choice, parallel, schema_name, schema):
+    body = {"model": model, "instructions": instructions, "input": input, "store": False, "stream": True,
+            "tools": tools, "tool_choice": tool_choice, "parallel_tool_calls": parallel,
+            "include": ["reasoning.encrypted_content"]}
+    if schema is not None:
+        body["text"] = {"format": {"type": "json_schema", "name": schema_name, "strict": True, "schema": dict(schema)}}
+    return body
+
+
 @dataclass(slots=True)
 class OpenAIApiKeyClient:
     api_key: str
     model: str
     timeout_seconds: float = 60.0
+    http_transport: httpx.AsyncBaseTransport | None = None
+
+    async def stream_response(self, *, instructions: str, input: list[dict], tools: list[dict],
+                              tool_choice: str = "auto", parallel_tool_calls: bool = True,
+                              schema_name: str | None = None, schema: Mapping[str, JsonValue] | None = None
+                              ) -> AsyncIterator[dict[str, JsonValue]]:
+        body = _stream_body(self.model, instructions, input, tools, tool_choice, parallel_tool_calls, schema_name, schema)
+        try:
+            async with aclosing(response_events(OPENAI_RESPONSES_URL, {"Authorization": f"Bearer {self.api_key}"},
+                                                body, self.timeout_seconds, self.http_transport)) as events:
+                async for event in events:
+                    yield event
+        except (httpx.HTTPError, ProviderStreamError, json.JSONDecodeError) as error:
+            raise LlmUnavailableError("stream failed") from error
 
     async def complete_json(
         self,
@@ -141,6 +171,22 @@ class ChatGptOAuthClient:
     timeout_seconds: float = 90.0
     http_transport: httpx.AsyncBaseTransport | None = None
     _lock: anyio.Lock = field(default_factory=anyio.Lock)
+
+    async def stream_response(self, *, instructions: str, input: list[dict], tools: list[dict],
+                              tool_choice: str = "auto", parallel_tool_calls: bool = True,
+                              schema_name: str | None = None, schema: Mapping[str, JsonValue] | None = None
+                              ) -> AsyncIterator[dict[str, JsonValue]]:
+        token, account = await self.credentials()
+        body = _stream_body(self.model, instructions, input, tools, tool_choice, parallel_tool_calls, schema_name, schema)
+        try:
+            async with aclosing(response_events(CHATGPT_CODEX_RESPONSES_URL, {
+                "Authorization": f"Bearer {token}", "chatgpt-account-id": account,
+                "Accept": "text/event-stream", "OpenAI-Beta": "responses=experimental", "originator": "codex_cli_rs",
+            }, body, self.timeout_seconds, self.http_transport)) as events:
+                async for event in events:
+                    yield event
+        except (httpx.HTTPError, ProviderStreamError, json.JSONDecodeError) as error:
+            raise LlmUnavailableError("stream failed") from error
 
     async def complete_json(
         self,

@@ -131,6 +131,7 @@ def test_schedule_prerequisites_and_completed_state_are_retrieved_from_selected_
 class Model:
     def __init__(self, plan=None, answer=None):
         self.calls = []
+        self.planned = False
         self.plan = plan or {"operations": []}
         self.answer = answer or {"reply": "저장된 근거를 확인했어요.", "explanation": "내 스펙과 연결된 자료예요.",
             "source_ids": ["personal", "invented"], "node_ids": ["personal", "invented"],
@@ -139,6 +140,25 @@ class Model:
     async def complete_json(self, **kwargs):
         self.calls.append(kwargs)
         return self.plan if kwargs["schema_name"] == "chat_retrieval_plan" else self.answer
+
+    async def stream_response(self, **kwargs):
+        schema = kwargs.get("schema_name")
+        if schema:
+            answer = await self.complete_json(**kwargs)
+            text = json.dumps(answer, ensure_ascii=False)
+            for i in range(0, len(text), 3):
+                yield {"type": "response.output_text.delta", "delta": text[i:i + 3]}
+            yield {"type": "response.completed", "response": {"output": []}}
+            return
+        plan = await self.complete_json(**{**kwargs, "schema_name": "chat_retrieval_plan"})
+        output = []
+        if not self.planned:
+            self.planned = True
+            for i, operation in enumerate(plan["operations"]):
+                key = "query" if operation["operation"] == "search_catalog" else "node_id"
+                output.append({"type": "function_call", "call_id": f"call-{i}", "name": operation["operation"],
+                               "arguments": json.dumps({key: operation["value"]})})
+        yield {"type": "response.completed", "response": {"output": output}}
 
 
 def initial():
@@ -296,6 +316,19 @@ def test_graph_cap_preserves_explicit_personal_nodes_and_their_relationships():
                         protected_node_ids={str(i) for i in range(160)})
     assert len(full.nodes) == 160
     assert {n.id for n in full.nodes} == {str(i) for i in range(160)}
+
+
+def test_edge_cap_preserves_personal_and_latest_retrieved_relationships():
+    nodes = tuple(GraphNode(id=key, kind="technology", label=key) for key in ("personal", "a", "b"))
+    personal = edge("personal", "a", "MATCHED_TO", "USER_REPORTED")
+    old = tuple(edge("a", "b", f"REFERENCE_{i}", "REFERENCE") for i in range(320))
+    refreshed = old[0].model_copy(update={"explanation": "updated"})
+    newest = edge("a", "b", "INFERRED_POSTING_CONTEXT", "METADATA_INFERRED")
+    result = merge_graphs(EvidenceGraph(nodes=nodes, edges=(personal, *old)),
+                          EvidenceGraph(edges=(refreshed, newest)), protected_node_ids={"personal"})
+    assert result.truncated and len(result.edges) == 320
+    assert personal in result.edges and result.edges[-2:] == (refreshed, newest)
+    assert old[1] not in result.edges
 
 
 def test_stream_protects_initial_evidence_through_focus_search_and_proposed_link_merges():

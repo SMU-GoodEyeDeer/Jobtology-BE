@@ -43,6 +43,12 @@ class GraphEdge(EvidenceModel):
     kind: str
     basis: Basis
     explanation: str = ""
+    association_id: str | None = None
+    source_freshness: Literal["CURRENT", "STALE", "UNKNOWN"] | None = None
+    catalog_freshness: Literal["CURRENT", "STALE", "UNKNOWN"] | None = None
+    review_status: str | None = None
+    source_run_id: str | None = None
+    catalog_pin: str | None = None
 
 
 class EvidenceGraph(EvidenceModel):
@@ -112,9 +118,17 @@ def merge_graphs(*graphs: EvidenceGraph, protected_node_ids: Iterable[str] = ())
     capacity = 160 - len(protected)
     recent = [n for n in nodes.values() if n.id not in protected_ids][-capacity:] if capacity else []
     kept = {n.id: n for n in (*protected, *recent)}
-    edges = {item.id: item for graph in graphs for item in graph.edges
-             if item.source in kept and item.target in kept}
-    return EvidenceGraph(nodes=tuple(kept.values()), edges=tuple(edges.values())[:320],
+    edges = {}
+    for graph in graphs:
+        for item in graph.edges:
+            if item.source in kept and item.target in kept:
+                edges.pop(item.id, None)
+                edges[item.id] = item
+    personal_edges = [e for e in edges.values() if e.source in requested_ids or e.target in requested_ids][:320]
+    personal_edge_ids = {e.id for e in personal_edges}
+    edge_capacity = 320 - len(personal_edges)
+    recent_edges = [e for e in edges.values() if e.id not in personal_edge_ids][-edge_capacity:] if edge_capacity else []
+    return EvidenceGraph(nodes=tuple(kept.values()), edges=(*personal_edges, *recent_edges),
                          warnings=tuple(dict.fromkeys(w for g in graphs for w in g.warnings)),
                          truncated=any(g.truncated for g in graphs) or len(nodes) > 160 or len(edges) > 320)
 

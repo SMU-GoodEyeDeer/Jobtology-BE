@@ -164,7 +164,10 @@ def test_current_onet_context_survives_when_all_ncs_posting_mappings_are_stale()
     nodes = {node.id: node for node in graph.nodes}
     assert nodes['ncs:occupation:20010202'].weight == 0
     assert nodes['ncs:occupation:20010202'].excluded_associations == 3
-    assert 'postings:20010202' not in nodes
+    assert nodes['postings:20010202'].weight == 0
+    assert nodes['postings:20010202'].excluded_associations == 3
+    assert nodes['postings:20010202'].label == '과거 공고 연결 3건'
+    assert '과거 연결' in nodes['postings:20010202'].detail
     assert nodes['onet:15-1252.00'].basis == 'APPLICATION_CONTEXT_SELECTION'
     assert nodes['onet:15-1252.00'].requirement_key is None
     assert nodes['postings:onet:15-1252.00'].occupation_code == '15-1252.00'

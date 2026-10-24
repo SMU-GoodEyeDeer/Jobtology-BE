@@ -73,6 +73,10 @@ class Settings(BaseSettings):
     llm_provider: Literal["disabled", "openai_api_key", "chatgpt_oauth"] = "disabled"
     openai_api_key: SecretStr | None = None
     openai_model: str = Field(default="gpt-5.6-luna", min_length=1)
+    chat_tool_choice: Literal["auto", "required", "none"] = "auto"
+    chat_tool_max_rounds: int = Field(default=3, ge=1, le=4)
+    chat_tool_max_calls: int = Field(default=6, ge=1, le=12)
+    chat_parallel_tool_calls: bool = True
     openai_oauth_store: Literal["database", "file"] = "database"
     openai_oauth_auth_path: Path | None = None
     openai_oauth_refresh: bool = False
