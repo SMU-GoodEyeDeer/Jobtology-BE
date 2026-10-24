@@ -8,6 +8,7 @@ from sqlalchemy.exc import DBAPIError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from jobtology_be.api.live_source_models import (
+    CrosswalkResponse,
     ExamSessionsResponse,
     NcsDemandResponse,
     NcsUnitResponse,
@@ -16,8 +17,9 @@ from jobtology_be.api.live_source_models import (
     PostingsResponse,
 )
 
-type LiveOperation = Literal["postings", "posting", "exam_sessions", "ncs_demand", "ncs_unit", "occupation_context"]
+type LiveOperation = Literal["postings", "posting", "exam_sessions", "ncs_demand", "ncs_unit", "occupation_context", "crosswalk"]
 _FUNCTIONS: Final = {
+    "crosswalk": "SELECT CAST(catalog.ncs_onet_crosswalk_v1(:node_id, :limit, :offset) AS text)",
     "postings": "SELECT CAST(catalog.live_postings_v1(:q, :ncs_category, :region, CAST(:open_on AS date), :limit, :offset) AS text)",
     "posting": "SELECT CAST(catalog.live_posting_v1(:posting_id) AS text)",
     "ncs_unit": "SELECT CAST(catalog.live_ncs_unit_v1(:base_code) AS text)",
@@ -30,6 +32,7 @@ _ERROR_STATUS: Final = {
     "INVALID_LIVE_PAGE": 422,
     "INVALID_LIVE_FILTER": 422,
     "INVALID_OCCUPATION_CONTEXT_FILTER": 422,
+    "INVALID_CROSSWALK_FILTER": 422,
     "LIVE_POSTING_NOT_FOUND": 404,
 }
 
@@ -51,6 +54,8 @@ def live_source_error_status(error: DBAPIError) -> int:
 
 
 class LiveSourceFeed(Protocol):
+    async def crosswalk(self, node_id: str | None, limit: int, offset: int) -> CrosswalkResponse: ...
+
     async def occupation_context(
         self, codes: list[str] | None, limit: int, offset: int,
     ) -> OccupationContextResponse: ...
@@ -77,6 +82,9 @@ class LiveSourceFeed(Protocol):
 @dataclass(frozen=True, slots=True)
 class PostgresLiveSourceFeed:
     engine: AsyncEngine
+
+    async def crosswalk(self, node_id: str | None, limit: int, offset: int) -> CrosswalkResponse:
+        return await self._read("crosswalk", {"node_id": node_id, "limit": limit, "offset": offset}, CrosswalkResponse)
 
     async def _read[T: BaseModel](
         self, operation: LiveOperation, params: dict[str, str | int | date | list[str] | None], model: type[T],

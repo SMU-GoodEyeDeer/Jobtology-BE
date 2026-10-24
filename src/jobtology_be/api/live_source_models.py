@@ -2,6 +2,8 @@ from typing import ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from jobtology_be.infrastructure.persistence.contracts import JsonValue
+
 type DateText = str
 
 
@@ -18,32 +20,6 @@ class LiveSource(LiveRead):
 class NcsCategory(LiveRead):
     code: str | None
     name: str | None
-
-
-class PostingItem(LiveRead):
-    posting_id: str
-    source_id: str | None = None
-    title: str | None
-    organization_code: str | None
-    organization_name: str | None
-    date_posted: DateText | None = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
-    closing_date: DateText | None = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
-    ongoing: bool | None
-    regions: list[str]
-    employment_types: list[str]
-    recruitment_type: str | None
-    education: str | None
-    ncs_categories: list[NcsCategory]
-    headcount: int | None
-    source_url: str | None
-    source_status: str | None = None
-    deadline_kind: str | None = None
-    deadline_basis: str | None = None
-    ongoing_basis: str | None = None
-    application_start_date: DateText | None = None
-    application_start_at: str | None = None
-    deadline_at: str | None = None
-    source_provenance: LiveSource | None = None
 
 
 class AssociationCounts(LiveRead):
@@ -83,7 +59,15 @@ class AssociationCatalogPins(LiveRead):
     catalog_hash: str | None = None
 
 
-class OccupationAssociation(LiveRead):
+class CatalogRevalidation(LiveRead):
+    original_pin: str
+    current_pin: str
+    policy: Literal["FULL_CONTEXT_EQUAL_V1"]
+    context_hash: str
+    verified_at: str
+
+
+class PostingOccupationAssociation(LiveRead):
     posting_key: str
     posting_identity: str
     source_id: str
@@ -101,6 +85,38 @@ class OccupationAssociation(LiveRead):
     catalog_freshness: Literal["CURRENT", "STALE", "UNKNOWN"]
     source_pins: AssociationSourcePins
     catalog_pins: AssociationCatalogPins
+    catalog_revalidation: CatalogRevalidation | None = None
+    competency_evidence: Literal[False] = False
+
+
+class PostingItem(LiveRead):
+    posting_id: str
+    source_id: str | None = None
+    title: str | None
+    organization_code: str | None
+    organization_name: str | None
+    date_posted: DateText | None = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    closing_date: DateText | None = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    ongoing: bool | None
+    regions: list[str]
+    employment_types: list[str]
+    recruitment_type: str | None
+    education: str | None
+    ncs_categories: list[NcsCategory]
+    occupation_associations: list[PostingOccupationAssociation] = Field(default_factory=list)
+    headcount: int | None
+    source_url: str | None
+    source_status: str | None = None
+    deadline_kind: str | None = None
+    deadline_basis: str | None = None
+    ongoing_basis: str | None = None
+    application_start_date: DateText | None = None
+    application_start_at: str | None = None
+    deadline_at: str | None = None
+    source_provenance: LiveSource | None = None
+
+
+class OccupationAssociation(PostingOccupationAssociation):
     posting: PostingItem | None = None
 
 
@@ -135,6 +151,7 @@ class OccupationContextResponse(LiveRead):
 
 
 class PostingFilters(LiveRead):
+    ncs_match_scope: Literal["SOURCE_OR_CURRENT_INFERRED"] = "SOURCE_OR_CURRENT_INFERRED"
     q: str | None
     ncs_category: str | None
     region: str | None
@@ -156,6 +173,51 @@ class PostingsResponse(LiveResponse):
 
 class PostingResponse(LiveResponse):
     item: PostingItem
+
+
+class CrosswalkNode(LiveRead):
+    id: str
+    scheme: Literal["NCS", "ONET"]
+    kind: Literal["ncs_occupation", "ncs_competency", "onet_occupation", "onet_skill",
+                  "onet_task", "onet_work_activity", "onet_knowledge", "technology"]
+    code: str
+    name: str
+    description: str | None = None
+    catalog_pin: str | None
+    content_hash: str | None
+
+
+class CrosswalkReview(LiveRead):
+    review_id: int | None = Field(default=None, ge=1)
+    reviewer_kind: Literal["ASSISTANT", "HUMAN"]
+    reviewer: str
+    note: str
+    reviewed_at: str
+
+
+class CrosswalkMapping(LiveRead):
+    mapping_id: str
+    version: str | None = None
+    source: CrosswalkNode
+    target: CrosswalkNode
+    relation: Literal["RELATED", "PARTIAL", "EXACT"]
+    status: Literal["PROPOSED", "APPROVED", "REJECTED"]
+    basis: Literal["SHARED_POSTINGS", "CATALOG_COMPARISON", "BILINGUAL_CUE"]
+    evidence: dict[str, JsonValue]
+    review: CrosswalkReview | None
+    source_freshness: Literal["CURRENT", "STALE", "UNKNOWN"]
+    catalog_freshness: Literal["CURRENT", "STALE", "UNKNOWN"]
+    created_at: str | None
+
+
+class CrosswalkResponse(LiveRead):
+    contract_version: Literal["jobtology-ncs-onet-crosswalk-v1"]
+    basis: Literal["CATALOG_CROSSWALK"]
+    competency_evidence: Literal[False]
+    limit: int = Field(ge=1, le=100)
+    offset: int = Field(ge=0)
+    total: int = Field(ge=0)
+    items: list[CrosswalkMapping]
 
 
 class NcsUnitItem(LiveRead):

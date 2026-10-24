@@ -11,6 +11,7 @@ from urllib.parse import urlencode
 from jobtology_be.application.m5_queries import M5DataUnavailableError
 from jobtology_be.application.specs import SkillCatalog
 from jobtology_be.chat.catalog_queries import EXPAND_ID, NODE_ID, SEARCH_ID
+from jobtology_be.chat.crosswalk import crosswalk_graph
 from jobtology_be.chat.workspace_models import (
     EvidenceGraph,
     GraphEdge,
@@ -178,9 +179,38 @@ class SharedCatalogRetriever:
             return await self.posting(node_id)
         approved = self._approved_neighbors(node_id, offset)
         if approved is not None:
-            return approved
-        anchor, found = await asyncio.gather(self.node(node_id), self._read("expand", node_id, offset))
-        return merge_graphs(anchor, found)
+            found = approved
+        else:
+            anchor, neighbors = await asyncio.gather(self.node(node_id), self._read("expand", node_id, offset))
+            found = merge_graphs(anchor, neighbors)
+        if self.feed is None or not any(
+            node.id == node_id and (node.kind in {"ncs_occupation", "ncs_competency", "onet_occupation", "onet_skill"}
+                                    or node.kind == "technology" and node.id.startswith("urn:jobtology:onet-detail:"))
+            for node in found.nodes
+        ):
+            return found
+        # Optional catalog upgrades must not hide existing graph neighborhoods.
+        reader = getattr(self.feed, "crosswalk", None)
+        if reader is None:
+            return found
+        try:
+            key = ("crosswalk", sha256(node_id.encode()).hexdigest(), offset)
+            async with self._lock:
+                cached = self._cache.get(key)
+                mappings = cached[1] if cached and cached[0] > time.monotonic() else None
+            if mappings is None:
+                async with asyncio.timeout(6):
+                    mappings = crosswalk_graph(await reader(node_id, 24, offset), node_id)
+                async with self._lock:
+                    self._cache[key] = (time.monotonic() + 30, mappings)
+                    while len(self._cache) > 64:
+                        self._cache.popitem(last=False)
+            # Keep the anchor's existing approved/personal meaning and provenance.
+            existing = {node.id for node in found.nodes}
+            mappings = mappings.model_copy(update={"nodes": tuple(node for node in mappings.nodes if node.id not in existing)})
+            return merge_graphs(found, mappings)
+        except (TimeoutError, LiveSourceReadError, ValueError):
+            return merge_graphs(found, EvidenceGraph(warnings=("CROSSWALK_UNAVAILABLE",)))
 
     def _approved_neighbors(self, node_id: str, offset: int) -> EvidenceGraph | None:
         # Application role IDs and normalized competency IDs are not necessarily

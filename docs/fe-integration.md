@@ -658,3 +658,29 @@ NCS 1–8수준 설명은 [공식 수준체계](https://www.ncs.go.kr/mobile/rm0
 ### Résumé scanner
 
 Onboarding and My Info share **내 스펙 → 이력서에서 가져오기**. The authenticated status, raw-binary scan, PDF-only streamed paragraph extraction, and explicit selected-passage interpretation endpoints are documented in [resume-scanner.md](resume-scanner.md). An ordinary scan does not mutate the profile or call AI; document AI requires consent and at most three PDF pages, 64 blocks and 12,000 characters. Both paths support a sanitized sandboxed HTML preview with exact quotation highlights. Review each draft in the existing editor, choose an experience level for competency-bearing entries, then save with ordinary capability versioning/idempotency and full readback. `education`/`other` entries are information records with no proficiency requirement or competency credit. Imported specs use `DOCUMENT_IMPORT` plus source quotation/span metadata and verbatim `imported_fields`; partial dates remain as written. No SQL migration or new secret is required; deploy the BE first. Original files are request-only temporary data, and OCR/automatic education-profile writes are not implemented.
+
+### Posting classifications and NCS–O*NET crosswalks
+
+Catalog SQL **033 → 034 → 035** must be applied in that order using the catalog
+migration/admin connection before deploying this BE/FE pair. These are catalog
+migrations, not application Alembic revisions. The operator preflight and exact
+revalidation procedure are in `Jobtology-DB/hop/ontology/catalog.md`.
+
+Posting list/detail responses keep source `ncs_categories` separate from
+`occupation_associations`. Associations preserve review state, original pins and
+source/catalog freshness, and never provide competency credit. `ncs_category`
+accepts a numeric prefix and matches source categories or current inferred NCS
+occupations. Historical/unknown inferences are displayed but excluded from this
+filter. A `catalog_revalidation` qualifier means all archived catalog and retrieval
+context inputs were checked equal against the current pin; it does not mean the
+model output gained semantic review. The proof stops applying when the current
+pin changes.
+
+Authenticated `GET /api/v2/live/crosswalk?node_id=...&limit=6&offset=0` returns
+versioned NCS/O*NET mapping candidates and reviewed mappings. It supports native
+catalog node IDs and canonical NCS unit/O*NET element aliases. `PROPOSED` links
+remain related-item suggestions; `APPROVED` retains the actual reviewer and the
+`RELATED`, `PARTIAL` or `EXACT` comparison scope. Catalog pins, quoted evidence,
+rule version and freshness remain visible. Missing creation times stay null.
+Graph expansion adds these as exploration-only edges and preserves the existing
+anchor's meaning. No crosswalk changes saved specs, analysis credit or roadmaps.
