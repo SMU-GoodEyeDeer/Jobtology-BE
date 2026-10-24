@@ -2,7 +2,7 @@
   "$schema": "https://schema.railpack.com",
   "provider": "python",
   "packages": {
-    "java": "25",
+    "java": "temurin-25",
     "dotnet": "8.0"
   },
   "deploy": {
