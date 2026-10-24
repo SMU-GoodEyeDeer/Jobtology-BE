@@ -7,8 +7,8 @@ import httpx
 import pytest
 
 from jobtology_be.chat.catalog import SharedCatalogRetriever
-from jobtology_be.chat.catalog_queries import WORKSPACE_QUERIES
-from jobtology_be.corpus.neo4j_client import Neo4jQueryResult
+from jobtology_be.chat.catalog_queries import PARENTS_ID, WORKSPACE_QUERIES
+from jobtology_be.corpus.neo4j_client import Neo4jQueryResult, Neo4jReadQuery
 
 URL = os.environ.get("JOBTOLOGY_CHAT_NEO4J_TEST_URL")
 pytestmark = pytest.mark.skipif(not URL, reason="isolated Neo4j not configured")
@@ -66,6 +66,40 @@ def test_full_catalog_search_expansion_pagination_and_private_label_exclusion():
                 assert first.truncated and len(first.nodes) == 24
                 assert len(second.nodes) == 20  # OR search also finds the 8 original catalog nodes.
                 assert not ({n.id for n in first.nodes} & {n.id for n in second.nodes})
+            finally:
+                await write("MATCH (n) WHERE n.id STARTS WITH $key DETACH DELETE n")
+    anyio.run(run)
+
+
+def test_crosswalk_parents_keep_real_category_edges_and_prefer_visible_onet_occupations():
+    assert URL.startswith("http://127.0.0.1:"), "Only disposable local fixtures may be seeded"
+    async def run():
+        key = "chatqa" + uuid4().hex
+        async with httpx.AsyncClient(timeout=10) as http:
+            async def write(statement):
+                result = await http.post(URL, json={"statement": statement, "parameters": {"key": key}})
+                assert result.status_code == 202 and not result.json().get("errors"), result.json().get("errors")
+            await write("CREATE (c:entity:ncsCompetency {id:$key+'unit',name:'서버 구현'}) "
+                        "CREATE (o:entity:occupation {id:$key+'ncs',name:'응용SW엔지니어링'}) "
+                        "CREATE (s:onetDetail {id:$key+'skill',element_name:'Programming'}) "
+                        "CREATE (c)-[:CLASSIFIED_AS]->(o) "
+                        "WITH s UNWIND range(0,4) AS i "
+                        "CREATE (x:onetCatalogObject:occupation {id:$key+'onet'+toString(i),name:'Developer',current:true}) "
+                        "CREATE (x)-[:ONET_ESSENTIAL_SKILL]->(s) "
+                        "WITH DISTINCT s "
+                        "CREATE (old:onetCatalogObject:occupation {id:$key+'old',current:false})-[:ONET_ESSENTIAL_SKILL]->(s) "
+                        "CREATE (private:ontologyObject:onetCatalogObject:occupation {id:$key+'private',current:true})-[:ONET_ESSENTIAL_SKILL]->(s)")
+            try:
+                result = await LocalClient(http).execute(Neo4jReadQuery(query_id=PARENTS_ID,
+                    parameters={"ids": [key + "unit", key + "skill"], "context_ids": [key + "onet4"], "limit": 24}))
+                assert result.fields == ("node", "source", "target", "kind")
+                assert len(result.rows) == 3
+                assert {(source, target, kind) for _, source, target, kind in result.rows} == {
+                    (key + "unit", key + "ncs", "CLASSIFIED_AS"),
+                    (key + "onet4", key + "skill", "ONET_ESSENTIAL_SKILL"),
+                    (key + "onet0", key + "skill", "ONET_ESSENTIAL_SKILL"),
+                }
+                assert {node["kind"] for node, *_ in result.rows} == {"ncs_occupation", "onet_occupation"}
             finally:
                 await write("MATCH (n) WHERE n.id STARTS WITH $key DETACH DELETE n")
     anyio.run(run)

@@ -8,7 +8,8 @@ _KINDS: dict[str, NodeKind] = {kind: kind for kind in (
 )}
 
 
-def crosswalk_graph(response: CrosswalkResponse, anchor_id: str | None = None) -> EvidenceGraph:
+def crosswalk_graph(response: CrosswalkResponse, anchor_id: str | None = None,
+                    context_ids: tuple[str, ...] = ()) -> EvidenceGraph:
     nodes: dict[str, GraphNode] = {}
     edges: list[GraphEdge] = []
     for item in response.items:
@@ -19,12 +20,13 @@ def crosswalk_graph(response: CrosswalkResponse, anchor_id: str | None = None) -
         source_id, target_id = item.source.id, item.target.id
         # The application skill picker uses family/element aliases. Collapse only
         # a current resolved endpoint onto that alias; retain historical versions.
-        if (anchor_id is not None and item.source.kind == "ncs_competency" and item.source_freshness == "CURRENT"
-                and anchor_id == f"ncs:unit:{item.source.code[:10]}"):
-            source_id = anchor_id
-        if (anchor_id is not None and item.target.scheme == "ONET" and item.catalog_freshness == "CURRENT"
-                and anchor_id == f"onet:skill:{item.target.code}"):
-            target_id = anchor_id
+        aliases = {*context_ids, anchor_id}
+        if (item.source.kind == "ncs_competency" and item.source_freshness == "CURRENT"
+                and f"ncs:unit:{item.source.code[:10]}" in aliases):
+            source_id = f"ncs:unit:{item.source.code[:10]}"
+        if (item.target.scheme == "ONET" and item.catalog_freshness == "CURRENT"
+                and f"onet:skill:{item.target.code}" in aliases):
+            target_id = f"onet:skill:{item.target.code}"
         for endpoint, identity in ((item.source, source_id), (item.target, target_id)):
             kind = _KINDS.get(endpoint.kind, "onet_skill")
             nodes[identity] = GraphNode(

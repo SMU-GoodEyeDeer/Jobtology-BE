@@ -4,6 +4,7 @@ from jobtology_be.corpus.neo4j_client import Neo4jReadQueryDefinition, Neo4jRead
 SEARCH_ID = Neo4jReadQueryId("chat.catalog.search")
 EXPAND_ID = Neo4jReadQueryId("chat.catalog.expand")
 NODE_ID = Neo4jReadQueryId("chat.catalog.node")
+PARENTS_ID = Neo4jReadQueryId("chat.catalog.crosswalk_parents")
 ALLOWED = (
     "NOT n:ontologyObject AND (n:entity:occupation OR n:entity:ncsCompetency OR "
     "n:entity:qualification OR n:entity:examSession OR n:onetCatalogObject:occupation OR "
@@ -30,6 +31,21 @@ NODE = (
 RELATIONS = ["CLASSIFIED_AS", "QUALIFICATION_MAPPING", "HAS_EXAM_SESSION", "ONET_ESSENTIAL_SKILL",
              "ONET_SOFTWARE_EXAMPLE", "ALIGNS_WITH_NCS"]
 WORKSPACE_QUERIES = (
+    Neo4jReadQueryDefinition(query_id=PARENTS_ID, statement=(
+        "MATCH (child) WHERE child.id IN $ids AND NOT child:ontologyObject "
+        "CALL (child) { MATCH (a:onetCatalogObject:occupation)-[r]->(child) "
+        "WHERE a.current=true AND NOT a:ontologyObject "
+        "AND type(r) IN ['ONET_ESSENTIAL_SKILL','ONET_TRANSFERABLE_SKILL','ONET_KNOWLEDGE','ONET_TASK','ONET_SOFTWARE_EXAMPLE'] "
+        "WITH a,r ORDER BY CASE WHEN a.id IN $context_ids THEN 0 ELSE 1 END,a.id LIMIT 2 RETURN a,r } "
+        "WITH a AS n, r, child "
+        "ORDER BY CASE WHEN n.id IN $context_ids THEN 0 ELSE 1 END,n.id,child.id LIMIT $limit "
+        "RETURN " + NODE + " AS node, n.id AS source, child.id AS target, type(r) AS kind "
+        "UNION ALL "
+        "MATCH (child:entity:ncsCompetency)-[r:CLASSIFIED_AS]->(n:entity:occupation) "
+        "WHERE child.id IN $ids AND NOT child:ontologyObject AND NOT n:ontologyObject "
+        "WITH child,r,n ORDER BY CASE WHEN n.id IN $context_ids THEN 0 ELSE 1 END,n.id,child.id LIMIT $limit "
+        "RETURN " + NODE + " AS node, child.id AS source,n.id AS target,type(r) AS kind"
+    )),
     Neo4jReadQueryDefinition(query_id=NODE_ID, statement=(
         "MATCH (n {id:$node_id}) WHERE " + ALLOWED + " RETURN " + NODE + " AS node LIMIT $limit"
     )),

@@ -4,6 +4,7 @@ from typing import Annotated, Final
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 
+from jobtology_be.api.chat import require_chat_workspace
 from jobtology_be.api.errors import ErrorResponse
 from jobtology_be.api.identity import AuthenticatedPrincipal, require_authenticated_principal
 from jobtology_be.api.live_source_models import (
@@ -15,6 +16,8 @@ from jobtology_be.api.live_source_models import (
     PostingResponse,
     PostingsResponse,
 )
+from jobtology_be.chat.crosswalk import crosswalk_graph
+from jobtology_be.chat.workspace import ChatWorkspaceService
 from jobtology_be.infrastructure.persistence.live_source_feed import (
     LiveSourceFeed,
     LiveSourceReadError,
@@ -42,14 +45,23 @@ async def crosswalk(
     request: Request,
     _: Annotated[AuthenticatedPrincipal, Depends(require_authenticated_principal)],
     feed: Annotated[LiveSourceFeed, Depends(require_live_source_feed)],
+    workspace: Annotated[ChatWorkspaceService | None, Depends(require_chat_workspace)],
     node_id: Annotated[str, Query(min_length=1, max_length=500)],
+    context_nodes: Annotated[str | None, Query(max_length=8000)] = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> CrosswalkResponse:
     """Versioned catalog mappings for exploration; never automatic competency credit."""
-    _allowed_query(request, frozenset({"node_id", "limit", "offset"}))
+    _allowed_query(request, frozenset({"node_id", "limit", "offset", "context_nodes"}))
+    context_ids = tuple(dict.fromkeys(context_nodes.split(","))) if context_nodes else ()
+    if len(context_ids) > 48 or any(not value or len(value) > 500 for value in context_ids):
+        raise HTTPException(status_code=422)
     try:
-        return await feed.crosswalk(node_id, limit, offset)
+        result = await feed.crosswalk(node_id, limit, offset)
+        connections = getattr(workspace.catalog, "crosswalk_connections", None) if workspace else None
+        graph = (await connections(result, node_id, context_ids) if connections
+                 else crosswalk_graph(result, node_id, context_ids))
+        return result.model_copy(update={"graph": graph})
     except LiveSourceReadError as error:
         raise HTTPException(status_code=error.status_code) from None
 

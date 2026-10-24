@@ -8,9 +8,10 @@ from hashlib import sha256
 from typing import Protocol
 from urllib.parse import urlencode
 
+from jobtology_be.api.live_source_models import CrosswalkResponse
 from jobtology_be.application.m5_queries import M5DataUnavailableError
 from jobtology_be.application.specs import SkillCatalog
-from jobtology_be.chat.catalog_queries import EXPAND_ID, NODE_ID, SEARCH_ID
+from jobtology_be.chat.catalog_queries import EXPAND_ID, NODE_ID, PARENTS_ID, SEARCH_ID
 from jobtology_be.chat.crosswalk import crosswalk_graph
 from jobtology_be.chat.workspace_models import (
     EvidenceGraph,
@@ -52,6 +53,47 @@ class SharedCatalogRetriever:
     # Only public catalog reads are cached. This object never accepts account data.
     _cache: OrderedDict = field(default_factory=OrderedDict, repr=False)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+
+    async def crosswalk_connections(self, response: CrosswalkResponse, node_id: str,
+                                    context_ids: tuple[str, ...] = ()) -> EvidenceGraph:
+        graph = crosswalk_graph(response, node_id, context_ids)
+        if self.client is None or not graph.edges:
+            return graph
+        aliases = {}
+        by_mapping = {edge.association_id: edge for edge in graph.edges}
+        for item in response.items:
+            if (item.mapping_id in by_mapping and item.source_freshness == "CURRENT"
+                    and item.catalog_freshness == "CURRENT"):
+                link = by_mapping[item.mapping_id]
+                aliases[item.source.id], aliases[item.target.id] = link.source, link.target
+        if not aliases:
+            return graph
+        key = ("crosswalk-parents", sha256(json.dumps([sorted(aliases.items()), sorted(context_ids)]).encode()).hexdigest(), 0)
+        async with self._lock:
+            cached = self._cache.get(key)
+            parents = cached[1] if cached and cached[0] > time.monotonic() else None
+        if parents is None:
+            try:
+                async with asyncio.timeout(2):
+                    result = await self.client.execute(Neo4jReadQuery(query_id=PARENTS_ID,
+                        parameters={"ids": list(aliases), "context_ids": list(context_ids), "limit": 24}))
+                if result.fields != ("node", "source", "target", "kind") or len(result.rows) > 48:
+                    raise ValueError("invalid crosswalk parent response")
+                nodes, edges = {}, []
+                for record, source, target, kind in result.rows:
+                    if not all(isinstance(value, str) for value in (source, target, kind)):
+                        raise ValueError("invalid crosswalk hierarchy edge")
+                    node = GraphNode.model_validate(record)
+                    nodes[node.id] = node
+                    edges.append(edge(aliases.get(source, source), aliases.get(target, target), kind, "REFERENCE"))
+                parents = EvidenceGraph(nodes=tuple(nodes.values()), edges=tuple(edges))
+                async with self._lock:
+                    self._cache[key] = (time.monotonic() + 30, parents)
+                    while len(self._cache) > 64:
+                        self._cache.popitem(last=False)
+            except (TimeoutError, Neo4jQueryApiError, ValueError):
+                parents = EvidenceGraph(warnings=("CROSSWALK_UNAVAILABLE",))
+        return merge_graphs(graph, parents)
 
     async def _read(self, operation: str, value: str, offset: int) -> EvidenceGraph:
         if self.client is None:
@@ -200,7 +242,7 @@ class SharedCatalogRetriever:
                 mappings = cached[1] if cached and cached[0] > time.monotonic() else None
             if mappings is None:
                 async with asyncio.timeout(6):
-                    mappings = crosswalk_graph(await reader(node_id, 24, offset), node_id)
+                    mappings = await self.crosswalk_connections(await reader(node_id, 24, offset), node_id)
                 async with self._lock:
                     self._cache[key] = (time.monotonic() + 30, mappings)
                     while len(self._cache) > 64:
