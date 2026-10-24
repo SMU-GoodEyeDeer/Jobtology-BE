@@ -14,7 +14,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from jobtology_be.application.m5_queries import M5DataUnavailableError
 from jobtology_be.chat.catalog import CatalogRetriever
 from jobtology_be.chat.personal import PersonalRetriever, ranked
-from jobtology_be.chat.service import select_suggestions
+from jobtology_be.chat.service import MAX_SUGGESTIONS, select_suggestions
 from jobtology_be.chat.tools import TOOL_LABELS, TOOLS, ReadTools, tool_output
 from jobtology_be.chat.workspace_models import (
     EvidenceGraph,
@@ -46,7 +46,7 @@ class AnswerSelection(BaseModel):
     node_ids: list[str] = Field(max_length=40)
     edge_ids: list[str] = Field(max_length=60)
     filter_kinds: list[NodeKind] = Field(max_length=8)
-    suggestions: list[str] = Field(max_length=4)
+    suggestions: list[str] = Field(max_length=MAX_SUGGESTIONS)
     proposed_connections: list[ProposedConnection] = Field(max_length=4)
 
 
