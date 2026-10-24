@@ -71,6 +71,10 @@ fail during build-plan generation. `temurin-25` resolves on that helper while
 retaining the Java 25 runtime required by the HWP converter. Do not lower the
 Java major version to work around a resolver failure.
 
+Launch Uvicorn through `mise exec --` to export the selected JDK's `JAVA_HOME`
+to Python and its bounded document workers. A Java shim alone lets subprocesses
+run `java`, but does not expose the JVM location to JPype inside Python.
+
 For local development, install Java and .NET 8 only for the formats you exercise;
 DOCX/HWPX work without them. Missing runtimes produce explicit parser errors.
 The existing converter override environment variables remain available for

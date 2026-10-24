@@ -44,10 +44,16 @@ identical inputs, so exposing these display fields does not require a new approv
 
 All runtime flags default to **off**:
 
+The repository deployment config now selects the replacement artifact
+`a550c8f9…192908e`. Its [2026-10-24 technical review](product-role-review-20261024.md)
+reconstructs the exact previous approved artifact and verifies unchanged catalog
+content/planning values under refreshed source pins. Activation is proposed for
+owner review and merge; the running fallback image still uses the old approval.
+
 | Environment variable | Effect when enabled |
 |---|---|
 | `JOBTOLOGY_PRODUCT_ROLES_ENABLED` | Load role inputs at startup and enable occupations/analysis from the generated release. Requires `JOBTOLOGY_CATALOG_DATABASE_URL` and the product database. A failed load keeps occupations and analysis at 503 without preventing process startup. |
-| `JOBTOLOGY_PRODUCT_ROLE_ARTIFACT_APPROVAL_PATH` | Path to a separate owner-reviewed JSON record `{ "sha256": "<full draft digest>", "approved_by": "<reviewer>", "reviewed_at": "<timezone-aware ISO instant>" }`. Owner-approved records live in `config/product_roles/approvals/<digest>.json`; the deployed record is `524f1e46…0f7bd4.json` (approved 2026-10-17 after the 2026-10-16 NCS competency and qualification runs drifted from `88d336ed…97b321`, approved 2026-10-11 after drift from `42083def…f0b55d`, which was approved 2026-10-08 with identical role content to `ae6fec57…83fc6` plus demand metadata). Missing/invalid/mismatched approval leaves the generated draft unpublished and the runtime at 503. |
+| `JOBTOLOGY_PRODUCT_ROLE_ARTIFACT_APPROVAL_PATH` | Path to a separate owner-reviewed JSON record `{ "sha256": "<full draft digest>", "approved_by": "<reviewer>", "reviewed_at": "<timezone-aware ISO instant>" }`. Records live in `config/product_roles/approvals/<digest>.json`; the current deployment configuration selects `a550c8f9…192908e.json` ([2026-10-24 review](product-role-review-20261024.md)). The running fallback image uses the previous `524f1e46…0f7bd4.json` record, approved 2026-10-17. Missing/invalid/mismatched approval leaves the generated draft unpublished and the runtime at 503. |
 | `JOBTOLOGY_INPROCESS_WORKER_ENABLED` | While a role release is loaded, process at most one queued local-json-labeled recompute every three seconds. A READY feasible targeted analysis creates and activates a titled roadmap only when the goal has no ACTIVE roadmap; later recomputes (e.g. after step completion) keep the existing roadmap. |
 | `JOBTOLOGY_CAPABILITY_LIST_AUTHORITATIVE` | Treat the stored capability list as complete; unmatched requirements are UNMET, including an empty capability list. |
 
