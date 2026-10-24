@@ -219,6 +219,7 @@ class ChatWorkspaceService:
         yield {"type": "progress", "stage": "answering", "message": "연결 근거를 확인하고 있어요."}
         text, emitted = "", ""
         completed = False
+        reply_complete = False
         async with asyncio.timeout(40), aclosing(self.llm.stream_response(
                 instructions=(
                     "한국어 커리어 도우미다. 제공한 계정·카탈로그 근거에 따라 간결하고 구체적으로 답한다. "
@@ -263,6 +264,11 @@ class ChatWorkspaceService:
                             raise ValueError("answer too large")
                         yield {"type": "answer_delta", "delta": reply[len(emitted):]}
                         emitted = reply
+                    if not reply_complete:
+                        stable = from_json(text, allow_partial=True)
+                        if isinstance(stable, dict) and isinstance(stable.get("reply"), str):
+                            reply_complete = True
+                            yield {"type": "progress", "stage": "finalizing", "message": "그래프 연결을 정리하고 있어요."}
                 elif event.get("type") == "response.completed":
                     completed = True
             if not completed:

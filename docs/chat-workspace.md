@@ -27,6 +27,9 @@ shows retrieved evidence and short explanations, not an internal model reasoning
   incomplete and are excluded from subsequent conversation context. EOF without
   `done` is an interruption. The default remains NDJSON for older clients and omits
   the new tool/text events. Both formats use `no-store` and `X-Accel-Buffering: no`.
+  Once the reply's JSON string is complete, `progress.stage=finalizing` identifies
+  the remaining citation/graph generation. The UI keeps a visible processing status
+  until `done` and successful stream parsing, then commits the final graph actions.
 
 ## Retrieval and provenance
 
@@ -36,8 +39,15 @@ the dashboard analysis and active roadmap. Analysis profile/release versions, pa
 credit, step states, prerequisites, solver dates and saved custom weekly dates are retained.
 Reading saved schedule overrides does not run a solver or repack the plan. An outdated analysis
 is explicitly flagged. Personal evidence is request-only and never enters the public
-catalog cache. Browser conversation/graph state is memory-only and clears on goal
-change/navigation/logout (at most 40 visible conversation messages). Goal selection is
+catalog cache. Active browser conversation/search state is memory-only and clears on goal
+change/navigation/logout (at most 40 visible conversation messages). Initial evidence
+graphs can be reused for 45 seconds across page visits, with at most six goals in
+memory, keyed by account, selected goal and session profile version. Logout, account/
+session changes, successful profile/spec/goal/preference/roadmap writes, analysis
+requests/results and manual refresh invalidate these snapshots. Generation checks
+reject late writes after invalidation. No browser storage or conversation caching is
+used for these snapshots. Renderer code preloads alongside the initial reads.
+Goal selection is
 shared in memory across application pages and isolated by account. Goal-scoped analysis,
 roadmap and profile links also retain their goal in the URL for reloads/new tabs.
 

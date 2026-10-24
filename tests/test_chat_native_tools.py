@@ -60,6 +60,9 @@ def test_native_reads_are_iterative_and_answer_text_arrives_before_validated_gra
     assert ''.join(deltas) == model.answer["reply"]
     assert next(i for i, e in enumerate(events) if e["type"] == "answer_delta") < next(i for i, e in enumerate(events) if e["type"] == "answer")
     assert len([e for e in events if e["type"] == "answer"]) == 1
+    finalizing = [i for i, e in enumerate(events) if e["type"] == "progress" and e["stage"] == "finalizing"]
+    assert len(finalizing) == 1
+    assert max(i for i, e in enumerate(events) if e["type"] == "answer_delta") < finalizing[0] < next(i for i, e in enumerate(events) if e["type"] == "answer")
     assert [(e["name"], e["status"]) for e in events if e["type"] == "tool"] == [
         ("search_catalog", "started"), ("search_catalog", "completed"), ("expand_connections", "started"), ("expand_connections", "completed")]
     assert events[-1] == {"type": "done"}
