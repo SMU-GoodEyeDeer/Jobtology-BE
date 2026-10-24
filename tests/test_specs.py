@@ -162,3 +162,23 @@ def test_capability_writes_return_503_when_ncs_catalog_is_unavailable():
             assert response.status_code == 503
             assert response.json()['error']['code'] == 'DATA_UNAVAILABLE'
     assert service.upsert_count == 0
+
+
+@pytest.mark.parametrize(('category', 'fields'), [
+    ('certification', {'issuer': '한국산업인력공단'}),
+    ('test', {'score': 900, 'issuer': 'ETS'}),
+])
+def test_credentials_do_not_require_or_infer_a_performance_level(category, fields):
+    service = RecordingCapabilityService()
+    app = create_app(Settings(enable_fixtures=False), dependencies=ApiDependencies(
+        identity_provider=StaticIdentityProvider(), capability_service=service, skill_catalog=catalog(),
+    ))
+    payload = {'expected_profile_version': 3, 'category': category, 'raw_text': '자격·시험 기록',
+               'proficiency': None, 'details': {'competency_ids': [NCS], 'evidence': EVIDENCE, **fields}}
+    with TestClient(app) as client:
+        assert client.post('/api/v1/me/capabilities', json=payload).status_code == 201
+        assert service.command.proficiency is None
+        for experience_category in ('skill', 'project', 'experience'):
+            assert client.post('/api/v1/me/capabilities', json={**payload, 'category': experience_category}).status_code == 422
+    # A credential alone is not a claimed performance level or verified competency.
+    assert spec_credit(SpecDetails.model_validate(payload['details']), None, category, TODAY) == 0

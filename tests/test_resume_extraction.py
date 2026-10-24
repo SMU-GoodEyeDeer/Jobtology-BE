@@ -265,3 +265,23 @@ def test_information_api_accepts_no_proficiency_but_rejects_competency_claims(ca
         assert service.command.details['school'] == '학교'
         payload['details']['competency_ids'] = [NCS]
         assert client.post('/api/v1/me/capabilities', json=payload).status_code == 422
+
+
+def test_certificate_issuer_is_requested_and_prefilled_only_when_anchored_in_quote():
+    text = '정보처리기사 · 한국산업인력공단 · 2026.06.10 취득'
+
+    class Llm:
+        async def complete_json(self, **kwargs):
+            assert 'include issuer' in kwargs['instructions']
+            assert 'Do not guess an issuer' in kwargs['instructions']
+            return {'entries': [entry(text, category='certification', title='정보처리기사',
+                competency_ids=[], fields=[{'name': 'issuer', 'value': '한국산업인력공단'},
+                                          {'name': 'issued_on', 'value': '2026.06.10'}])]}
+
+    result = asyncio.run(extract_paragraph(Llm(), block(text), catalog().items(), ''))
+    assert result.suggestions[0].fields['issuer'] == '한국산업인력공단'
+    unanchored = entry('정보처리기사', category='certification', title='정보처리기사',
+                      competency_ids=[], fields=[{'name': 'issuer', 'value': '한국산업인력공단'}])
+    rejected = validated_entries([unanchored], block('정보처리기사'), catalog().items())
+    assert 'issuer' not in rejected.suggestions[0].fields
+    assert rejected.rejected_count == 1

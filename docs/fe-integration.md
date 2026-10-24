@@ -260,7 +260,9 @@ Google 이름을 받기 위해 기존 Google Cloud 클라이언트를 교체할 
 - `POST /api/v1/me/capabilities`, `PATCH /api/v1/me/capabilities/{id}`:
   `expected_profile_version`, `category` (`skill`, `certification`, `test`, `project`, `experience`),
   `raw_text` (제목), `proficiency` (`FAMILIAR`, `GUIDED`, `INDEPENDENT`, `PRODUCTION`),
-  `details`를 제출합니다. PATCH도 편집 내용 전체를 제출합니다. 응답은 ID와 새 프로필 버전이며
+  `details`를 제출합니다. `skill`·`project`·`experience`는 수행 수준을 선택해야 하지만,
+  `certification`·`test`는 `proficiency: null`로 자격·점수만 보관할 수 있습니다.
+  수행 수준을 추정하거나 자격명만으로 역량 반영치를 부여하지 않습니다. PATCH도 편집 내용 전체를 제출합니다. 응답은 ID와 새 프로필 버전이며
   성공 후 상세 GET으로 전체 레코드·연결 결과를 조회하세요. POST의 멱등성 키는 응답 유실 시
   같은 원래 버전과 본문으로 재사용하고, 저장 후 조회 실패는 GET만 재시도합니다.
 - `details`: 선택한 `competency_ids` (최대 12개), `evidence` (최대 2000자),

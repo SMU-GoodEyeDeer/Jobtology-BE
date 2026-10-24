@@ -56,7 +56,7 @@ class CapabilityMutationRequest(BaseModel):
 
     @model_validator(mode='after')
     def category_fields(self):
-        if self.category not in {'education', 'other'} and self.proficiency is None:
+        if self.category in {'skill', 'project', 'experience'} and self.proficiency is None:
             raise ValueError('choose a self-reported proficiency')
         if self.category in {'education', 'other'} and self.details.competency_ids:
             raise ValueError('education and other records do not establish competency credit')
