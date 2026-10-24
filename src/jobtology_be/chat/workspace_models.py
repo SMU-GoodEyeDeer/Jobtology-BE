@@ -1,4 +1,5 @@
 """Request-only evidence contracts. No private record is written to the catalog."""
+from collections.abc import Iterable
 from typing import Literal
 from uuid import UUID
 
@@ -96,15 +97,20 @@ def edge(source: str, target: str, kind: str, basis: Basis,
                      kind=kind, basis=basis, explanation=explanation)
 
 
-def merge_graphs(*graphs: EvidenceGraph) -> EvidenceGraph:
+def merge_graphs(*graphs: EvidenceGraph, protected_node_ids: Iterable[str] = ()) -> EvidenceGraph:
     nodes = {}
     for graph in graphs:
         for node in graph.nodes:
             nodes.pop(node.id, None)
             nodes[node.id] = node
-    protected = [n for n in nodes.values() if n.kind in {"profile", "goal", "role", "preferences"}][:16]
+    requested_ids = set(protected_node_ids)
+    protected = [n for n in nodes.values() if n.id in requested_ids][:160]
     protected_ids = {n.id for n in protected}
-    recent = [n for n in nodes.values() if n.id not in protected_ids][-(160 - len(protected)):]
+    protected.extend([n for n in nodes.values() if n.id not in protected_ids
+                      and n.kind in {"profile", "goal", "role", "preferences"}][:min(16, 160 - len(protected))])
+    protected_ids = {n.id for n in protected}
+    capacity = 160 - len(protected)
+    recent = [n for n in nodes.values() if n.id not in protected_ids][-capacity:] if capacity else []
     kept = {n.id: n for n in (*protected, *recent)}
     edges = {item.id: item for graph in graphs for item in graph.edges
              if item.source in kept and item.target in kept}

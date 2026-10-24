@@ -280,6 +280,47 @@ def test_graph_caps_and_removes_dangling_edges():
     assert len(bounded.nodes) == 160 and bounded.truncated and not bounded.edges
 
 
+def test_graph_cap_preserves_explicit_personal_nodes_and_their_relationships():
+    personal = EvidenceGraph(nodes=(
+        GraphNode(id="capability", kind="capability", label="경험"),
+        GraphNode(id="analysis", kind="analysis", label="분석"),
+        GraphNode(id="activity", kind="activity", label="활동"),
+    ), edges=(edge("capability", "analysis", "MATCHED_TO", "USER_REPORTED"),
+              edge("analysis", "activity", "PLANNED_ACTIVITY", "APPLICATION_RECORD")))
+    catalog = EvidenceGraph(nodes=tuple(GraphNode(id=str(i), kind="technology", label=str(i)) for i in range(200)))
+    bounded = merge_graphs(personal, catalog, protected_node_ids={n.id for n in personal.nodes})
+    assert len(bounded.nodes) == 160 and bounded.truncated
+    assert {n.id for n in personal.nodes} <= {n.id for n in bounded.nodes}
+    assert bounded.edges == personal.edges
+    full = merge_graphs(catalog, EvidenceGraph(nodes=(GraphNode(id="extra", kind="role", label="extra"),)),
+                        protected_node_ids={str(i) for i in range(160)})
+    assert len(full.nodes) == 160
+    assert {n.id for n in full.nodes} == {str(i) for i in range(160)}
+
+
+def test_stream_protects_initial_evidence_through_focus_search_and_proposed_link_merges():
+    context = initial()
+    context = context.model_copy(update={"graph": merge_graphs(context.graph, EvidenceGraph(
+        nodes=(GraphNode(id="analysis", kind="analysis", label="내 분석"),),
+        edges=(edge("personal", "analysis", "MATCHED_TO", "USER_REPORTED"),),
+    ))})
+    def catalog_page(prefix):
+        return EvidenceGraph(nodes=tuple(GraphNode(id=f"{prefix}:{i}", kind="technology", label="SQL") for i in range(160)))
+    model = Model({"operations": [{"operation": "search_catalog", "value": "SQL"}]})
+    model.answer["proposed_connections"] = [{"source": "personal", "target": "analysis", "explanation": "학습 연결 제안"}]
+    catalog = SimpleNamespace(node=AsyncMock(return_value=catalog_page("focus")),
+                              search=AsyncMock(return_value=catalog_page("search")))
+    events = anyio.run(collect, ChatWorkspaceService(None, model, catalog), context, ("focus:0",))
+    graphs = [e["data"]["graph"] for e in events if e["type"] in {"evidence", "answer"}]
+    assert events[-1] == {"type": "done"}
+    for graph in graphs:
+        assert len(graph["nodes"]) == 160
+        assert {"personal", "analysis"} <= {n["id"] for n in graph["nodes"]}
+        assert any(e["kind"] == "MATCHED_TO" for e in graph["edges"])
+    assert any(e["kind"] == "SUGGESTED_LINK" for e in graphs[-1]["edges"])
+    assert any(n["id"].startswith("search:") for n in graphs[-1]["nodes"])
+
+
 def test_cancelling_model_work_releases_service_capacity():
     async def run():
         model = Model()

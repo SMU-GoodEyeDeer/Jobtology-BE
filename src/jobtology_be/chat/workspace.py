@@ -94,6 +94,7 @@ class ChatWorkspaceService:
     async def _events(self, initial, messages, focus_ids):
         assert self.llm is not None
         graph = initial.graph
+        protected_node_ids = {node.id for node in initial.graph.nodes}
         warnings = list(initial.warnings)
         question = messages[-1].text
         if self.catalog:
@@ -101,7 +102,7 @@ class ChatWorkspaceService:
                 if key not in {n.id for n in graph.nodes}:
                     try:
                         async with asyncio.timeout(3):
-                            graph = merge_graphs(graph, await self.catalog.node(key))
+                            graph = merge_graphs(graph, await self.catalog.node(key), protected_node_ids=protected_node_ids)
                     except READ_ERRORS:
                         warnings.append("FOCUSED_SOURCE_UNAVAILABLE")
         known = {node.id for node in graph.nodes}
@@ -146,7 +147,7 @@ class ChatWorkspaceService:
                             if not any(n.id == operation.value and n.kind == "posting" for n in graph.nodes):
                                 continue
                             found = await self.catalog.posting(operation.value)
-                        graph = merge_graphs(graph, found)
+                        graph = merge_graphs(graph, found, protected_node_ids=protected_node_ids)
                         warnings.extend(found.warnings)
                     yield {"type": "evidence", "data": WorkspaceEvidence(
                         goal_id=initial.goal_id, occupation_id=initial.occupation_id,
@@ -201,7 +202,7 @@ class ChatWorkspaceService:
                          if item.source in allowed_ids and item.target in allowed_ids
                          and item.source != item.target)
         if proposed:
-            graph = merge_graphs(graph, EvidenceGraph(edges=proposed))
+            graph = merge_graphs(graph, EvidenceGraph(edges=proposed), protected_node_ids=protected_node_ids)
             sources = sources_for(graph)
         cited = tuple(s for s in sources if s.id in allowed_ids and s.id in answer.source_ids)
         node_ids = tuple(dict.fromkeys([key for key in answer.node_ids if key in allowed_ids]

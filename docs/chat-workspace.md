@@ -67,8 +67,8 @@ The UI can add/highlight/focus/filter/expand evidence and replay a cited answer'
 - Each native search/expansion page retains at most 24 rows, plus a look-ahead row.
   Search enriches at most two hits with one-hop neighbors (two-second deadlines).
   Additional sources use smaller page sizes mapped to the shared cursor.
-- The cumulative graph retains at most 160 nodes/320 edges. Account/goal roots are
-  protected; older non-root nodes are evicted so new searches continue to work.
+- The cumulative graph retains at most 160 nodes/320 edges. Initial personal evidence
+  and account/goal roots are protected; older catalog nodes are evicted so new searches continue to work.
   The UI discloses a partial view and supports reset/paging.
 - Model selection has an 18-second deadline; answering has 40 seconds; the overall
   stream has 75 seconds after initial reads. Four streams per API process are allowed,
