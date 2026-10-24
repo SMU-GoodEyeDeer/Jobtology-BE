@@ -91,8 +91,9 @@ def test_duplicate_qualification_keys_have_a_canonical_order_in_the_review_diges
     inputs = _inputs()
     qualification = inputs.qualifications[0]
     rows = tuple(qualification.model_copy(update={"qualification_name": name, "minimum_training_hours": hours})
-                 for name, hours in (("Q", 45), ("Q", 60), (None, 0), (None, None)))
+                 for name, hours in (("Alpha", 45), ("Zulu", 60), (None, 0), (None, None)))
     drafts = [build_product_roles(inputs.model_copy(update={"qualifications": order}), policy)
               for order in permutations(rows)]
     assert len({draft.digest for draft in drafts}) == 1
     assert len({draft.document for draft in drafts}) == 1
+    assert len({draft.publish(_approval(draft.digest)).document for draft in drafts}) == 1

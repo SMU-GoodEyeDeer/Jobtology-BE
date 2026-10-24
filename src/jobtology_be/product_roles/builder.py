@@ -10,6 +10,7 @@ from jobtology_be.application.requirement_metadata import RequirementMetadata
 from jobtology_be.corpus.local_snapshot import LocalJsonPublishedCorpusSnapshotReader
 from jobtology_be.product_roles.models import (
     ArtifactApproval,
+    InputQualification,
     InputUnit,
     ProductRoleInputs,
     ProductRolePolicy,
@@ -64,6 +65,11 @@ class ProductRoleBuildError(Exception):
     reason: str
 
 
+def _qualification_sort_key(item: InputQualification) -> tuple[str, str, str]:
+    return (item.competency_code, item.qualification_code,
+            json.dumps(item.model_dump(mode="json"), sort_keys=True, ensure_ascii=False))
+
+
 def build_product_roles(inputs: ProductRoleInputs, policy: ProductRolePolicy) -> ProductRoleDraft:
     ncs_runs = [source.run_id for source in inputs.sources
                 if source.source_id == "ncs_competency" and source.run_id]
@@ -91,9 +97,7 @@ def build_product_roles(inputs: ProductRoleInputs, policy: ProductRolePolicy) ->
         "input_qualifications": [qualification.model_dump(mode="json")
                                  for qualification in sorted(
                                      inputs.qualifications,
-                                     key=lambda item: (item.competency_code, item.qualification_code,
-                                                       json.dumps(item.model_dump(mode="json"),
-                                                                  sort_keys=True, ensure_ascii=False)),
+                                     key=_qualification_sort_key,
                                  )],
         "input_evidence": [evidence.model_dump(mode="json")
                            for evidence in sorted(inputs.evidence,
@@ -169,7 +173,7 @@ def _role_document(
             field_name=unit.occupation_name,
             qualifications=display_qualifications(
                 (item.qualification_code, item.qualification_name)
-                for item in sorted(inputs.qualifications, key=lambda item: item.qualification_code)
+                for item in sorted(inputs.qualifications, key=_qualification_sort_key)
                 if item.competency_code == unit.code
             ),
         )
