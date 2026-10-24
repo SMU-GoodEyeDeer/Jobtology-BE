@@ -14,7 +14,7 @@ from jobtology_be.llm.client import LlmClient, LlmMessage
 
 MAX_CANDIDATES: Final = 3
 MAX_QUOTE_LENGTH: Final = 300
-MAX_SUGGESTIONS: Final = 4
+MAX_SUGGESTIONS: Final = 3
 MAX_SUGGESTION_LENGTH: Final = 60
 
 INSTRUCTIONS: Final = """\
@@ -178,7 +178,10 @@ def select_suggestions(raw: object) -> tuple[str, ...]:
         if not isinstance(item, str):
             continue
         text = re.sub(r"\s+", " ", item).strip()
-        if text and len(text) <= MAX_SUGGESTION_LENGTH:
+        if (
+            text and len(text) <= MAX_SUGGESTION_LENGTH
+            and re.search(r"(?:[?？]|(?:알려|설명해|보여|추천해|비교해|정리해)\s*(?:줘(?:요)?|주세요))[.!]?$", text)
+        ):
             _ = selected.setdefault(text.casefold(), text)
     return tuple(selected.values())[:MAX_SUGGESTIONS]
 

@@ -9,6 +9,7 @@ from uuid import uuid4
 import anyio
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 from test_acceptance_m5_worker import CAPABILITY_LABEL, _snapshot
 
 from jobtology_be.api.chat import require_chat_rate_limiter
@@ -27,7 +28,7 @@ from jobtology_be.application.specs import SkillCatalog
 from jobtology_be.chat.catalog import SharedCatalogRetriever
 from jobtology_be.chat.catalog_queries import SEARCH_ID, WORKSPACE_QUERIES
 from jobtology_be.chat.personal import PersonalRetriever
-from jobtology_be.chat.workspace import ChatWorkspaceService
+from jobtology_be.chat.workspace import AnswerSelection, ChatWorkspaceService
 from jobtology_be.chat.workspace_models import (
     EvidenceGraph,
     GraphNode,
@@ -159,6 +160,13 @@ class Model:
                 output.append({"type": "function_call", "call_id": f"call-{i}", "name": operation["operation"],
                                "arguments": json.dumps({key: operation["value"]})})
         yield {"type": "response.completed", "response": {"output": output}}
+
+
+def test_answer_selection_accepts_three_suggestions_and_rejects_four():
+    payload = {**Model().answer, "suggestions": ["A?", "B?", "C?"]}
+    assert len(AnswerSelection.model_validate(payload).suggestions) == 3
+    with pytest.raises(ValidationError, match="suggestions"):
+        AnswerSelection.model_validate({**payload, "suggestions": [*payload["suggestions"], "D?"]})
 
 
 def initial():
