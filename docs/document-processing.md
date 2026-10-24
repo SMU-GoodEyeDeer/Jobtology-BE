@@ -54,7 +54,8 @@ must never be passed directly to these internal functions by a future API.
 | Word 97–2003 DOC | .NET 8 + bundled DocSharp CLI assemblies |
 
 The HWP converter JAR contains Java class version 69, which requires Java 25.
-PDF alone needs Java 11+. `railpack.json` requests Java 25 and .NET 8 through Mise and retains the platform's
+PDF alone needs Java 11+. `railpack.json` requests Eclipse Temurin 25 (`temurin-25`)
+and .NET 8 through Mise and retains the platform's
 default runtime Apt packages while adding ICU, fontconfig and `curl`. Coolify's
 HTTP healthcheck runs inside the final image and requires `curl` (or `wget`);
 installing a client only on the build/deployment server is insufficient. `.mise.toml` uses
@@ -63,6 +64,12 @@ Railpack carries into the final image. The API provider and start command remain
 Python/Uvicorn. These are tools in the same image, not additional application
 services. See the official [Railpack package configuration](https://railpack.com/guides/installing-packages)
 and [Mise .NET installation settings](https://mise.jdx.dev/lang/dotnet.html).
+
+Keep the Java vendor explicit: Coolify helper 1.0.18 bundles Mise 2026.9.15,
+whose bare `java@25` lookup can return no matching version and make Railpack
+fail during build-plan generation. `temurin-25` resolves on that helper while
+retaining the Java 25 runtime required by the HWP converter. Do not lower the
+Java major version to work around a resolver failure.
 
 For local development, install Java and .NET 8 only for the formats you exercise;
 DOCX/HWPX work without them. Missing runtimes produce explicit parser errors.
