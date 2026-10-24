@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from jobtology_be.api.errors import ErrorResponse
 from jobtology_be.api.identity import AuthenticatedPrincipal, require_authenticated_principal
 from jobtology_be.api.live_source_models import (
+    CrosswalkResponse,
     ExamSessionsResponse,
     NcsDemandResponse,
     NcsUnitResponse,
@@ -34,6 +35,23 @@ def _allowed_query(request: Request, allowed: frozenset[str]) -> None:
     params = request.query_params
     if set(params) - allowed or any(len(params.getlist(key)) != 1 for key in params):
         raise HTTPException(status_code=422)
+
+
+@router.get("/crosswalk", response_model=CrosswalkResponse, responses=_RESPONSES)
+async def crosswalk(
+    request: Request,
+    _: Annotated[AuthenticatedPrincipal, Depends(require_authenticated_principal)],
+    feed: Annotated[LiveSourceFeed, Depends(require_live_source_feed)],
+    node_id: Annotated[str, Query(min_length=1, max_length=500)],
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> CrosswalkResponse:
+    """Versioned catalog mappings for exploration; never automatic competency credit."""
+    _allowed_query(request, frozenset({"node_id", "limit", "offset"}))
+    try:
+        return await feed.crosswalk(node_id, limit, offset)
+    except LiveSourceReadError as error:
+        raise HTTPException(status_code=error.status_code) from None
 
 
 @router.get("/occupation-context", response_model=OccupationContextResponse, responses=_RESPONSES)
