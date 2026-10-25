@@ -1,4 +1,7 @@
+from base64 import urlsafe_b64decode
 from datetime import UTC, datetime
+from hashlib import sha256
+from secrets import token_urlsafe
 from urllib.parse import parse_qs, urlsplit
 from uuid import UUID
 
@@ -96,6 +99,12 @@ def test_google_login_callback_issues_session_from_verified_subject() -> None:
         assert query["scope"] == ["openid profile"]
         assert query["code_challenge_method"] == ["S256"]
         assert OAUTH_ATTEMPT_COOKIE_NAME in client.cookies
+        attempt = next(iter(store.attempts.values()))
+        for token in (
+            query["state"][0], client.cookies[OAUTH_ATTEMPT_COOKIE_NAME],
+            attempt.nonce.get_secret_value(), attempt.pkce_verifier.get_secret_value(),
+        ):
+            assert len(urlsafe_b64decode(token + "=")) == 32
         attempt_cookie = login.headers["set-cookie"].lower()
         assert "httponly" in attempt_cookie
         assert "samesite=lax" in attempt_cookie
@@ -123,6 +132,32 @@ def test_google_login_callback_issues_session_from_verified_subject() -> None:
     assert logout.status_code == 204
     assert store.subjects == ["verified-google-subject"]
     assert provider.calls[0][0] == "code"
+    assert replay.status_code == 400
+
+
+def test_google_callback_accepts_a_pending_sha256_login_attempt() -> None:
+    store, provider = FakeStore(), FakeProvider()
+    state, binding, nonce, verifier = (token_urlsafe(32) for _ in range(4))
+    # Seed the persisted format without using the current hashing helper: the
+    # login redirect may have happened before the backend was redeployed.
+    attempt = OAuthLoginAttempt(
+        state_hash=sha256(state.encode("utf-8")).digest(),
+        browser_binding_hash=sha256(binding.encode("utf-8")).digest(),
+        nonce=SecretStr(nonce), pkce_verifier=SecretStr(verifier),
+    )
+    store.attempts[attempt.state_hash] = attempt
+    with _client(store, provider) as client:
+        client.cookies.set(OAUTH_ATTEMPT_COOKIE_NAME, binding, path="/api/v1/auth/google")
+        response = client.get(CALLBACK, params={"code": "code", "state": state},
+                              follow_redirects=False)
+        session = client.get("/api/v1/auth/session")
+        client.cookies.set(OAUTH_ATTEMPT_COOKIE_NAME, binding, path="/api/v1/auth/google")
+        replay = client.get(CALLBACK, params={"code": "code", "state": state},
+                            follow_redirects=False)
+    assert response.status_code == 307
+    assert session.status_code == 200
+    assert provider.calls == [("code", verifier, nonce)]
+    assert not store.attempts
     assert replay.status_code == 400
 
 
