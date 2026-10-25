@@ -105,20 +105,16 @@ class LiveSourceFeed(Protocol):
 class PostgresLiveSourceFeed:
     engine: AsyncEngine
     _crosswalk_reads: OrderedDict[tuple[str | None, int, int], _CrosswalkRead] = field(default_factory=OrderedDict, repr=False, compare=False)
+    _crosswalk_inflight: dict[tuple[str | None, int, int], _CrosswalkRead] = field(default_factory=dict, repr=False, compare=False)
     _crosswalk_slot: asyncio.Semaphore = field(default_factory=lambda: asyncio.Semaphore(1), repr=False, compare=False)
 
     async def crosswalk(self, node_id: str | None, limit: int, offset: int) -> CrosswalkResponse:
         key = (node_id, limit, offset)
-        cached = self._crosswalk_reads.get(key)
+        cached = self._crosswalk_inflight.get(key) or self._crosswalk_reads.get(key)
         if cached is None:
             cached = _CrosswalkRead()
-            # Keep active readers/waiters on one lock; never evict an in-flight key.
-            if len(self._crosswalk_reads) >= 64:
-                expired = next((key for key, value in self._crosswalk_reads.items() if value.users == 0), None)
-                if expired is not None:
-                    self._crosswalk_reads.pop(expired)
-            if len(self._crosswalk_reads) < 64:
-                self._crosswalk_reads[key] = cached
+        # In-flight keys remain shared even when the successful-result cache is full.
+        self._crosswalk_inflight[key] = cached
         if key in self._crosswalk_reads:
             self._crosswalk_reads.move_to_end(key)
         cached.users += 1
@@ -131,9 +127,15 @@ class PostgresLiveSourceFeed:
                 async with self._crosswalk_slot:
                     result = await self._read("crosswalk", {"node_id": node_id, "limit": limit, "offset": offset}, CrosswalkResponse)
                 cached.result, cached.expires = result, time.monotonic() + 30
+                self._crosswalk_reads[key] = cached
+                self._crosswalk_reads.move_to_end(key)
+                while len(self._crosswalk_reads) > 64:
+                    self._crosswalk_reads.popitem(last=False)
                 return result
         finally:
             cached.users -= 1
+            if cached.users == 0:
+                self._crosswalk_inflight.pop(key, None)
 
     async def _read[T: BaseModel](
         self, operation: LiveOperation, params: dict[str, str | int | date | list[str] | None], model: type[T],

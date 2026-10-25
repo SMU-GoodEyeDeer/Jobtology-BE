@@ -36,6 +36,55 @@ def test_concurrent_identical_crosswalk_reads_share_one_database_query(monkeypat
     anyio.run(run)
 
 
+def test_crosswalk_reads_share_overflow_keys_when_more_than_64_keys_are_inflight(monkeypatch):
+    async def run():
+        started, finish = asyncio.Event(), asyncio.Event()
+        first_key = "ncs:occupation:20010000"
+        overflow_key = "ncs:occupation:20010064"
+        calls = []
+        async def read(operation, params, model):
+            calls.append(params["node_id"])
+            if params["node_id"] == first_key:
+                started.set()
+                await finish.wait()
+            return response()
+        monkeypatch.setattr(live.PostgresLiveSourceFeed, "_read", AsyncMock(side_effect=read))
+        feed = live.PostgresLiveSourceFeed(None)
+        owner = asyncio.create_task(feed.crosswalk(first_key, 6, 0))
+        await started.wait()
+        pending = [asyncio.create_task(feed.crosswalk(f"ncs:occupation:{20010000 + i}", 6, 0)) for i in range(1, 65)]
+        await asyncio.sleep(0)
+        duplicate = asyncio.create_task(feed.crosswalk(overflow_key, 6, 0))
+        await asyncio.sleep(0)
+        finish.set()
+        await asyncio.gather(owner, *pending, duplicate)
+        assert calls.count(overflow_key) == 1 and len(calls) == 65
+        assert len(feed._crosswalk_reads) <= 64
+        assert not feed._crosswalk_inflight
+    anyio.run(run)
+
+
+def test_cancelling_crosswalk_read_cleans_up_inflight_state_and_allows_retry(monkeypatch):
+    async def run():
+        started = asyncio.Event()
+        async def read(*args):
+            started.set()
+            await asyncio.Event().wait()
+        query = AsyncMock(side_effect=read)
+        monkeypatch.setattr(live.PostgresLiveSourceFeed, "_read", query)
+        feed = live.PostgresLiveSourceFeed(None)
+        owner = asyncio.create_task(feed.crosswalk("ncs:occupation:20010202", 6, 0))
+        await started.wait()
+        owner.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await owner
+        assert not feed._crosswalk_inflight
+        query.side_effect, query.return_value = None, response()
+        await feed.crosswalk("ncs:occupation:20010202", 6, 0)
+        assert query.await_count == 2 and not feed._crosswalk_inflight
+    anyio.run(run)
+
+
 def test_crosswalk_cache_expires_and_separates_pages(monkeypatch):
     async def run():
         now = [100.0]
@@ -90,6 +139,7 @@ def test_crosswalk_failure_is_not_cached_and_active_reader_survives_cache_evicti
         feed = live.PostgresLiveSourceFeed(None)
         with pytest.raises(live.LiveSourceReadError):
             await feed.crosswalk("ncs:occupation:20010202", 6, 0)
+        assert not feed._crosswalk_inflight
         owner = asyncio.create_task(feed.crosswalk("ncs:occupation:20010202", 6, 0))
         await started.wait()
         waiter = asyncio.create_task(feed.crosswalk("ncs:occupation:20010202", 6, 0))
