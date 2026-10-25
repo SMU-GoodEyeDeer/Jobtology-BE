@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from jobtology_be.chat.catalog import CatalogRetriever
+from jobtology_be.chat.evidence import focus_neighborhood
 from jobtology_be.chat.personal import PersonalRetriever
 from jobtology_be.chat.workspace_models import EvidenceGraph, sources_for
 
@@ -36,7 +37,7 @@ DESCRIPTIONS = {
     "search_catalog": "Search internal NCS/O*NET skills/occupations, qualifications, exams, publications and approved learning activities using a short Korean/English term.",
     "search_postings": "Search JobKorea/ALIO postings. Supply a short query and occupation_code=null for keyword search, or query='' and a known NCS/O*NET occupation code for inferred associations. Historical/stale associations stay labeled and are not verified requirements.",
     "get_posting": "Read available metadata of a posting node already retrieved. The source may not include full duties, benefits or salary; do not invent missing fields.",
-    "expand_connections": "Expand a known graph node, including virtual posting groups, into real catalog or inferred posting connections. Never infer competency credit from a posting association.",
+    "expand_connections": "Expand a known graph node, including posting nodes and virtual posting groups, into real catalog or inferred posting connections. A posting expands into its source NCS or inferred NCS/O*NET occupations; expand those occupations to explore catalog skills. Catalog skills are reference context, not verified requirements of that posting. Never infer competency credit from a posting association.",
 }
 TOOLS = [{"type": "function", "name": name, "description": DESCRIPTIONS[name],
           "strict": True, "parameters": model.model_json_schema()} for name, model in TOOL_MODELS.items()]
@@ -79,11 +80,20 @@ class ReadTools:
         return await self.catalog.expand(args.node_id)
 
 
-def tool_output(graph: EvidenceGraph) -> str:
+def tool_output(graph: EvidenceGraph, focus_ids: tuple[str, ...] = (), *, source_limit: int = 10,
+                relationship_limit: int = 12) -> str:
+    focused = focus_neighborhood(graph, focus_ids, source_limit)
     nodes = {n.id: n for n in graph.nodes}
+    ordered = {n.id: n for n in (*focused.nodes, *graph.nodes)}
+    selected = tuple(ordered)[:source_limit]
+    links = sorted((link for link in graph.edges if link.source in selected and link.target in selected),
+                   key=lambda link: (not (link.source in focus_ids or link.target in focus_ids),
+                                     not link.kind.startswith("CROSSWALK_")))
+    sources = {s.id: s for s in sources_for(graph)}
     return json.dumps({"sources": [{"id": s.id, "title": s.title[:180], "text": s.text[:300], "basis": s.basis,
+                                    "kind": nodes[s.id].kind, "source_pin": s.source_pin,
                                     "occupation_code": nodes[s.id].occupation_code, "ncs_base_code": nodes[s.id].ncs_base_code}
-                                   for s in sources_for(graph)[:10]],
-                       "relationships": [e.model_dump(mode="json") for e in graph.edges[:12]],
-                       "truncated": graph.truncated or len(graph.nodes) > 10 or len(graph.edges) > 12,
+                                   for key in selected for s in (sources[key],)],
+                       "relationships": [e.model_dump(mode="json") for e in links[:relationship_limit]],
+                       "truncated": graph.truncated or len(graph.nodes) > source_limit or len(graph.edges) > len(links[:relationship_limit]),
                        "warnings": graph.warnings}, ensure_ascii=False)

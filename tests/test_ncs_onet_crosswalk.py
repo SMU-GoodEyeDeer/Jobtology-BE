@@ -65,12 +65,16 @@ def test_crosswalk_rejects_invalid_queries_without_reading(query):
 
 
 def test_crosswalk_proposals_do_not_turn_into_reviewed_requirements():
-    graph = crosswalk_graph(response(mapping()))
+    item = mapping()
+    item["version"] = "bilingual-technical-cues-v1"
+    graph = crosswalk_graph(response(item))
     link = graph.edges[0]
     assert link.kind == "CROSSWALK_RELATED" and link.basis == "PROPOSED"
     assert link.review_status == "UNREVIEWED"
     assert link.source_freshness == "STALE" and link.catalog_freshness == "CURRENT"
     assert link.source_run_id == "ncs-old" and link.catalog_pin == "onet-31"
+    assert link.mapping_version == "bilingual-technical-cues-v1"
+    assert link.source_quote == "구현한다" and link.target_quote == "computer programs"
     assert "역량 자동 인정 없음" in link.explanation
     assert all(node.basis == "REFERENCE" for node in graph.nodes)
 

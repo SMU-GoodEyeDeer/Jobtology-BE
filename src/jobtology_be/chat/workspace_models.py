@@ -49,6 +49,9 @@ class GraphEdge(EvidenceModel):
     review_status: str | None = None
     source_run_id: str | None = None
     catalog_pin: str | None = None
+    mapping_version: str | None = None
+    source_quote: str | None = None
+    target_quote: str | None = None
 
 
 class EvidenceGraph(EvidenceModel):
