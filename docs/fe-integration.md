@@ -661,7 +661,7 @@ Onboarding and My Info share **내 스펙 → 이력서에서 가져오기**. Th
 
 ### Posting classifications and NCS–O*NET crosswalks
 
-Catalog SQL **033 → 034 → 035** must be applied in that order using the catalog
+Catalog SQL **033 → 034 → 035 → 036** must be applied in that order using the catalog
 migration/admin connection before deploying this BE/FE pair. These are catalog
 migrations, not application Alembic revisions. The operator preflight and exact
 revalidation procedure are in `Jobtology-DB/hop/ontology/catalog.md`.
@@ -697,7 +697,8 @@ mapping's display button focuses that connection. Proposed/partial/reviewed labe
 remain on the edges, and existing node provenance is preserved. These are
 exploration-only connections: no crosswalk changes saved specs, analysis credit or
 roadmaps. This graph rendering update needs matching BE/FE versions but no further
-catalog SQL after 033–035.
+application migration. The catalog reader performance correction requires SQL
+`036_crosswalk_reader_performance.sql` after 033–035.
 
 Expanding an individual `posting:{posting_id}` through `/api/v1/chat/catalog`
 also returns its specific eight-digit source NCS classifications and inferred
@@ -712,7 +713,7 @@ The chatbot's `get_posting` and `expand_connections` tools use the same graph.
 Classification edges are paged in groups of 24 using the existing expansion
 offset. A posting with no valid specific classification retains its metadata and
 returns `POSTING_CLASSIFICATIONS_MISSING`; broad source NCS prefixes are not
-expanded into invented specific occupations. No further catalog SQL is needed.
+expanded into invented specific occupations.
 
 Chat questions with `focus_node_ids` now preload connected public evidence rather
 than relying on the model to choose an expansion tool. A focused posting is
@@ -735,4 +736,27 @@ The frontend keeps the question's reference ID when the inspector closes on
 mobile and for follow-up questions. The removable reference label shows this
 scope; conversation/graph resets and account, goal or profile changes clear it.
 Only IDs are sent. Public facts are read by the server and private records remain
-scoped to the authenticated account. No additional SQL is required.
+scoped to the authenticated account.
+
+### Crosswalk reader reliability
+
+SQL 036 prevents PostgreSQL from resolving full NCS occupation snapshots once per
+posting before grouping, resolves distinct pinned endpoints in batches, and reads
+only the source observations needed by paired associations. It preserves catalog
+pins, revalidation, source hashes, review state, totals and ordering. Apply it with
+catalog migration/admin credentials before deploying this reader correction;
+the application Alembic head does not change.
+
+Successful public crosswalk pages are cached in memory for 30 seconds, up to 64
+keys. Concurrent identical requests share a read. Cache misses share one query
+slot before the existing five-second database command budget so aggregate reads
+do not compete for CPU. Failures are not cached. Operation, error class, SQLSTATE
+and elapsed time are logged for 503s; SQL, parameters, error text and credentials
+are omitted.
+
+Application `requirement:` identities are resolved using their explicit
+`ncs_base_code`, rather than sent to the catalog reader. A separate
+`CATALOG_REFERENCE` edge connects the stored assessment to its current catalog
+entry; the assessment's identity, version and result stay intact. Unknown codes
+do not initiate a crosswalk request, and explicit versioned catalog IDs remain
+versioned. The same reference resolution applies to focused chat retrieval.
