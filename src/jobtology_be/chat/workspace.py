@@ -13,6 +13,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from jobtology_be.application.m5_queries import M5DataUnavailableError
 from jobtology_be.chat.catalog import CatalogRetriever
+from jobtology_be.chat.catalog_reference import catalog_lookup_id, with_catalog_reference
 from jobtology_be.chat.evidence import focus_neighborhood
 from jobtology_be.chat.personal import PersonalRetriever, ranked
 from jobtology_be.chat.service import MAX_SUGGESTIONS, select_suggestions
@@ -113,6 +114,7 @@ class ChatWorkspaceService:
         # A selected posting/catalog item must be grounded even if the model
         # decides not to call any tools. Only server-resolved public IDs are read.
         automatic = []
+        references = {}
         for key in focus:
             node = next(n for n in graph.nodes if n.id == key)
             if node.kind == "posting":
@@ -126,7 +128,10 @@ class ChatWorkspaceService:
             elif node.kind in {"role", "ncs_occupation", "ncs_competency", "onet_occupation", "onet_skill"} or (
                     node.kind == "technology" and key.startswith("urn:jobtology:onet-detail:")) or (
                     node.kind == "posting_evidence" and key.startswith("postings:")):
-                automatic.append(key)
+                lookup = catalog_lookup_id(node)
+                if lookup is not None:
+                    automatic.append(lookup)
+                    references[lookup] = node
         automatic = list(dict.fromkeys(automatic))[:2] if getattr(self.catalog, "expand", None) else []
         if automatic:
             yield {"type": "progress", "stage": "searching", "message": "선택한 항목의 NCS·O*NET 근거를 확인하고 있어요."}
@@ -134,7 +139,10 @@ class ChatWorkspaceService:
                 assert self.catalog is not None
                 try:
                     async with asyncio.timeout(7):
-                        return key, await self.catalog.expand(key), None
+                        found = await self.catalog.expand(key)
+                        if key in references:
+                            found = with_catalog_reference(found, references[key], key)
+                        return key, found, None
                 except READ_ERRORS:
                     return key, EvidenceGraph(), "FOCUSED_SOURCE_UNAVAILABLE"
             for key in automatic:

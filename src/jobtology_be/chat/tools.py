@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from jobtology_be.chat.catalog import CatalogRetriever
+from jobtology_be.chat.catalog_reference import catalog_lookup_id, with_catalog_reference
 from jobtology_be.chat.evidence import focus_neighborhood
 from jobtology_be.chat.personal import PersonalRetriever
 from jobtology_be.chat.workspace_models import EvidenceGraph, sources_for
@@ -77,7 +78,10 @@ class ReadTools:
             if known.kind != "posting":
                 raise ValueError("unknown posting")
             return await self.catalog.posting(args.node_id)
-        return await self.catalog.expand(args.node_id)
+        lookup = catalog_lookup_id(known)
+        if lookup is None:
+            raise ValueError("node has no catalog reference")
+        return with_catalog_reference(await self.catalog.expand(lookup), known, lookup)
 
 
 def tool_output(graph: EvidenceGraph, focus_ids: tuple[str, ...] = (), *, source_limit: int = 10,

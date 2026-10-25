@@ -1,4 +1,8 @@
-from dataclasses import dataclass
+import asyncio
+import logging
+import time
+from collections import OrderedDict
+from dataclasses import dataclass, field
 from datetime import date
 from typing import Final, Literal, Protocol
 
@@ -35,6 +39,24 @@ _ERROR_STATUS: Final = {
     "INVALID_CROSSWALK_FILTER": 422,
     "LIVE_POSTING_NOT_FOUND": 404,
 }
+logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class _CrosswalkRead:
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    result: CrosswalkResponse | None = None
+    expires: float = 0
+    users: int = 0
+
+
+def _log_failure(operation: LiveOperation, error: Exception, started: float) -> None:
+    cause = error.orig if isinstance(error, DBAPIError) and error.orig is not None else error
+    cause = cause.__cause__ or cause
+    # Error messages, SQL, parameters and URLs may contain private data.
+    logger.warning("Catalog read failed: operation=%s error=%s sqlstate=%s elapsed_ms=%d",
+                   operation, type(cause).__name__, getattr(cause, "sqlstate", None),
+                   round((time.monotonic() - started) * 1000))
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,24 +104,55 @@ class LiveSourceFeed(Protocol):
 @dataclass(frozen=True, slots=True)
 class PostgresLiveSourceFeed:
     engine: AsyncEngine
+    _crosswalk_reads: OrderedDict[tuple[str | None, int, int], _CrosswalkRead] = field(default_factory=OrderedDict, repr=False, compare=False)
+    _crosswalk_slot: asyncio.Semaphore = field(default_factory=lambda: asyncio.Semaphore(1), repr=False, compare=False)
 
     async def crosswalk(self, node_id: str | None, limit: int, offset: int) -> CrosswalkResponse:
-        return await self._read("crosswalk", {"node_id": node_id, "limit": limit, "offset": offset}, CrosswalkResponse)
+        key = (node_id, limit, offset)
+        cached = self._crosswalk_reads.get(key)
+        if cached is None:
+            cached = _CrosswalkRead()
+            # Keep active readers/waiters on one lock; never evict an in-flight key.
+            if len(self._crosswalk_reads) >= 64:
+                expired = next((key for key, value in self._crosswalk_reads.items() if value.users == 0), None)
+                if expired is not None:
+                    self._crosswalk_reads.pop(expired)
+            if len(self._crosswalk_reads) < 64:
+                self._crosswalk_reads[key] = cached
+        if key in self._crosswalk_reads:
+            self._crosswalk_reads.move_to_end(key)
+        cached.users += 1
+        try:
+            async with cached.lock:
+                if cached.result is not None and cached.expires > time.monotonic():
+                    return cached.result
+                # These aggregate reads share one CPU-heavy query slot. Queueing
+                # happens before the database's existing five-second command budget.
+                async with self._crosswalk_slot:
+                    result = await self._read("crosswalk", {"node_id": node_id, "limit": limit, "offset": offset}, CrosswalkResponse)
+                cached.result, cached.expires = result, time.monotonic() + 30
+                return result
+        finally:
+            cached.users -= 1
 
     async def _read[T: BaseModel](
         self, operation: LiveOperation, params: dict[str, str | int | date | list[str] | None], model: type[T],
     ) -> T:
+        started = time.monotonic()
         try:
             async with self.engine.connect() as connection, connection.begin():
                 _ = await connection.execute(text("SET TRANSACTION ISOLATION LEVEL READ COMMITTED, READ ONLY"))
                 result = await connection.execute(text(_FUNCTIONS[operation]), params)
                 payload = result.scalar_one()
             if not isinstance(payload, str):
-                raise LiveSourceReadError(503)
+                raise TypeError("invalid catalog response")
             return model.model_validate_json(payload)
         except DBAPIError as error:
+            if live_source_error_status(error) == 503:
+                _log_failure(operation, error, started)
             raise LiveSourceReadError(live_source_error_status(error)) from None
-        except (SQLAlchemyError, ValidationError, ValueError, TypeError, TimeoutError, OSError):
+        except (SQLAlchemyError, ValidationError, ValueError, TypeError, TimeoutError, OSError) as error:
+            _log_failure(operation, error, started)
             raise LiveSourceReadError(503) from None
 
     async def postings(
