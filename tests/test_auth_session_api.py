@@ -1,3 +1,4 @@
+from hashlib import sha256
 from uuid import UUID
 
 from fastapi.testclient import TestClient
@@ -18,18 +19,21 @@ FRONTEND_ORIGIN = "http://localhost:5173"
 
 class RecordingSessionStore:
     def __init__(self, credentials: SessionCredentials) -> None:
-        self._credentials = credentials
+        # Model digests already stored before a deployment, independently of the
+        # current hashing helper so an algorithm change cannot hide a regression.
+        self._token_hash = sha256(credentials.session_token.encode("utf-8")).digest()
+        self._csrf_hash = sha256(credentials.csrf_token.encode("utf-8")).digest()
         self.revoked_session_hash: bytes | None = None
 
     async def resolve_session(self, session_token_hash: bytes) -> SessionPrincipal | None:
-        if session_token_hash != self._credentials.hashes.token_hash:
+        if session_token_hash != self._token_hash:
             return None
-        return SessionPrincipal(user_id=USER_ID, csrf_hash=self._credentials.hashes.csrf_hash)
+        return SessionPrincipal(user_id=USER_ID, csrf_hash=self._csrf_hash)
 
     async def matches_session_csrf(self, session_token_hash: bytes, csrf_hash: bytes) -> bool:
         return (
-            session_token_hash == self._credentials.hashes.token_hash
-            and csrf_hash == self._credentials.hashes.csrf_hash
+            session_token_hash == self._token_hash
+            and csrf_hash == self._csrf_hash
         )
 
     async def revoke_session(self, session_token_hash: bytes) -> None:

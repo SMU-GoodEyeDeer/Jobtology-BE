@@ -1,3 +1,5 @@
+from base64 import urlsafe_b64decode
+
 from jobtology_be.modules.auth.session import (
     SessionCredentials,
     issue_session_credentials,
@@ -17,6 +19,8 @@ def test_issued_session_credentials_round_trip_and_hash_independently() -> None:
     assert len(hashes.token_hash) == 32
     assert len(hashes.csrf_hash) == 32
     assert hashes.token_hash != hashes.csrf_hash
+    assert len(urlsafe_b64decode(issued.session_token + "=")) == 32
+    assert len(urlsafe_b64decode(issued.csrf_token + "=")) == 32
 
 
 def test_session_credentials_reject_malformed_cookie_value() -> None:

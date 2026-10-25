@@ -72,4 +72,11 @@ def issue_session_credentials() -> SessionCredentials:
 
 
 def hash_session_secret(secret: str) -> bytes:
+    """Hash a server-issued random token for database lookup, not a password.
+
+    Sessions, CSRF tokens, OAuth state and browser bindings originate from
+    token_urlsafe(32), with 256 bits of randomness. Incoming values only look up
+    those stored digests. Keep SHA-256 compatible with existing sessions and
+    pending OAuth attempts; human passwords require a separate password KDF.
+    """
     return sha256(secret.encode("utf-8")).digest()

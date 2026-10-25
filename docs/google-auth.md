@@ -41,3 +41,20 @@ The browser navigates to `GET https://jobtology.yeongmin.net/api/v1/auth/google/
 Do not use the OAuth client secret as a frontend secret, do not link users by email, and do not substitute test fixtures for a human Google consent check. Local tests use synthetic signed JWT keys and a fake HTTP transport only; they do not demonstrate live Google consent. Once the client has been provisioned, test the browser flow with an authorized human Google account, then verify `/api/v1/auth/session`, CSRF rejection, and logout. Keep `JOBTOLOGY_AUTH_ENABLED=false` until those prerequisites are ready; missing live client credentials are an external configuration blocker, not a reason to forge a session.
 
 The application removes callback query parameters from its own access-log scope. Also ensure the external ingress/reverse proxy does not log OAuth callback query strings, which contain a one-time authorization code and state.
+
+## Random token hashing and code scanning
+
+Session and CSRF tokens, OAuth state, and the browser-binding token are generated
+server-side with `secrets.token_urlsafe(32)` (256 random bits per token). Their
+SHA-256 digests are stored for lookup; callback and cookie values are checked
+against those existing digests. These values are not human-chosen passwords.
+SHA-256 is appropriate for these high-entropy tokens; human passwords would need
+a dedicated password KDF. See [Python's token generation documentation](https://docs.python.org/3.12/library/secrets.html#generating-tokens)
+and [CodeQL's hashing guidance](https://codeql.github.com/codeql-query-help/python/py-weak-sensitive-data-hashing/).
+
+CodeQL alert #1 (`py/weak-sensitive-data-hashing`) labels the OAuth callback state
+as a password. Review that finding as a false positive for this verified token
+flow; keep scanning enabled. Changing these digests without a compatibility plan
+would invalidate stored sessions and pending OAuth attempts. No session hash key
+is required. Regression tests cover existing SHA-256 sessions, pending OAuth
+callbacks, and the token sizes on both issuance paths.
