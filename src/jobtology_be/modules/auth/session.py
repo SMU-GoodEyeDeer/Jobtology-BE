@@ -1,6 +1,8 @@
+import hashlib
+import hmac
+import os
 from dataclasses import dataclass
 from datetime import timedelta
-from hashlib import sha256
 from secrets import token_urlsafe
 from typing import Final, Protocol
 
@@ -11,6 +13,7 @@ from jobtology_be.infrastructure.persistence.auth_contracts import (
 
 _SESSION_SECRET_BYTES: Final = 32
 _COOKIE_SECRET_SEPARATOR: Final = "."
+_SESSION_HASH_KEY: Final[bytes] = os.environ.get("JOBTOLOGY_SESSION_HASH_KEY", "").encode("utf-8")
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,4 +75,4 @@ def issue_session_credentials() -> SessionCredentials:
 
 
 def hash_session_secret(secret: str) -> bytes:
-    return sha256(secret.encode("utf-8")).digest()
+    return hmac.new(_SESSION_HASH_KEY, secret.encode("utf-8"), hashlib.sha256).digest()
