@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from datetime import timedelta
+from ipaddress import ip_address
 from pathlib import Path
+from re import fullmatch
 from typing import ClassVar, Literal, assert_never
 from urllib.parse import urlsplit
 
@@ -59,6 +61,9 @@ class Settings(BaseSettings):
     enable_fe_mock_samples: bool = False
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
     auth_enabled: bool = False
+    turnstile_enabled: bool = True
+    turnstile_secret: SecretStr | None = None
+    turnstile_hostnames: list[str] = Field(default_factory=list)
     # Reject stale guest deployments instead of silently issuing anonymous accounts.
     guest_sessions_enabled: bool = False
     product_roles_enabled: bool = False
@@ -188,6 +193,30 @@ class Settings(BaseSettings):
                     pass
                 case unreachable:
                     assert_never(unreachable)
+        if self.auth_enabled and self.turnstile_enabled:
+            if self.turnstile_secret is None or not self.turnstile_secret.get_secret_value().strip():
+                raise ValueError("Turnstile requires the widget secret in JOBTOLOGY_TURNSTILE_SECRET")
+            if not self.turnstile_hostnames:
+                raise ValueError("Turnstile requires explicit frontend hostnames")
+            for hostname in self.turnstile_hostnames:
+                if (
+                    len(hostname) > 253 or fullmatch(
+                        r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+                        r"(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*", hostname,
+                    ) is None
+                ):
+                    raise ValueError("Turnstile hostnames must be exact lowercase hostnames without ports")
+                try:
+                    address = ip_address(hostname)
+                    local_address = address.is_loopback or address.is_unspecified
+                except ValueError:
+                    local_address = False
+                if self.environment == "production" and (
+                    local_address or hostname == "localhost" or hostname.endswith(".localhost")
+                ):
+                    raise ValueError("Production Turnstile hostnames cannot include localhost")
+            if urlsplit(self.frontend_url or "").hostname not in self.turnstile_hostnames:
+                raise ValueError("Turnstile hostnames must include the configured frontend hostname")
         return self
 
 

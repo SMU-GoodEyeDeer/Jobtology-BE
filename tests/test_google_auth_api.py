@@ -7,12 +7,14 @@ from uuid import UUID
 
 import anyio
 import httpx
+import pytest
 from authlib.jose import JsonWebKey, JsonWebToken
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from starlette.types import Message, Scope
 
 from jobtology_be.api.dependencies import ApiDependencies
+from jobtology_be.api.google_auth import require_turnstile_verifier
 from jobtology_be.infrastructure.persistence.auth_contracts import (
     ConsumedOAuthLoginAttempt,
     GoogleLogin,
@@ -32,6 +34,7 @@ from jobtology_be.modules.auth.session_cookies import (
     SESSION_COOKIE_NAME,
     OAuthCallbackQueryMiddleware,
 )
+from jobtology_be.modules.auth.turnstile import CloudflareTurnstileVerifier
 from jobtology_be.settings import GoogleOidcSettings, Settings
 
 USER_ID = UUID("d0b3d8d1-7de4-4a62-8c58-e652431377b4")
@@ -79,14 +82,95 @@ class FakeProvider:
         return GoogleIdentity("verified-google-subject", "Google 사용자")
 
 
-def _client(store: FakeStore, provider: GoogleIdentityProvider, *, enabled: bool = True) -> TestClient:
-    return TestClient(create_app(Settings.model_validate({
-        "environment": "test", "auth_enabled": enabled,
+def _client(
+    store: FakeStore, provider: GoogleIdentityProvider, *, enabled: bool = True,
+    protected: bool = False, transport: httpx.AsyncBaseTransport | None = None,
+) -> TestClient:
+    app = create_app(Settings.model_validate({
+        "environment": "test", "auth_enabled": enabled, "turnstile_enabled": protected,
+        "turnstile_secret": "fixture-only-secret", "turnstile_hostnames": ["localhost"],
         "google_client_id": "client-id", "google_client_secret": "secret",
         "google_redirect_uri": "http://localhost:8000/api/v1/auth/google/callback",
         "frontend_url": "http://localhost:5173", "cors_origins": ["http://localhost:5173"],
     }), dependencies=ApiDependencies(session_store=store, google_login_store=store,
-                                    google_identity_provider=provider)))
+                                    google_identity_provider=provider))
+    if transport is not None:
+        app.dependency_overrides[require_turnstile_verifier] = lambda: CloudflareTurnstileVerifier(
+            SecretStr("fixture-only-secret"), ["localhost"], transport=transport,
+        )
+    return TestClient(app)
+
+
+def test_verified_login_preserves_oauth_callback_and_rejects_token_replay() -> None:
+    store, provider = FakeStore(), FakeProvider()
+    calls = []
+
+    def siteverify(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        assert str(request.url) == "https://challenges.cloudflare.com/turnstile/v0/siteverify"
+        assert parse_qs(request.content.decode()) == {
+            "secret": ["fixture-only-secret"], "response": ["fresh-browser-token"],
+        }
+        return httpx.Response(200, json={
+            "success": len(calls) == 1, "action": "google_login", "hostname": "localhost",
+        })
+
+    with _client(store, provider, protected=True, transport=httpx.MockTransport(siteverify)) as client:
+        first = client.post("/api/v1/auth/google/login", headers={"Origin": "http://localhost:5173"},
+                            json={"cf-turnstile-response": "fresh-browser-token"})
+        assert first.status_code == 200
+        assert first.headers["cache-control"] == "no-store"
+        assert OAUTH_ATTEMPT_COOKIE_NAME in client.cookies
+        authorization = urlsplit(first.json()["authorization_url"])
+        assert authorization.hostname == "accounts.google.com"
+        assert "fresh-browser-token" not in first.text
+        replay = client.post("/api/v1/auth/google/login", headers={"Origin": "http://localhost:5173"},
+                             json={"cf-turnstile-response": "fresh-browser-token"})
+        assert replay.status_code == 403
+        assert len(store.attempts) == 1
+        callback = client.get(CALLBACK, params={"code": "code", "state": parse_qs(authorization.query)["state"][0]},
+                              follow_redirects=False)
+        assert callback.status_code == 307
+        assert client.get("/api/v1/auth/session").status_code == 200
+    assert len(calls) == 2
+    assert not store.attempts
+
+
+@pytest.mark.parametrize("origin", [None, "https://attacker.example"])
+def test_protected_login_rejects_origin_and_get_bypass_before_siteverify(origin) -> None:
+    store, provider = FakeStore(), FakeProvider()
+    def unexpected_call(request):
+        raise AssertionError("Must reject before contacting Cloudflare")
+    with _client(store, provider, protected=True, transport=httpx.MockTransport(unexpected_call)) as client:
+        assert client.get("/api/v1/auth/google/login", follow_redirects=False).status_code == 403
+        response = client.post("/api/v1/auth/google/login", headers={"Origin": origin} if origin else {},
+                               json={"cf-turnstile-response": "token"})
+        assert response.status_code == 403
+    assert not store.attempts
+
+
+@pytest.mark.parametrize("body", [{}, {"cf-turnstile-response": ""}, {"cf-turnstile-response": "x" * 2049},
+                                  {"cf-turnstile-response": True}, {"cf-turnstile-response": ["token"]}])
+def test_protected_login_rejects_invalid_tokens_before_siteverify(body) -> None:
+    store, provider = FakeStore(), FakeProvider()
+    def unexpected_call(request):
+        raise AssertionError("Invalid tokens must not reach Cloudflare")
+    with _client(store, provider, protected=True, transport=httpx.MockTransport(unexpected_call)) as client:
+        response = client.post("/api/v1/auth/google/login", headers={"Origin": "http://localhost:5173"}, json=body)
+        assert response.status_code == 422
+    assert not store.attempts
+
+
+def test_failed_siteverify_does_not_create_an_oauth_attempt() -> None:
+    store, provider = FakeStore(), FakeProvider()
+    with _client(store, provider, protected=True, transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, json={"success": False, "error-codes": ["timeout-or-duplicate"]}),
+    )) as client:
+        response = client.post("/api/v1/auth/google/login", headers={"Origin": "http://localhost:5173"},
+                               json={"cf-turnstile-response": "expired-or-replayed-token"})
+    assert response.status_code == 403
+    assert "set-cookie" not in response.headers
+    assert not store.attempts
 
 
 def test_google_login_callback_issues_session_from_verified_subject() -> None:

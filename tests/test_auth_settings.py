@@ -30,6 +30,7 @@ def test_cookie_policy_is_insecure_only_for_local_development() -> None:
     # Given
     local_development = Settings(
         _env_file=None,
+        turnstile_enabled=False,
         auth_enabled=True,
         google_client_id="client-id",
         google_client_secret="client-secret",
@@ -38,6 +39,8 @@ def test_cookie_policy_is_insecure_only_for_local_development() -> None:
     )
     production = Settings(
         _env_file=None,
+        turnstile_secret="fixture-only-secret",
+        turnstile_hostnames=["app.example.test"],
         environment="production",
         database_url="postgresql+asyncpg://jobtology:secret@localhost:5432/jobtology",
         auth_enabled=True,

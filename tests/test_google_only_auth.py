@@ -27,7 +27,8 @@ SESSION_PATH = "/api/v1/auth/session"
 def _settings(database_url: str) -> Settings:
     return Settings(
         _env_file=None, environment="test", database_url=database_url,
-        auth_enabled=True, google_client_id="client-id", google_client_secret="secret",
+        auth_enabled=True, turnstile_enabled=False,
+        google_client_id="client-id", google_client_secret="secret",
         google_redirect_uri="http://localhost:8000/api/v1/auth/google/callback",
         frontend_url=ORIGIN, cors_origins=[ORIGIN],
     )
