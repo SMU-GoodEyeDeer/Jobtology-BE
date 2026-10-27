@@ -5,9 +5,9 @@ from typing import Annotated, Protocol
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Request
-from pydantic import SecretStr
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from sqlalchemy.exc import SQLAlchemyError
-from starlette.responses import PlainTextResponse, RedirectResponse, Response
+from starlette.responses import JSONResponse, PlainTextResponse, RedirectResponse, Response
 
 from jobtology_be.infrastructure.persistence.auth_contracts import (
     ConsumedOAuthLoginAttempt,
@@ -27,6 +27,7 @@ from jobtology_be.modules.auth.session_cookies import (
     set_oauth_attempt_cookie,
     set_session_cookie,
 )
+from jobtology_be.modules.auth.turnstile import CloudflareTurnstileVerifier, TurnstileVerifier
 from jobtology_be.settings import Settings
 
 router = APIRouter(tags=["authentication"])
@@ -52,6 +53,19 @@ def require_google_provider() -> GoogleIdentityProvider | None:
     return None
 
 
+def require_turnstile_verifier(
+    settings: Annotated[Settings, Depends(require_google_settings)],
+) -> TurnstileVerifier | None:
+    if settings.turnstile_secret is None:
+        return None
+    return CloudflareTurnstileVerifier(settings.turnstile_secret, settings.turnstile_hostnames)
+
+
+class GoogleLoginVerification(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    token: str = Field(alias="cf-turnstile-response", min_length=1, max_length=2048, strict=True)
+
+
 def _error(status_code: int, *, clear_cookie: bool = False) -> Response:
     response = PlainTextResponse("Authentication unavailable" if status_code == 503 else "Authentication failed",
                                  status_code=status_code, headers={"Cache-Control": "no-store"})
@@ -64,6 +78,34 @@ def _error(status_code: int, *, clear_cookie: bool = False) -> Response:
 async def google_login(
     settings: Annotated[Settings, Depends(require_google_settings)],
     store: Annotated[GoogleLoginStore | None, Depends(require_google_login_store)],
+) -> Response:
+    if not settings.auth_enabled:
+        return _error(503)
+    if settings.turnstile_enabled:
+        return _error(403)
+    return await _start_google_login(settings, store)
+
+
+@router.post("/auth/google/login", summary="Verify Turnstile and start Google login")
+async def verified_google_login(
+    body: GoogleLoginVerification,
+    request: Request,
+    settings: Annotated[Settings, Depends(require_google_settings)],
+    store: Annotated[GoogleLoginStore | None, Depends(require_google_login_store)],
+    verifier: Annotated[TurnstileVerifier | None, Depends(require_turnstile_verifier)],
+) -> Response:
+    headers = {"Cache-Control": "no-store"}
+    if not settings.auth_enabled or not settings.google_oidc_settings.is_configured or store is None:
+        return JSONResponse({"detail": "Authentication unavailable"}, status_code=503, headers=headers)
+    if request.headers.get("origin") != settings.frontend_url:
+        return JSONResponse({"detail": "Authentication failed"}, status_code=403, headers=headers)
+    if settings.turnstile_enabled and (verifier is None or not await verifier.verify(body.token)):
+        return JSONResponse({"detail": "Verification failed"}, status_code=403, headers=headers)
+    return await _start_google_login(settings, store, as_json=True)
+
+
+async def _start_google_login(
+    settings: Settings, store: GoogleLoginStore | None, *, as_json: bool = False,
 ) -> Response:
     config = settings.google_oidc_settings
     if not settings.auth_enabled or not config.is_configured or store is None:
@@ -84,7 +126,12 @@ async def google_login(
         "scope": "openid profile", "state": state, "nonce": nonce,
         "code_challenge": challenge, "code_challenge_method": "S256",
     })
-    response = RedirectResponse(f"{AUTHORIZE_URL}?{query}", headers={"Cache-Control": "no-store"})
+    authorization_url = f"{AUTHORIZE_URL}?{query}"
+    response = (
+        JSONResponse({"authorization_url": authorization_url}, headers={"Cache-Control": "no-store"})
+        if as_json else
+        RedirectResponse(authorization_url, headers={"Cache-Control": "no-store"})
+    )
     set_oauth_attempt_cookie(response, binding)
     return response
 
