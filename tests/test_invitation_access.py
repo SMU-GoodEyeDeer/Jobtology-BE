@@ -278,3 +278,153 @@ def test_concurrent_same_identity_consumes_one_use_and_sql_failure_rolls_back_re
             await database.dispose()
 
     anyio.run(exercise)
+
+
+def test_cutover_repair_admits_old_backend_signups_without_overwriting_existing_access(
+    acceptance_database_url,
+):
+    """Repair the migration/deployment gap without renewing or unrevoking trials."""
+    from pathlib import Path
+
+    script = (Path(__file__).parents[1] / "deploy/reconcile-legacy-admissions.sql").read_text()
+
+    async def exercise():
+        database = Database.create(acceptance_database_url)
+        try:
+            auth = PostgresAuthStore(database)
+            management = PostgresManagementStore(database)
+            code = await create_code(management)
+            issued = await auth.create_google_session(login("existing-trial", code["code"]))
+            await management.update_user(issued.user_id, {"status": "DEACTIVATED"})
+            old_user = uuid4()
+            async with database.sessions.begin() as session:
+                before = dict((await session.execute(select(s.account_access))).mappings().one())
+                # This is the old backend's account creation path after the migration.
+                await session.execute(insert(s.users).values(id=old_user))
+                await session.execute(insert(s.profiles).values(user_id=old_user))
+                await session.execute(
+                    insert(s.google_identities).values(
+                        issuer="https://accounts.google.com",
+                        subject="cutover-gap",
+                        user_id=old_user,
+                    )
+                )
+            with pytest.raises(AdmissionDenied, match="INVITATION_REQUIRED"):
+                await auth.create_google_session(login("cutover-gap"))
+            async with database.engine.connect() as connection:
+                native = (await connection.get_raw_connection()).driver_connection
+                await native.execute(script)
+                await native.execute(script)
+            restored = await auth.create_google_session(login("cutover-gap"))
+            assert restored.user_id == old_user
+            with pytest.raises(AdmissionDenied, match="ACCESS_REVOKED"):
+                await auth.create_google_session(login("existing-trial"))
+            async with database.sessions() as session:
+                unchanged = dict(
+                    (
+                        await session.execute(
+                            select(s.account_access).where(
+                                s.account_access.c.subject_hash == subject_digest("existing-trial"),
+                            )
+                        )
+                    )
+                    .mappings()
+                    .one()
+                )
+                assert unchanged == before
+                assert await session.scalar(select(s.invitation_codes.c.use_count)) == 1
+                legacy = (
+                    (
+                        await session.execute(
+                            select(s.account_access).where(
+                                s.account_access.c.user_id == old_user,
+                            )
+                        )
+                    )
+                    .mappings()
+                    .one()
+                )
+                assert legacy["source"] == "LEGACY" and legacy["expires_at"] is None
+        finally:
+            await database.dispose()
+
+    anyio.run(exercise)
+
+
+def test_invitation_grants_remove_inherited_deletes_and_allow_account_erasure(
+    acceptance_database_url,
+):
+    """Narrow broad DML grants while preserving the admission ledger on erasure."""
+    from pathlib import Path
+
+    from sqlalchemy import delete, text
+    from sqlalchemy.exc import DBAPIError
+
+    role = "invitation_grant_test_" + uuid4().hex[:16]
+    script = (
+        (Path(__file__).parents[1] / "deploy/invitation-access-grants.sql")
+        .read_text()
+        .replace("jobtology_app", role)
+    )
+
+    async def exercise():
+        database = Database.create(acceptance_database_url)
+        created_role = False
+        try:
+            async with database.engine.begin() as connection:
+                await connection.execute(text(f'CREATE ROLE "{role}" NOLOGIN'))
+                created_role = True
+                await connection.execute(text(f'GRANT USAGE ON SCHEMA public TO "{role}"'))
+                await connection.execute(
+                    text(
+                        f'GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO "{role}"'
+                    )
+                )
+            async with database.engine.connect() as connection:
+                native = (await connection.get_raw_connection()).driver_connection
+                await native.execute(script)
+                await native.execute(script)
+            async with database.sessions() as session:
+                for table in ("invitation_codes", "account_access"):
+                    for permission in ("SELECT", "INSERT", "UPDATE"):
+                        assert await session.scalar(
+                            text("SELECT has_table_privilege(:role,:table,:permission)"),
+                            {"role": role, "table": "public." + table, "permission": permission},
+                        )
+                    assert not await session.scalar(
+                        text("SELECT has_table_privilege(:role,:table,'DELETE')"),
+                        {"role": role, "table": "public." + table},
+                    )
+                assert not await session.scalar(
+                    text(
+                        "SELECT has_table_privilege(:role,'public.management_audit','UPDATE,DELETE')"
+                    ),
+                    {"role": role},
+                )
+            for table in ("invitation_codes", "account_access", "management_audit"):
+                with pytest.raises(DBAPIError) as error:
+                    async with database.sessions.begin() as session:
+                        await session.execute(text(f'SET LOCAL ROLE "{role}"'))
+                        await session.execute(text(f"DELETE FROM public.{table}"))
+                assert error.value.orig.sqlstate == "42501"
+            management = PostgresManagementStore(database)
+            code = await create_code(management)
+            issued = await PostgresAuthStore(database).create_google_session(
+                login("erasure-grant", code["code"])
+            )
+            async with database.sessions.begin() as session:
+                await session.execute(text(f'SET LOCAL ROLE "{role}"'))
+                for table in (s.auth_sessions, s.google_identities, s.profiles):
+                    await session.execute(delete(table).where(table.c.user_id == issued.user_id))
+                await session.execute(delete(s.users).where(s.users.c.id == issued.user_id))
+            async with database.sessions() as session:
+                access = (await session.execute(select(s.account_access))).mappings().one()
+                assert access["user_id"] is None and access["source"] == "INVITATION"
+        finally:
+            if created_role:
+                async with database.engine.begin() as connection:
+                    await connection.execute(text(f'DROP OWNED BY "{role}"'))
+                    await connection.execute(text(f'DROP ROLE "{role}"'))
+            await database.dispose()
+
+    anyio.run(exercise)
