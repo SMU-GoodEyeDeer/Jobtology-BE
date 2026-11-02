@@ -136,18 +136,21 @@ management, apply one of these transport configurations:
 records the dedicated network topology as a Compose override/reference. Merge it
 with the actual approved service definitions and preserve existing images,
 secrets, volumes and ingress rules. It does not deploy standalone Railpack
-applications by itself. For the current separate Coolify applications, persist
-these same attachments and the management-only alias in their resource/deployment
-configuration. A one-off `docker network connect` is insufficient because
+applications by itself. For the current separate Coolify applications,
+[`deploy/operations/management_network.py`](../deploy/operations/management_network.py)
+maintains these attachments on the host; see the
+[installation and verification instructions](../deploy/operations/README.md).
+A one-off `docker network connect` is insufficient because
 replacement containers lose manual attachments. Coolify's Custom Docker Options
 does not apply `--network`; do not use that field as a persistence mechanism.
 
 After deployment, verify `docker network inspect jobtology-management` lists only
 the approved backend/dashboard containers and has `Internal: true`; confirm the
 dashboard resolves `jobtology-management-api` on that network and reaches backend
-health. Recheck membership/alias after replacing either container. The earlier
-Goldship HTTP probe established shared-network reachability only; this dedicated
-network or TLS configuration has not been applied to production by the PR.
+health. Recheck membership/alias after replacing either container. On November 2,
+2026, the dedicated bridge and host watcher were installed on Goldship; the
+dashboard's runtime client successfully fetched invitations, users and sessions.
+Merging this repository alone does not install or update the host helper.
 
 References: [Docker networking](https://docs.docker.com/engine/network/),
 [Coolify networking](https://coolify.io/docs/services/configuration/networking), and
