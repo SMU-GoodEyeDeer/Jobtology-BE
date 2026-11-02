@@ -44,16 +44,17 @@ identical inputs, so exposing these display fields does not require a new approv
 
 All runtime flags default to **off**:
 
-The repository deployment config now selects the replacement artifact
-`a550c8f9…192908e`. Its [2026-10-24 technical review](product-role-review-20261024.md)
-reconstructs the exact previous approved artifact and verifies unchanged catalog
-content/planning values under refreshed source pins. Activation is proposed for
-owner review and merge; the running fallback image still uses the old approval.
+The deployment configuration selects artifact `e0694fb9…22b191f5`. Its
+[2026-11-02 technical review](product-role-review-20261102.md) reconstructs the
+previous approved `a550c8f9…192908e` document exactly after replacing only the
+October 30 NCS source pins/timestamps. Merge and deployment activate that reviewed
+record. The running fallback image still uses the October 24 approval until the
+new image passes readiness.
 
 | Environment variable | Effect when enabled |
 |---|---|
 | `JOBTOLOGY_PRODUCT_ROLES_ENABLED` | Load role inputs at startup and enable occupations/analysis from the generated release. Requires `JOBTOLOGY_CATALOG_DATABASE_URL` and the product database. A failed load keeps occupations and analysis at 503 without preventing process startup. |
-| `JOBTOLOGY_PRODUCT_ROLE_ARTIFACT_APPROVAL_PATH` | Path to a separate owner-reviewed JSON record `{ "sha256": "<full draft digest>", "approved_by": "<reviewer>", "reviewed_at": "<timezone-aware ISO instant>" }`. Records live in `config/product_roles/approvals/<digest>.json`; the current deployment configuration selects `a550c8f9…192908e.json` ([2026-10-24 review](product-role-review-20261024.md)). The running fallback image uses the previous `524f1e46…0f7bd4.json` record, approved 2026-10-17. Missing/invalid/mismatched approval leaves the generated draft unpublished and the runtime at 503. |
+| `JOBTOLOGY_PRODUCT_ROLE_ARTIFACT_APPROVAL_PATH` | Path to a separate owner-reviewed JSON record `{ "sha256": "<full draft digest>", "approved_by": "<reviewer>", "reviewed_at": "<timezone-aware ISO instant>" }`. Records live in `config/product_roles/approvals/<digest>.json`; the deployment configuration selects `e0694fb9…22b191f5.json` ([2026-11-02 review](product-role-review-20261102.md)). The running fallback image uses `a550c8f9…192908e.json` ([2026-10-24 review](product-role-review-20261024.md)). Missing/invalid/mismatched approval leaves the generated draft unpublished and the runtime at 503. |
 | `JOBTOLOGY_INPROCESS_WORKER_ENABLED` | While a role release is loaded, process at most one queued local-json-labeled recompute every three seconds. A READY feasible targeted analysis creates and activates a titled roadmap only when the goal has no ACTIVE roadmap; later recomputes (e.g. after step completion) keep the existing roadmap. |
 | `JOBTOLOGY_CAPABILITY_LIST_AUTHORITATIVE` | Treat the stored capability list as complete; unmatched requirements are UNMET, including an empty capability list. |
 
