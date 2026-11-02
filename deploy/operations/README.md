@@ -20,8 +20,10 @@ support (API 1.48+, verified with Engine 29.8.2 on Goldship). It uses the local
 Unix socket explicitly and ignores `DOCKER_*` environment overrides. Never
 mount that socket in either application.
 
-The bridge has `Internal: true`. Existing `coolify` attachments, ingress and
-outbound routes stay in place: the new attachment has gateway priority `-1`.
+The bridge has `Internal: true`. Existing `coolify` attachments and outbound
+routes stay in place: the new attachment has gateway priority `-1`. Traefik must
+also be explicitly pinned to `coolify` for public ingress. Gateway priority does
+not control which container address Traefik selects.
 The helper refuses non-internal networks, unapproved members, and existing
 attachments with unexpected aliases or gateway priorities. It never removes
 containers or disconnects networks, and does not inspect credentials or
@@ -32,6 +34,20 @@ trusted.
 
 Run these commands as `maxjo` **on Goldship**, from the matching backend checkout.
 They need no Python packages, database credentials or management token:
+
+**Before attaching either application**, preserve its existing Coolify container
+labels and add:
+
+```text
+traefik.docker.network=coolify
+```
+
+Apply the labels with a same-version Coolify restart and verify the label on
+each running container. Saving the setting alone does not update an existing
+container. Without this pin, Traefik can select the private management address,
+which its proxy cannot reach; the whole public page then times out even while
+container health and private API requests succeed. The helper refuses to add
+attachments to Traefik-exposed containers without this pin.
 
 ```bash
 install -d -m 700 "$HOME/.local/libexec"
@@ -62,10 +78,14 @@ the PID recorded in `watch.lock` after verifying it belongs to this helper.
 Cron starts the updated copy; no application redeploy is needed.
 
 On November 2, 2026, the helper and this cron job were installed on Goldship.
-Only the backend and admin dashboard were attached. The dashboard's runtime
-client successfully fetched invitations, users and sessions. Disposable Docker
-fixtures verified replacement attachment, idempotency, gateway preservation
-and rejection of an unrelated network member.
+An initial installation checked private API connectivity but missed Traefik's
+network selection, causing the public admin page to time out. The repair pinned
+both applications to `coolify`, replaced their containers with the same deployed
+versions, and added the helper's ingress preflight. Only the backend and admin
+dashboard were attached. Verification covers public pages and session/readiness
+endpoints as well as the dashboard runtime client's invitations, users and
+sessions requests. Disposable Docker fixtures verified replacement attachment,
+idempotency, gateway preservation and rejection of an unrelated network member.
 
 ## Verify and remove
 
@@ -77,7 +97,10 @@ tail -n 20 "$HOME/.local/state/jobtology-management-network/watch.log"
 
 The first output must show `true` and only instances of the two resource IDs
 above. Verify both containers still have their original `coolify` attachment,
-and reload the admin Invitations, Users and Sessions pages after a redeploy.
+and the `traefik.docker.network=coolify` label. Check the public admin page and
+`/api/session`, backend readiness, and the admin Invitations, Users and Sessions
+pages after a redeploy. Private API success alone does not establish ingress
+health.
 Keep the management API token in backend/dashboard Runtime secrets only.
 
 To disable automation, remove only the marked line from `crontab -e`, then

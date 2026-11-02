@@ -14,8 +14,17 @@ spec.loader.exec_module(module)
 class DockerFixture:
     def __init__(self):
         self.groups = {
-            "backend": [{"id": "backend-id", "name": "backend-new", "healthy": True}],
-            "dashboard": [{"id": "dashboard-id", "name": "dashboard-new", "healthy": True}],
+            "backend": [
+                {"id": "backend-id", "name": "backend-new", "healthy": True, "ingress_safe": True}
+            ],
+            "dashboard": [
+                {
+                    "id": "dashboard-id",
+                    "name": "dashboard-new",
+                    "healthy": True,
+                    "ingress_safe": True,
+                }
+            ],
         }
         self.network = None
         self.attached = {
@@ -53,7 +62,12 @@ def test_replacement_containers_are_attached_idempotently_without_changing_outbo
     for attachments in engine.attached.values():
         assert attachments["coolify"]["GwPriority"] == 0
     engine.groups["backend"] = [
-        {"id": "replacement-id", "name": "backend-replacement", "healthy": True}
+        {
+            "id": "replacement-id",
+            "name": "backend-replacement",
+            "healthy": True,
+            "ingress_safe": True,
+        }
     ]
     engine.attached["replacement-id"] = {"coolify": {"GwPriority": 0}}
     del engine.network["Containers"]["backend-id"]
@@ -86,6 +100,15 @@ def test_unhealthy_applications_are_not_exposed_on_management_alias():
     assert not engine.mutations
 
 
+@pytest.mark.parametrize("resource", ["backend", "dashboard"])
+def test_ambiguous_proxy_network_is_rejected_before_any_attachment(resource):
+    engine = DockerFixture()
+    engine.groups[resource][0]["ingress_safe"] = False
+    with pytest.raises(module.NetworkError, match="Pin Traefik ingress"):
+        module.reconcile(engine, "jobtology-management", "backend", "dashboard")
+    assert not engine.mutations
+
+
 @pytest.mark.parametrize(
     "endpoint",
     [
@@ -115,9 +138,12 @@ def test_container_selection_uses_managed_resource_labels_and_never_reads_env_or
     def run(args, **kwargs):
         calls.append(args)
         result = Result()
-        result.stdout = (
-            "a" * 64 + " " + resource + "-20261102T125018" if "ps" in args else "true healthy"
-        )
+        if "ps" in args:
+            result.stdout = "a" * 64 + " " + resource + "-20261102T125018"
+        elif any(".Config.Labels" in arg for arg in args):
+            result.stdout = "true coolify"
+        else:
+            result.stdout = "true healthy"
         assert not any(key.startswith("DOCKER_") for key in kwargs["env"])
         return result
 
@@ -125,8 +151,29 @@ def test_container_selection_uses_managed_resource_labels_and_never_reads_env_or
     monkeypatch.setattr(module.subprocess, "run", run)
     targets = module.Engine().targets(resource)
     assert targets[0]["healthy"]
+    assert targets[0]["ingress_safe"]
     assert all(
         args[:3] == ["/usr/bin/docker", "--host", "unix:///var/run/docker.sock"] for args in calls
     )
     assert "label=coolify.name=" + resource in calls[0]
-    assert not any(".Config" in part for args in calls for part in args)
+    assert not any(
+        field in part for args in calls for part in args for field in (".Config.Env", ".Config.Cmd")
+    )
+
+
+@pytest.mark.parametrize(
+    ("labels", "safe"),
+    [("true coolify", True), ("true ", False), ("true another-network", False), (" ", True)],
+)
+def test_ingress_pin_is_required_only_for_traefik_exposed_containers(monkeypatch, labels, safe):
+    resource = "w131qqclc6wyke8347y9puqo"
+
+    def run(self, *args, **kwargs):
+        if args[0] == "ps":
+            return "a" * 64 + " " + resource + "-20261102T125018"
+        if any(".Config.Labels" in arg for arg in args):
+            return labels
+        return "true healthy"
+
+    monkeypatch.setattr(module.Engine, "run", run)
+    assert module.Engine().targets(resource)[0]["ingress_safe"] is safe

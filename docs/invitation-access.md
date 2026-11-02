@@ -125,7 +125,11 @@ management, apply one of these transport configurations:
   management-only alias in the dashboard API URL so the bearer crosses the
   dedicated bridge rather than the shared one. The Docker host, its operators,
   and these two containers are trusted; do not attach other applications, the
-  FE, databases or public proxies to this network.
+  FE, databases or public proxies to this network. Pin public ingress on both
+  applications with the container label `traefik.docker.network=coolify`
+  **before attaching** the management network. Otherwise Traefik can select its
+  unreachable private address and the entire public page can time out. Gateway
+  priority alone does not select Traefik's network.
 - **Encrypted transport:** configure an HTTPS endpoint for the management path
   with normal certificate and hostname verification, or use an authenticated
   encrypted tunnel. Do not disable certificate verification. Keep the endpoint
@@ -147,7 +151,9 @@ does not apply `--network`; do not use that field as a persistence mechanism.
 After deployment, verify `docker network inspect jobtology-management` lists only
 the approved backend/dashboard containers and has `Internal: true`; confirm the
 dashboard resolves `jobtology-management-api` on that network and reaches backend
-health. Recheck membership/alias after replacing either container. On November 2,
+health. Also check the public admin page and session endpoint, not just private
+API connectivity. Recheck membership, alias and ingress pin after replacing
+either container. On November 2,
 2026, the dedicated bridge and host watcher were installed on Goldship; the
 dashboard's runtime client successfully fetched invitations, users and sessions.
 Merging this repository alone does not install or update the host helper.

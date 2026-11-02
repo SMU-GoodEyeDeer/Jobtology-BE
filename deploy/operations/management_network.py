@@ -71,7 +71,21 @@ class Engine:
                 "{{.State.Running}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}",
                 identifier,
             )
-            targets.append({"id": identifier, "name": name, "healthy": status == "true healthy"})
+            ingress = self.run(
+                "inspect",
+                "--format",
+                '{{index .Config.Labels "traefik.enable"}} {{index .Config.Labels "traefik.docker.network"}}',
+                identifier,
+            )
+            enabled, _, ingress_network = (ingress or "").partition(" ")
+            targets.append(
+                {
+                    "id": identifier,
+                    "name": name,
+                    "healthy": status == "true healthy",
+                    "ingress_safe": enabled != "true" or ingress_network == "coolify",
+                }
+            )
         return targets
 
     def inspect_network(self, name: str) -> dict | None:
@@ -98,6 +112,12 @@ def reconcile(engine: Engine, network: str, backend: str, dashboard: str) -> int
             raise NetworkError("Management network contains an unapproved container")
     if any(not any(target["healthy"] for target in targets) for targets, _ in groups):
         return 0  # Wait for normal Coolify healthchecks; do not start or stop applications.
+    if any(
+        target["healthy"] and not target["ingress_safe"]
+        for targets, _ in groups
+        for target in targets
+    ):
+        raise NetworkError("Pin Traefik ingress to coolify before adding a management attachment")
     if info is None:
         engine.run(
             "network",
