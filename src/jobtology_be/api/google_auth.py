@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.responses import JSONResponse, PlainTextResponse, RedirectResponse, Response
 
+from jobtology_be.infrastructure.persistence.admissions import AdmissionDenied
 from jobtology_be.infrastructure.persistence.auth_contracts import (
     ConsumedOAuthLoginAttempt,
     GoogleLogin,
@@ -20,10 +21,12 @@ from jobtology_be.modules.auth.google_oidc import (
     GoogleIdentityProvider,
     GoogleProviderError,
 )
+from jobtology_be.modules.auth.invitations import invitation_digest
 from jobtology_be.modules.auth.session import hash_session_secret, issue_session_credentials
 from jobtology_be.modules.auth.session_cookies import (
     OAUTH_ATTEMPT_COOKIE_NAME,
     clear_oauth_attempt_cookie,
+    clear_session_cookie,
     set_oauth_attempt_cookie,
     set_session_cookie,
 )
@@ -64,6 +67,7 @@ def require_turnstile_verifier(
 class GoogleLoginVerification(BaseModel):
     model_config = ConfigDict(extra="forbid")
     token: str = Field(alias="cf-turnstile-response", min_length=1, max_length=2048, strict=True)
+    invitation_code: SecretStr | None = Field(default=None, max_length=128)
 
 
 def _error(status_code: int, *, clear_cookie: bool = False) -> Response:
@@ -81,7 +85,7 @@ async def google_login(
 ) -> Response:
     if not settings.auth_enabled:
         return _error(503)
-    if settings.turnstile_enabled:
+    if settings.turnstile_enabled or settings.invitation_required:
         return _error(403)
     return await _start_google_login(settings, store)
 
@@ -101,11 +105,18 @@ async def verified_google_login(
         return JSONResponse({"detail": "Authentication failed"}, status_code=403, headers=headers)
     if settings.turnstile_enabled and (verifier is None or not await verifier.verify(body.token)):
         return JSONResponse({"detail": "Verification failed"}, status_code=403, headers=headers)
-    return await _start_google_login(settings, store, as_json=True)
+    digest = None
+    if body.invitation_code is not None:
+        try:
+            digest = invitation_digest(body.invitation_code.get_secret_value())
+        except ValueError:
+            return JSONResponse({"detail": "INVITATION_INVALID"}, status_code=422, headers=headers)
+    return await _start_google_login(settings, store, as_json=True, invitation_hash=digest)
 
 
 async def _start_google_login(
     settings: Settings, store: GoogleLoginStore | None, *, as_json: bool = False,
+    invitation_hash: bytes | None = None,
 ) -> Response:
     config = settings.google_oidc_settings
     if not settings.auth_enabled or not config.is_configured or store is None:
@@ -115,6 +126,7 @@ async def _start_google_login(
     attempt = OAuthLoginAttempt(
         state_hash=hash_session_secret(state), browser_binding_hash=hash_session_secret(binding),
         nonce=SecretStr(nonce), pkce_verifier=SecretStr(verifier),
+        invitation_hash=invitation_hash,
     )
     try:
         await store.create_oauth_login_attempt(attempt)
@@ -173,8 +185,17 @@ async def google_callback(
     try:
         issued = await store.create_google_session(
             GoogleLogin(identity.subject, credentials.session_issue(settings.session_lifetime),
-                        display_name=identity.display_name)
+                        display_name=identity.display_name, invitation_hash=attempt.invitation_hash)
         )
+    except AdmissionDenied as error:
+        assert config.frontend_url is not None
+        response = RedirectResponse(
+            config.frontend_url + "?" + urlencode({"auth_error": error.code}),
+            headers={"Cache-Control": "no-store"},
+        )
+        clear_oauth_attempt_cookie(response)
+        clear_session_cookie(response)
+        return response
     except SQLAlchemyError:
         return _error(503, clear_cookie=True)
     if issued is None:

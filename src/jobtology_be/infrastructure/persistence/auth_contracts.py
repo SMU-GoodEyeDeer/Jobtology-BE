@@ -14,12 +14,14 @@ class OAuthLoginAttempt:
     browser_binding_hash: bytes
     nonce: SecretStr
     pkce_verifier: SecretStr
+    invitation_hash: bytes | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class ConsumedOAuthLoginAttempt:
     nonce: SecretStr
     pkce_verifier: SecretStr
+    invitation_hash: bytes | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +36,7 @@ class GoogleLogin:
     google_subject: str
     session: SessionIssue
     display_name: str | None = None
+    invitation_hash: bytes | None = None
 
 
 @dataclass(frozen=True, slots=True)

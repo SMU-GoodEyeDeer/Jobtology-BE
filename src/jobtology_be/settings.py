@@ -61,6 +61,8 @@ class Settings(BaseSettings):
     enable_fe_mock_samples: bool = False
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
     auth_enabled: bool = False
+    invitation_required: bool = True
+    management_token: SecretStr | None = Field(default=None, min_length=32)
     turnstile_enabled: bool = True
     turnstile_secret: SecretStr | None = None
     turnstile_hostnames: list[str] = Field(default_factory=list)

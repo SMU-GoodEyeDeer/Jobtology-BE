@@ -1,0 +1,26 @@
+# Network override/reference for a Compose-managed BE + dashboard deployment.
+# Merge with a base defining the approved backend/admin images, runtime secrets,
+# volumes and existing ingress settings; map service keys to the actual resources.
+# Separate Coolify Railpack applications must persist the equivalent attachments
+# in their deployment configuration, including after container replacement.
+services:
+  backend:
+    networks:
+      coolify: {}
+      management:
+        aliases:
+          - jobtology-management-api
+  admin:
+    environment:
+      JOBTOLOGY_ADMIN_APPLICATION_API_URL: http://jobtology-management-api:8000
+    networks:
+      coolify: {}
+      management: {}
+networks:
+  coolify:
+    external: true
+    name: coolify
+  management:
+    name: jobtology-management
+    driver: bridge
+    internal: true

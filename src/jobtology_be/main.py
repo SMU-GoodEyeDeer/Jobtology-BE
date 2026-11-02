@@ -22,6 +22,8 @@ from jobtology_be.api.google_auth import (
 )
 from jobtology_be.api.guide import router as guide_router
 from jobtology_be.api.live_source import router as live_source_router
+from jobtology_be.api.management import require_management_store
+from jobtology_be.api.management import router as management_router
 from jobtology_be.api.neo4j_catalog import router as neo4j_catalog_router
 from jobtology_be.api.resume import require_resume_service
 from jobtology_be.api.role_evidence_graph import router as role_evidence_graph_router
@@ -48,6 +50,7 @@ from jobtology_be.infrastructure.persistence.compute_budget import AnalysisBudge
 from jobtology_be.infrastructure.persistence.database import Database
 from jobtology_be.infrastructure.persistence.live_source_feed import PostgresLiveSourceFeed
 from jobtology_be.infrastructure.persistence.m5_queries import PostgresM5Queries
+from jobtology_be.infrastructure.persistence.management import PostgresManagementStore
 from jobtology_be.infrastructure.persistence.preference_queries import PostgresRoutePreferencesQuery
 from jobtology_be.infrastructure.persistence.queries import PostgresProductQueries
 from jobtology_be.infrastructure.persistence.rate_limit import PostgresAccountRateLimiter
@@ -210,7 +213,7 @@ def create_app(
     if settings.auth_enabled and session_store is None:
         if database is None:
             raise ValueError("Enabled authentication requires a database URL or injected session store")
-        session_store = PostgresAuthStore(database)
+        session_store = PostgresAuthStore(database, invitation_required=settings.invitation_required)
     google_login_store = dependencies.google_login_store
     if settings.auth_enabled and google_login_store is None and isinstance(session_store, PostgresAuthStore):
         google_login_store = session_store
@@ -302,6 +305,9 @@ def create_app(
             worker_required=settings.inprocess_worker_enabled,
         ),
     )
+    if database is not None:
+        app.dependency_overrides[require_management_store] = lambda: PostgresManagementStore(database)
+    app.include_router(management_router)
     app.dependency_overrides[require_resume_service] = lambda: resume_service
     register_error_handlers(app)
     app.add_middleware(OAuthCallbackQueryMiddleware)

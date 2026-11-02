@@ -9,6 +9,7 @@ from sqlalchemy import (
     CheckConstraint,
     Column,
     DateTime,
+    Float,
     ForeignKey,
     ForeignKeyConstraint,
     Index,
@@ -71,6 +72,7 @@ oauth_login_attempts = Table(
     Column("browser_binding_hash", LargeBinary(32), nullable=False),
     Column("nonce", TEXT, nullable=False),
     Column("pkce_verifier", TEXT, nullable=False),
+    Column("invitation_hash", LargeBinary(32)),
     Column("expires_at", DateTime(timezone=True), nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=UTC_NOW),
     CheckConstraint("octet_length(state_hash) = 32", name="oauth_login_attempts_state_hash_check"),
@@ -104,6 +106,49 @@ auth_sessions = Table(
     CheckConstraint("octet_length(csrf_hash) = 32", name="auth_sessions_csrf_hash_check"),
 )
 Index("auth_sessions_active_lookup_index", auth_sessions.c.token_hash, auth_sessions.c.expires_at)
+
+invitation_codes = Table(
+    "invitation_codes", METADATA,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("code_hash", LargeBinary(32), nullable=False, unique=True),
+    Column("code_hint", String(8), nullable=False),
+    Column("label", String(100), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=UTC_NOW),
+    Column("expires_at", DateTime(timezone=True)),
+    Column("access_hours", Float),
+    Column("max_uses", INTEGER),
+    Column("use_count", INTEGER, nullable=False, server_default=text("0")),
+    Column("revoked_at", DateTime(timezone=True)),
+    CheckConstraint("octet_length(code_hash) = 32", name="invitation_code_hash_check"),
+    CheckConstraint("access_hours IS NULL OR (access_hours > 0 AND access_hours <= 876000)",
+                    name="invitation_access_hours_check"),
+    CheckConstraint("max_uses IS NULL OR max_uses > 0", name="invitation_max_uses_check"),
+    CheckConstraint("use_count >= 0", name="invitation_use_count_check"),
+)
+
+# A minimal admission ledger survives account deletion so recreating the same
+# Google identity cannot reset its trial or consume another invitation use.
+# No raw Google subject, name, session token or profile content is retained here.
+account_access = Table(
+    "account_access", METADATA,
+    Column("subject_hash", LargeBinary(32), primary_key=True),
+    Column("user_id", UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), unique=True),
+    Column("invitation_id", UUID(as_uuid=True), ForeignKey("invitation_codes.id")),
+    Column("source", String(16), nullable=False),
+    Column("granted_at", DateTime(timezone=True), nullable=False, server_default=UTC_NOW),
+    Column("expires_at", DateTime(timezone=True)),
+    Column("revoked_at", DateTime(timezone=True)),
+    CheckConstraint("octet_length(subject_hash) = 32", name="account_access_subject_hash_check"),
+    CheckConstraint("source IN ('LEGACY', 'INVITATION')", name="account_access_source_check"),
+)
+
+management_audit = Table(
+    "management_audit", METADATA,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("action", String(64), nullable=False),
+    Column("target_id", UUID(as_uuid=True), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=UTC_NOW),
+)
 
 account_rate_limits = Table(
     "account_rate_limits",

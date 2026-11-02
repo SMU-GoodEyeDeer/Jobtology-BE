@@ -55,7 +55,7 @@ class FakeStore:
         if attempt is None or attempt.browser_binding_hash != browser_binding_hash:
             return None
         del self.attempts[state_hash]
-        return ConsumedOAuthLoginAttempt(attempt.nonce, attempt.pkce_verifier)
+        return ConsumedOAuthLoginAttempt(attempt.nonce, attempt.pkce_verifier, attempt.invitation_hash)
 
     async def create_google_session(self, login: GoogleLogin) -> IssuedSession:
         self.subjects.append(login.google_subject)
@@ -84,10 +84,11 @@ class FakeProvider:
 
 def _client(
     store: FakeStore, provider: GoogleIdentityProvider, *, enabled: bool = True,
-    protected: bool = False, transport: httpx.AsyncBaseTransport | None = None,
+    protected: bool = False, invitation_required: bool = False, transport: httpx.AsyncBaseTransport | None = None,
 ) -> TestClient:
     app = create_app(Settings.model_validate({
         "environment": "test", "auth_enabled": enabled, "turnstile_enabled": protected,
+        "invitation_required": invitation_required,
         "turnstile_secret": "fixture-only-secret", "turnstile_hostnames": ["localhost"],
         "google_client_id": "client-id", "google_client_secret": "secret",
         "google_redirect_uri": "http://localhost:8000/api/v1/auth/google/callback",
@@ -360,3 +361,36 @@ def test_signed_provider_token_creates_normal_browser_session() -> None:
     assert store.subjects == ["signed-sub"]
     assert session.status_code == 200
     assert session.json()["user_id"] == str(USER_ID)
+
+
+def test_invitation_is_browser_bound_and_admission_denial_never_sets_a_session():
+    from jobtology_be.infrastructure.persistence.admissions import AdmissionDenied
+    from jobtology_be.modules.auth.invitations import invitation_digest
+
+    class DeniedStore(FakeStore):
+        async def create_google_session(self, login):
+            assert login.invitation_hash == invitation_digest("AAAA-BBBB-CCCC-DDDD-EEEE-FFFF")
+            raise AdmissionDenied("INVITATION_INVALID")
+
+    store, provider = DeniedStore(), FakeProvider()
+    with _client(store, provider, invitation_required=True) as client:
+        assert client.get("/api/v1/auth/google/login").status_code == 403
+        response = client.post("/api/v1/auth/google/login", headers={"Origin": "http://localhost:5173"},
+            json={"cf-turnstile-response":"fixture", "invitation_code":"aaaa-bbbb-cccc-dddd-eeee-ffff"})
+        assert response.status_code == 200
+        assert "AAAA" not in response.text
+        assert len(store.attempts) == 1
+        state = parse_qs(urlsplit(response.json()["authorization_url"]).query)["state"][0]
+        response = client.get(CALLBACK, params={"code":"fixture", "state":state}, follow_redirects=False)
+        assert response.headers["location"] == "http://localhost:5173?auth_error=INVITATION_INVALID"
+        assert SESSION_COOKIE_NAME not in client.cookies
+        assert not store.attempts and not store.sessions
+
+
+def test_malformed_invitation_never_starts_google_login():
+    store, provider = FakeStore(), FakeProvider()
+    with _client(store, provider, invitation_required=True) as client:
+        response = client.post("/api/v1/auth/google/login", headers={"Origin":"http://localhost:5173"},
+            json={"cf-turnstile-response":"fixture", "invitation_code":"too short"})
+        assert response.status_code == 422
+        assert not store.attempts

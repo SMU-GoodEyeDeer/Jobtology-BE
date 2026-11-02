@@ -105,3 +105,14 @@ flow; keep scanning enabled. Changing these digests without a compatibility plan
 would invalidate stored sessions and pending OAuth attempts. No session hash key
 is required. Regression tests cover existing SHA-256 sessions, pending OAuth
 callbacks, and the token sizes on both issuance paths.
+
+## Invitation access
+
+New accounts now require an invitation by default. Stop all old backend instances
+and block OAuth login/callback traffic, then apply migration `20261102_01` to
+grant existing Google accounts unlimited access. Keep callbacks blocked until
+the matching BE is ready with invitation enforcement; deploy the matching FE
+and admin dashboard during that cutover. If the migration already ran with the
+old backend active, follow the cutover reconciliation in the operations guide.
+Invitations support separate code expiry, fixed account access duration and distinct-account reuse limits. See [invitation operations](invitation-access.md)
+for runtime variables, private management setup, grants and validation.
