@@ -59,7 +59,7 @@ async def _consume_attempt(
 
 async def _exercise_attempt_race(database_url: str) -> AttemptRaceResult:
     database = Database.create(database_url)
-    store = PostgresAuthStore(database)
+    store = PostgresAuthStore(database, invitation_required=False)
     state_hash = _digest("state")
     browser_binding_hash = _digest("browser")
     try:
@@ -120,7 +120,7 @@ async def _create_google_session(
 
 async def _exercise_google_login_race(database_url: str) -> GoogleLoginRaceResult:
     database = Database.create(database_url)
-    store = PostgresAuthStore(database)
+    store = PostgresAuthStore(database, invitation_required=False)
     try:
         user_ids: list[UUID] = []
         async with anyio.create_task_group() as task_group:
@@ -145,7 +145,7 @@ async def _exercise_google_login_race(database_url: str) -> GoogleLoginRaceResul
 
 async def _exercise_expiry_and_revocation(database_url: str) -> bool:
     database = Database.create(database_url)
-    store = PostgresAuthStore(database)
+    store = PostgresAuthStore(database, invitation_required=False)
     token_hash = _digest("session")
     csrf_hash = _digest("csrf")
     try:
@@ -247,7 +247,7 @@ def test_new_oauth_attempt_purges_expired_attempts_and_preserves_pending_logins(
 ) -> None:
     async def scenario() -> None:
         database = Database.create(acceptance_database_url)
-        store = PostgresAuthStore(database)
+        store = PostgresAuthStore(database, invitation_required=False)
         try:
             for label in ("expired", "pending"):
                 await store.create_oauth_login_attempt(OAuthLoginAttempt(
@@ -293,7 +293,7 @@ def test_google_identity_schema_is_canonical_and_never_stores_email() -> None:
 
 async def _exercise_display_name_refresh(database_url: str) -> None:
     database = Database.create(database_url)
-    store = PostgresAuthStore(database)
+    store = PostgresAuthStore(database, invitation_required=False)
     try:
         async def login(subject: str, label: str, name: str | None):
             return await store.create_google_session(GoogleLogin(

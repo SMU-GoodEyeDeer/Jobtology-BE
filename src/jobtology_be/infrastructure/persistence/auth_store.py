@@ -1,11 +1,18 @@
 from datetime import timedelta
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 from pydantic import SecretStr
 from sqlalchemy import Interval, bindparam, delete, func, insert, or_, select, update
-from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from jobtology_be.infrastructure.persistence.admissions import (
+    AdmissionDenied,
+    access_allowed,
+    admission_for_login,
+    attach_admission,
+    lock_identity,
+    subject_digest,
+)
 from jobtology_be.infrastructure.persistence.auth_contracts import (
     GOOGLE_ISSUER,
     ConsumedOAuthLoginAttempt,
@@ -16,6 +23,7 @@ from jobtology_be.infrastructure.persistence.auth_contracts import (
 )
 from jobtology_be.infrastructure.persistence.database import Database
 from jobtology_be.infrastructure.persistence.schema import (
+    account_access,
     auth_sessions,
     google_identities,
     oauth_login_attempts,
@@ -44,8 +52,9 @@ async def prune_auth_records(session: AsyncSession, *, limit: int = 1000) -> Non
 
 
 class PostgresAuthStore:
-    def __init__(self, database: Database) -> None:
+    def __init__(self, database: Database, *, invitation_required: bool = True) -> None:
         self._database = database
+        self._invitation_required = invitation_required
 
     async def create_oauth_login_attempt(self, attempt: OAuthLoginAttempt) -> None:
         async with self._database.sessions.begin() as session:
@@ -56,6 +65,7 @@ class PostgresAuthStore:
                     browser_binding_hash=attempt.browser_binding_hash,
                     nonce=attempt.nonce.get_secret_value(),
                     pkce_verifier=attempt.pkce_verifier.get_secret_value(),
+                    invitation_hash=attempt.invitation_hash,
                     expires_at=func.current_timestamp()
                     + bindparam(
                         "oauth_attempt_lifetime",
@@ -79,6 +89,7 @@ class PostgresAuthStore:
                 .returning(
                     oauth_login_attempts.c.nonce,
                     oauth_login_attempts.c.pkce_verifier,
+                    oauth_login_attempts.c.invitation_hash,
                 )
             )
             row = result.one_or_none()
@@ -87,38 +98,44 @@ class PostgresAuthStore:
         return ConsumedOAuthLoginAttempt(
             nonce=SecretStr(row.nonce),
             pkce_verifier=SecretStr(row.pkce_verifier),
+            invitation_hash=row.invitation_hash,
         )
 
     async def create_google_session(self, login: GoogleLogin) -> IssuedSession | None:
         async with self._database.sessions.begin() as session:
             await prune_auth_records(session)
-            user_id = await self._active_user_id(session, login.google_subject)
-            if user_id is None:
-                candidate_user_id = uuid4()
-                await session.execute(insert(users).values(id=candidate_user_id))
-                await session.execute(insert(profiles).values(user_id=candidate_user_id))
-                user_id = await session.scalar(
-                    postgres_insert(google_identities)
-                    .values(
-                        issuer=GOOGLE_ISSUER,
-                        subject=login.google_subject,
-                        user_id=candidate_user_id,
-                    )
-                    .on_conflict_do_nothing()
-                    .returning(google_identities.c.user_id)
-                )
-                if user_id is None:
-                    await session.execute(
-                        delete(profiles).where(profiles.c.user_id == candidate_user_id)
-                    )
-                    await session.execute(delete(users).where(users.c.id == candidate_user_id))
-                    user_id = await self._active_user_id(session, login.google_subject)
-            if user_id is None:
-                return None
+            digest = subject_digest(login.google_subject)
+            await lock_identity(session, digest)
+            identity = (await session.execute(
+                select(google_identities.c.user_id, users.c.status).join(
+                    users, google_identities.c.user_id == users.c.id,
+                ).where(google_identities.c.subject == login.google_subject,
+                        google_identities.c.issuer == GOOGLE_ISSUER).with_for_update(of=users)
+            )).one_or_none()
+            if identity is not None and identity.status != "ACTIVE":
+                if not self._invitation_required:
+                    return None
+                raise AdmissionDenied("ACCESS_REVOKED")
+            admission = await admission_for_login(
+                session, digest, login.invitation_hash, required=self._invitation_required,
+            )
+            user_id = identity.user_id if identity is not None else uuid4()
+            if identity is None:
+                await session.execute(insert(users).values(id=user_id))
+                await session.execute(insert(profiles).values(user_id=user_id))
+                await session.execute(insert(google_identities).values(
+                    issuer=GOOGLE_ISSUER, subject=login.google_subject, user_id=user_id,
+                ))
+            await attach_admission(session, admission, user_id)
             if login.display_name is not None:
                 await session.execute(
                     update(users).where(users.c.id == user_id).values(display_name=login.display_name)
                 )
+            session_expiry = func.clock_timestamp() + bindparam(
+                "session_lifetime", login.session.lifetime, type_=Interval(),
+            )
+            if admission["expires_at"] is not None:
+                session_expiry = func.least(session_expiry, admission["expires_at"])
             expires_at = await session.scalar(
                 insert(auth_sessions)
                 .values(
@@ -126,12 +143,7 @@ class PostgresAuthStore:
                     user_id=user_id,
                     token_hash=login.session.token_hash,
                     csrf_hash=login.session.csrf_hash,
-                    expires_at=func.current_timestamp()
-                    + bindparam(
-                        "session_lifetime",
-                        login.session.lifetime,
-                        type_=Interval(),
-                    ),
+                    expires_at=session_expiry,
                 )
                 .returning(auth_sessions.c.expires_at)
             )
@@ -144,7 +156,9 @@ class PostgresAuthStore:
             result = await session.execute(
                 select(auth_sessions.c.user_id, auth_sessions.c.csrf_hash, users.c.display_name)
                 .join(users, users.c.id == auth_sessions.c.user_id)
+                .outerjoin(account_access, account_access.c.user_id == users.c.id)
                 .where(
+                    *(access_allowed() if self._invitation_required else ()),
                     auth_sessions.c.token_hash == session_token_hash,
                     auth_sessions.c.expires_at > func.current_timestamp(),
                     auth_sessions.c.revoked_at.is_(None),
@@ -165,7 +179,9 @@ class PostgresAuthStore:
             session_id = await session.scalar(
                 select(auth_sessions.c.id)
                 .join(users, users.c.id == auth_sessions.c.user_id)
+                .outerjoin(account_access, account_access.c.user_id == users.c.id)
                 .where(
+                    *(access_allowed() if self._invitation_required else ()),
                     auth_sessions.c.token_hash == session_token_hash,
                     auth_sessions.c.csrf_hash == csrf_hash,
                     auth_sessions.c.expires_at > func.current_timestamp(),
@@ -189,15 +205,3 @@ class PostgresAuthStore:
                 )
                 .values(revoked_at=func.current_timestamp())
             )
-
-    async def _active_user_id(self, session: AsyncSession, google_subject: str) -> UUID | None:
-        return await session.scalar(
-            select(google_identities.c.user_id)
-            .join(users, users.c.id == google_identities.c.user_id)
-            .where(
-                google_identities.c.issuer == GOOGLE_ISSUER,
-                google_identities.c.subject == google_subject,
-                users.c.status == "ACTIVE",
-            )
-            .with_for_update(of=users)
-        )

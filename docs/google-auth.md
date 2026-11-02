@@ -105,3 +105,11 @@ flow; keep scanning enabled. Changing these digests without a compatibility plan
 would invalidate stored sessions and pending OAuth attempts. No session hash key
 is required. Regression tests cover existing SHA-256 sessions, pending OAuth
 callbacks, and the token sizes on both issuance paths.
+
+## Invitation access
+
+New accounts now require an invitation by default. Apply migration `20261102_01`
+first to grant existing Google accounts unlimited access, then deploy the matching
+FE, BE and admin dashboard. Invitations support separate code expiry, fixed account
+access duration and distinct-account reuse limits. See [invitation operations](invitation-access.md)
+for runtime variables, private management setup, grants and validation.

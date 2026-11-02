@@ -238,7 +238,7 @@ async def _counts(session):
 async def _exercise_deletion(database_url, fail_first):
     database = Database.create(database_url)
     accounts = PostgresAccountService(database)
-    auth = PostgresAuthStore(database)
+    auth = PostgresAuthStore(database, invitation_required=False)
     try:
         async with database.sessions.begin() as session:
             target = await seed_account(session, google=True)
@@ -314,7 +314,7 @@ def test_oauth_login_waiting_for_deletion_does_not_lock_the_identity_first(
     async def exercise():
         database = Database.create(acceptance_database_url)
         accounts = PostgresAccountService(database)
-        auth = PostgresAuthStore(database)
+        auth = PostgresAuthStore(database, invitation_required=False)
         deletion_waiting = anyio.Event()
         login_started = anyio.Event()
         login_pid = None

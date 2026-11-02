@@ -95,7 +95,7 @@ async def _create_legacy_guest(database_url: str) -> SessionCredentials:
                 csrf_hash=credentials.hashes.csrf_hash,
                 expires_at=func.current_timestamp() + timedelta(days=7),
             ))
-        store = PostgresAuthStore(database)
+        store = PostgresAuthStore(database, invitation_required=False)
         assert await store.resolve_session(credentials.hashes.token_hash) is None
         assert not await store.matches_session_csrf(
             credentials.hashes.token_hash, credentials.hashes.csrf_hash,
@@ -124,7 +124,7 @@ async def _create_google_session(database_url: str) -> SessionCredentials:
     database = Database.create(database_url)
     credentials = issue_session_credentials()
     try:
-        issued = await PostgresAuthStore(database).create_google_session(GoogleLogin(
+        issued = await PostgresAuthStore(database, invitation_required=False).create_google_session(GoogleLogin(
             google_subject="verified-google-subject",
             session=credentials.session_issue(timedelta(days=7)),
         ))
